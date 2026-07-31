@@ -136,12 +136,16 @@ export function PollNimSupportPanel({
   } | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const confirmingRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (pollRef.current) clearTimeout(pollRef.current);
+      abortRef.current?.abort();
     };
   }, []);
 
@@ -257,8 +261,18 @@ export function PollNimSupportPanel({
 
   const confirmContribution = useCallback(
     async (intentId: string, transactionHash: string) => {
+      // Guard: prevent overlapping confirmation loops for the same pair
+      const key = `${intentId}:${transactionHash}`;
+      if (confirmingRef.current === key) return;
+      confirmingRef.current = key;
+
       const doConfirm = async () => {
         try {
+          // Abort any previous in-flight request
+          abortRef.current?.abort();
+          const controller = new AbortController();
+          abortRef.current = controller;
+
           const res = await fetch(
             `/api/polls/${pollId}/support/confirm`,
             {
@@ -266,17 +280,19 @@ export function PollNimSupportPanel({
               headers: { "Content-Type": "application/json" },
               credentials: "same-origin",
               body: JSON.stringify({ intentId, transactionHash }),
+              signal: controller.signal,
             },
           );
           const data = await res.json();
 
           if (res.ok) {
             if (!mountedRef.current) return;
+            confirmingRef.current = null;
+            setError(null); // Clear any stale bind error
             setConfirmedContribution(data.contribution);
             clearPendingSupport(pollId);
             setStage("confirmed");
             loadResults();
-            // Fetch richer contribution details from /mine
             (async () => {
               try {
                 const mineRes = await fetch(`/api/polls/${pollId}/support/mine`, { credentials: "same-origin", cache: "no-store" });
@@ -307,9 +323,39 @@ export function PollNimSupportPanel({
 
           // Terminal error
           if (!mountedRef.current) return;
-          setError(
-            data.message || "Could not confirm NIM support on-chain.",
-          );
+          confirmingRef.current = null;
+          const errorCode = data.error as string || "";
+
+          // Don't show error for idempotent replay states
+          if (errorCode === "intent_already_bound" || errorCode === "intent_already_confirmed" || errorCode === "bound_replay") {
+            // Transaction was already handled — refetch mine to restore confirmed state
+            try {
+              const mineRes = await fetch(`/api/polls/${pollId}/support/mine`, { credentials: "same-origin", cache: "no-store" });
+              if (mineRes.ok && mountedRef.current) {
+                const mineData = await mineRes.json();
+                const latest = mineData.contributions?.[0];
+                if (latest) {
+                  setConfirmedContribution({ id: latest.id, optionId: latest.optionId, amountLuna: latest.amountLuna, transactionHash: latest.transactionHash, confirmedAt: latest.confirmedAt });
+                  setSelectedOptionId(latest.optionId);
+                  clearPendingSupport(pollId);
+                  setStage("confirmed");
+                  setError(null);
+                  loadResults();
+                  return;
+                }
+              }
+            } catch { /* non-critical */ }
+            setError("Your transaction hash is saved. Votum will continue checking it.");
+            return;
+          }
+
+          if (res.status === 409) {
+            setError("This support attempt is already linked to another transaction. Do not send another payment.");
+          } else {
+            setError(
+              data.message || "Could not confirm NIM support on-chain.",
+            );
+          }
           setStage("error");
         } catch {
           if (!mountedRef.current) return;
