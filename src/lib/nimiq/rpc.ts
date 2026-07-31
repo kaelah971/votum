@@ -64,23 +64,21 @@ interface RawPosTransaction {
 
 // ── Memo decoder ──────────────────────────────────────────────────────
 
+/**
+ * Nimiq PoS RPC returns recipientData as a lowercase hexadecimal string.
+ * We decode the hex bytes to UTF-8 with fatal error handling.
+ *
+ * Confirmed by: @nimiq/core TransactionInfo type (recipientData: string).
+ * No multi-format guessing — exactly one decoder path.
+ */
 function decodeRecipientData(raw: string): string | null {
-  // Try hex decode first (common for PoS)
-  if (/^[0-9a-fA-F]+$/.test(raw) && raw.length % 2 === 0) {
-    try {
-      const bytes = Buffer.from(raw, "hex");
-      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-      return decoded;
-    } catch {
-      return null;
-    }
+  // Must be even-length lowercase hex
+  if (!/^[0-9a-f]+$/.test(raw) || raw.length % 2 !== 0) {
+    return null;
   }
-  // Plain UTF-8 string
   try {
-    new TextDecoder("utf-8", { fatal: true }).decode(
-      new TextEncoder().encode(raw),
-    );
-    return raw;
+    const bytes = Buffer.from(raw, "hex");
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     return null;
   }
