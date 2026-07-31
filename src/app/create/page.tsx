@@ -1,0 +1,735 @@
+"use client";
+
+import { useState, useEffect, useMemo, useCallback, type ChangeEvent } from "react";
+import { ProductShell } from "@/components/layout/ProductShell";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
+import { Textarea } from "@/components/ui/Textarea";
+import { Select } from "@/components/ui/Select";
+import { ProofPath } from "@/components/ui/ProofPath";
+import { FairnessLabel } from "@/components/ui/FairnessLabel";
+import { PollOptionsEditor } from "@/components/decision/PollOptionsEditor";
+import { ContributionModeSelector } from "@/components/decision/ContributionModeSelector";
+import { PollReview } from "@/components/decision/PollReview";
+import { formatClosingTime, truncateAddress } from "@/lib/format";
+import { useNimiqContext } from "@/providers/NimiqProvider";
+import { useVotumSession } from "@/providers/VotumSessionProvider";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { usePollDraft } from "@/lib/drafts/usePollDraft";
+import { getDraft, ensurePublicationKey, deleteDraft } from "@/lib/drafts/storage";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface PollFormData {
+  question: string;
+  context: string;
+  options: string[];
+  contributionMode: "creator" | "community" | null;
+  purpose: string;
+  destinationWallet: string;
+  minimumNim: string;
+  duration: string;
+}
+
+interface DecisionErrors {
+  question?: string;
+  options?: string;
+}
+
+interface SupportErrors {
+  contributionMode?: string;
+  purpose?: string;
+  destinationWallet?: string;
+  minimumNim?: string;
+  duration?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const INITIAL_FORM_DATA: PollFormData = {
+  question: "",
+  context: "",
+  options: ["", ""],
+  contributionMode: null,
+  purpose: "",
+  destinationWallet: "",
+  minimumNim: "",
+  duration: "",
+};
+
+const QUESTION_MIN_LENGTH = 10;
+const QUESTION_MAX_LENGTH = 200;
+const PURPOSE_MIN_LENGTH = 5;
+
+const DURATION_OPTIONS = [
+  { value: "1day", label: "1 day" },
+  { value: "3days", label: "3 days" },
+  { value: "7days", label: "7 days" },
+  { value: "14days", label: "14 days" },
+];
+
+const DURATION_DAYS: Record<string, number> = {
+  "1day": 1,
+  "3days": 3,
+  "7days": 7,
+  "14days": 14,
+};
+
+const DURATION_LABELS: Record<string, string> = {
+  "1day": "1 day",
+  "3days": "3 days",
+  "7days": "7 days",
+  "14days": "14 days",
+};
+
+const STEP_LABELS = ["decision", "support", "review"];
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+function validateDecision(data: PollFormData): DecisionErrors {
+  const errors: DecisionErrors = {};
+
+  const trimmedQuestion = data.question.trim();
+
+  if (!trimmedQuestion) {
+    errors.question = "Question must be at least 10 characters.";
+  } else if (trimmedQuestion.length < QUESTION_MIN_LENGTH) {
+    errors.question = `Question must be at least ${QUESTION_MIN_LENGTH} characters.`;
+  } else if (trimmedQuestion.length > QUESTION_MAX_LENGTH) {
+    errors.question = `Question must be at most ${QUESTION_MAX_LENGTH} characters.`;
+  }
+
+  // Validate options
+  const trimmedOptions = data.options.map((opt) => opt.trim());
+  const nonEmptyCount = trimmedOptions.filter((opt) => opt.length > 0).length;
+
+  if (nonEmptyCount < 2) {
+    errors.options = "At least 2 options are required.";
+  } else {
+    // Check for duplicates (case-insensitive, trimmed)
+    const normalized = trimmedOptions.map((opt) => opt.toLowerCase());
+    const seen = new Set<string>();
+    let hasDuplicate = false;
+    for (const norm of normalized) {
+      if (norm.length === 0) continue; // skip empty; already caught above
+      if (seen.has(norm)) {
+        hasDuplicate = true;
+        break;
+      }
+      seen.add(norm);
+    }
+    if (hasDuplicate) {
+      errors.options = "Options must be unique. Duplicates found.";
+    }
+  }
+
+  return errors;
+}
+
+function validateSupport(data: PollFormData): SupportErrors {
+  const errors: SupportErrors = {};
+
+  if (!data.contributionMode) {
+    errors.contributionMode = "Select a contribution mode.";
+  }
+
+  if (!data.purpose.trim()) {
+    errors.purpose = "Describe what the NIM will support.";
+  } else if (data.purpose.trim().length < PURPOSE_MIN_LENGTH) {
+    errors.purpose = `Purpose must be at least ${PURPOSE_MIN_LENGTH} characters.`;
+  }
+
+  if (!data.destinationWallet.trim()) {
+    errors.destinationWallet = "Enter a destination wallet address.";
+  }
+
+  const nimValue = Number(data.minimumNim);
+  if (data.minimumNim.trim() === "" || isNaN(nimValue) || nimValue <= 0) {
+    errors.minimumNim = "Minimum contribution must be greater than 0 NIM.";
+  }
+
+  if (!data.duration) {
+    errors.duration = "Select a poll duration.";
+  }
+
+  return errors;
+}
+
+function hasSupportErrors(errors: SupportErrors): boolean {
+  return Object.values(errors).some((v) => v !== undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a per-option error message.
+ * Returns undefined if valid, or a string describing the issue.
+ */
+function computeOptionError(
+  options: string[],
+  index: number,
+): string | undefined {
+  const value = options[index].trim();
+  if (!value) return "Option cannot be empty.";
+
+  const normalized = value.toLowerCase();
+  const duplicateAt = options.findIndex(
+    (opt, i) => i !== index && opt.trim().toLowerCase() === normalized,
+  );
+  if (duplicateAt !== -1) return "Duplicate option.";
+
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Page component
+// ---------------------------------------------------------------------------
+
+export default function CreatePollPage() {
+  const [step, setStep] = useState<number>(0);
+  const [formData, setFormData] = useState<PollFormData>(INITIAL_FORM_DATA);
+  const [showErrors, setShowErrors] = useState<boolean>(false);
+  const { walletStatus, activeAccount } = useNimiqContext();
+  const {
+    status: sessionStatus,
+    error: sessionError,
+    verifyActiveWallet,
+    isSessionVerified,
+    isWalletMatched,
+  } = useVotumSession();
+
+  // ---- Publication state ----
+  type PublishState = "idle" | "preparing" | "publishing" | "success" | "error";
+  const [publishState, setPublishState] = useState<PublishState>("idle");
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishedPollId, setPublishedPollId] = useState<string | null>(null);
+  const router = useRouter();
+  void publishedPollId; // consumed by the redirect side-effect
+
+  // ---- Draft loading ----
+  const searchParams = useSearchParams();
+  const draftIdParam = searchParams.get("draft");
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [initialDraftId] = useState(draftIdParam);
+
+  useEffect(() => {
+    if (!initialDraftId || draftLoaded) return;
+    const existing = getDraft(initialDraftId);
+    if (existing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring draft on mount
+      setFormData({
+        question: existing.question,
+        context: existing.context,
+        options:
+          existing.options.length >= 2
+            ? existing.options
+            : [...existing.options, ""],
+        contributionMode: existing.contributionMode,
+        purpose: existing.purpose,
+        destinationWallet: existing.destinationWallet,
+        minimumNim: existing.minimumNim,
+        duration: existing.duration,
+      });
+      const stepIndex = ["decision", "support", "review"].indexOf(
+        existing.currentStep,
+      );
+      if (stepIndex >= 0) setStep(stepIndex);
+    }
+    setDraftLoaded(true);
+  }, [initialDraftId, draftLoaded]);
+
+  // ---- Draft autosave ----
+  const { draft, setDraftStatus, saveImmediately } = usePollDraft({
+    draftId: initialDraftId,
+    formData,
+    currentStep: (["decision", "support", "review"] as const)[step],
+  });
+
+  // Update draft status based on wallet / session state during review
+  useEffect(() => {
+    if (step !== 2) return;
+    if (!walletStatus || walletStatus !== "connected") {
+      if (isSessionVerified) {
+        // Don't downgrade — session is verified, just wallet is disconnected
+        setDraftStatus("awaiting_wallet");
+      } else {
+        setDraftStatus("awaiting_wallet");
+      }
+    } else if (!isSessionVerified) {
+      setDraftStatus("awaiting_verification");
+    } else if (isSessionVerified) {
+      setDraftStatus("ready_to_publish");
+    }
+  }, [step, walletStatus, isSessionVerified, setDraftStatus]);
+
+  // ---- Derived validation ----
+  const decisionErrors = useMemo(
+    () => validateDecision(formData),
+    [formData],
+  );
+  const supportErrors = useMemo(() => validateSupport(formData), [formData]);
+
+  // ---- Per-option errors (only shown when showErrors is true) ----
+  const optionErrors = useMemo(() => {
+    if (!showErrors)
+      return Array<undefined>(formData.options.length).fill(undefined);
+    return formData.options.map((_, i) =>
+      computeOptionError(formData.options, i),
+    );
+  }, [formData.options, showErrors]);
+
+  // ---- Computed closing time ----
+  const closingTime = useMemo(() => {
+    const days = DURATION_DAYS[formData.duration];
+    if (!days) return null;
+    const now = new Date();
+    const closeDate = new Date(now);
+    closeDate.setDate(closeDate.getDate() + days);
+    return closeDate;
+  }, [formData.duration]);
+
+  // ---- Publishing eligibility ----
+  const canPublish = useMemo(() => {
+    if (publishState !== "idle" && publishState !== "error") return false;
+    if (!draft) return false;
+    if (walletStatus !== "connected") return false;
+    if (!isSessionVerified) return false;
+    if (!isWalletMatched) return false;
+    // Form must be valid (question non-empty, options >= 2)
+    if (!formData.question.trim() || formData.options.filter(o => o.trim()).length < 2) return false;
+    return true;
+  }, [publishState, draft, walletStatus, isSessionVerified, isWalletMatched, formData]);
+
+  // ---- Publish handler ----
+  const handlePublish = useCallback(async () => {
+    setPublishState("preparing");
+    setPublishError(null);
+
+    // Stage 1: Ensure publication key
+    let idKey: string;
+    try {
+      idKey = ensurePublicationKey(draft!.id);
+    } catch {
+      setPublishError("Votum could not prepare this draft for publication. Your draft is still safe.");
+      setPublishState("error");
+      return;
+    }
+
+    // Stage 2: Serialize request
+    const body = {
+      question: formData.question,
+      description: formData.context || null,
+      options: formData.options.filter(o => o.trim()),
+      mode: formData.contributionMode,
+      destinationWallet: formData.destinationWallet,
+      destinationPurpose: formData.purpose,
+      minimumNim: formData.minimumNim,
+      fairnessMode: "one_wallet_one_vote",
+      duration: formData.duration,
+      idempotencyKey: idKey,
+    };
+
+    let bodyJson: string;
+    try {
+      bodyJson = JSON.stringify(body);
+    } catch {
+      setPublishError("Votum could not prepare the publication request. Your draft is still safe.");
+      setPublishState("error");
+      return;
+    }
+
+    setPublishState("publishing");
+
+    // Stage 3: Send request
+    let res: Response;
+    try {
+      res = await fetch("/api/polls/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: bodyJson,
+        credentials: "same-origin",
+      });
+    } catch {
+      setPublishError("Votum could not reach the publishing service. Your draft is still safe. Try again.");
+      setPublishState("error");
+      return;
+    }
+
+    // Stage 4: Parse response
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok) {
+      const pollId = data.poll?.id;
+      if (!pollId) {
+        setPublishError("Votum received an unexpected publishing response. Your draft is still safe.");
+        setPublishState("error");
+        return;
+      }
+      setPublishedPollId(pollId);
+      setPublishState("success");
+      try { deleteDraft(draft!.id); } catch { /* non-critical */ }
+      setTimeout(() => {
+        router.replace(`/polls/${pollId}?published=1`);
+      }, 1000);
+      return;
+    }
+
+    // Structured errors
+    const errorCode = data.error as string;
+    const message = data.message as string || "";
+
+    if (res.status === 401) {
+      setPublishError("Your verified wallet session has expired. Verify your wallet again to publish this poll.");
+    } else if (res.status === 409) {
+      setPublishError("This draft may already have been published before it was edited.");
+    } else if (errorCode === "validation_failed") {
+      setPublishError("Some poll details need attention before publishing. Please review and try again.");
+    } else {
+      setPublishError(message || "Votum could not publish this poll. Your draft is still safe.");
+    }
+    setPublishState("error");
+  }, [draft, formData, router]);
+
+  // ---- Field updaters ----
+  function updateField<K extends keyof PollFormData>(
+    key: K,
+    value: PollFormData[K],
+  ) {
+    setFormData((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleOptionsChange(newOptions: string[]) {
+    setFormData((prev) => ({ ...prev, options: newOptions }));
+  }
+
+  // ---- Step navigation ----
+  function goToStep(nextStep: number) {
+    setShowErrors(false);
+    setStep(nextStep);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleContinueFromDecision() {
+    const errors = validateDecision(formData);
+    if (errors.question || errors.options) {
+      setShowErrors(true);
+      return;
+    }
+    goToStep(1);
+  }
+
+  function handleContinueFromSupport() {
+    const errors = validateSupport(formData);
+    if (hasSupportErrors(errors)) {
+      setShowErrors(true);
+      return;
+    }
+    goToStep(2);
+  }
+
+  // ---- Shared class strings ----
+  const sectionSpacing = "flex flex-col gap-5";
+
+  // ---- Derived display values ----
+  const closingTimeStr = closingTime
+    ? formatClosingTime(closingTime)
+    : null;
+  const durationLabel =
+    DURATION_LABELS[formData.duration] ?? formData.duration;
+
+  // =========================================================================
+  // RENDER
+  // =========================================================================
+
+  return (
+    <ProductShell>
+      {/* ================================================================= */}
+      {/* STEPPER                                                           */}
+      {/* ================================================================= */}
+      <Card glass className="mb-6 p-5">
+        <ProofPath
+          steps={STEP_LABELS}
+          activeStep={step}
+          className="mb-1"
+        />
+
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-secondary text-quiet-ink">
+            Step {step + 1} of 3
+          </p>
+          {draft && (
+            <div className="flex items-center gap-3">
+              <span className="text-micro text-verified-green">
+                Draft saved
+              </span>
+              <Link
+                href="/drafts"
+                onClick={saveImmediately}
+                className="text-sm text-quiet-ink hover:text-ballot-ink transition-colors"
+              >
+                Save and exit
+              </Link>
+            </div>
+          )}
+        </div>
+        <h1 className="font-display text-page-title text-ballot-ink">
+          Build a Votum Poll.
+        </h1>
+        <p className="mt-2 text-body text-quiet-ink">
+          Define the decision, disclose the NIM support destination, then
+          review before publishing.
+        </p>
+      </Card>
+
+      <Card glass className="p-5 sm:p-7">
+
+      {/* ================================================================= */}
+      {/* STEP 0 — DECISION                                                 */}
+      {/* ================================================================= */}
+      {step === 0 && (
+        <div className={sectionSpacing}>
+          {/* ---- Question ---- */}
+          <div className="flex flex-col gap-1.5">
+            <Input
+              label="What should your community decide?"
+              hint="Keep the question specific enough that someone can understand the choice immediately."
+              placeholder="E.g. Should we fund the community mural on Main Street?"
+              value={formData.question}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                updateField("question", e.target.value)
+              }
+              error={showErrors ? decisionErrors.question : undefined}
+              maxLength={QUESTION_MAX_LENGTH}
+            />
+            <p className="text-micro text-right text-quiet-ink">
+              {formData.question.length}/{QUESTION_MAX_LENGTH}
+            </p>
+          </div>
+
+          {/* ---- Context (optional) ---- */}
+          <Textarea
+            label="Add context"
+            hint="Help participants understand why this decision matters."
+            placeholder="Provide background information, links, or reasoning that helps voters understand the decision."
+            value={formData.context}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+              updateField("context", e.target.value)
+            }
+          />
+
+          {/* ---- Poll Options ---- */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-ballot-ink">
+              Poll options
+            </label>
+            {showErrors && decisionErrors.options && (
+              <p
+                className="text-micro text-reject-red"
+                role="alert"
+              >
+                {decisionErrors.options}
+              </p>
+            )}
+
+            <PollOptionsEditor
+              options={formData.options}
+              onChange={handleOptionsChange}
+              errors={optionErrors}
+            />
+          </div>
+
+          {/* ---- Navigation ---- */}
+          <div className="pt-2">
+            <Button
+              type="button"
+              variant="primary"
+              onClick={handleContinueFromDecision}
+            >
+              Continue to support details
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* STEP 1 — SUPPORT                                                  */}
+      {/* ================================================================= */}
+      {step === 1 && (
+        <div className={sectionSpacing}>
+          {/* ---- Contribution Mode ---- */}
+          <ContributionModeSelector
+            value={formData.contributionMode}
+            onChange={(mode) => updateField("contributionMode", mode)}
+            error={
+              showErrors ? supportErrors.contributionMode : undefined
+            }
+          />
+
+          {/* ---- Contribution Purpose ---- */}
+          <Textarea
+            label="What will the NIM support?"
+            hint="This statement will be shown before someone confirms their contribution. Describe how the contribution supports this creator, project or community."
+            placeholder="E.g. Funds go toward materials and artist stipends for the Main Street mural project."
+            value={formData.purpose}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+              updateField("purpose", e.target.value)
+            }
+            error={showErrors ? supportErrors.purpose : undefined}
+          />
+
+          {/* ---- Destination Wallet ---- */}
+          <div className="flex flex-col gap-1.5">
+            <Input
+              label="Contribution destination"
+              hint="Participants will see this wallet before confirming their NIM contribution."
+              placeholder="NQ... or 0x..."
+              value={formData.destinationWallet}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                updateField("destinationWallet", e.target.value)
+              }
+              error={showErrors ? supportErrors.destinationWallet : undefined}
+            />
+            {activeAccount && (
+              <button
+                type="button"
+                onClick={() =>
+                  updateField("destinationWallet", activeAccount)
+                }
+                className="text-sm text-nim-blue hover:text-signal-gold transition-colors font-medium focus-visible:outline-none focus-visible:underline"
+              >
+                Use connected wallet: {truncateAddress(activeAccount)}
+              </button>
+            )}
+            {activeAccount ? (
+              <p className="text-micro text-quiet-ink">
+                Your wallet is connected. Use the connected address above or
+                enter a different destination.
+              </p>
+            ) : (
+              <p className="text-micro text-quiet-ink">
+                Connect your wallet to use your address as the contribution
+                destination, or enter one manually.
+              </p>
+            )}
+          </div>
+
+          {/* ---- Minimum NIM Contribution ---- */}
+          <div className="flex flex-col gap-1.5">
+            <Input
+              label="Minimum contribution"
+              hint="Each verified vote must meet this minimum contribution."
+              type="number"
+              min="0.001"
+              step="0.001"
+              placeholder="0.001"
+              value={formData.minimumNim}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                updateField("minimumNim", e.target.value)
+              }
+              error={showErrors ? supportErrors.minimumNim : undefined}
+            />
+            <p className="text-micro text-quiet-ink">NIM</p>
+          </div>
+
+          {/* ---- Poll Duration ---- */}
+          <div className="flex flex-col gap-1.5">
+            <Select
+              label="Poll duration"
+              options={DURATION_OPTIONS}
+              placeholder="Select duration"
+              value={formData.duration}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                updateField("duration", e.target.value)
+              }
+              error={showErrors ? supportErrors.duration : undefined}
+            />
+            {closingTime && (
+              <p className="text-secondary text-quiet-ink">
+                Planned closing time: {formatClosingTime(closingTime)}
+              </p>
+            )}
+          </div>
+
+          {/* ---- Fairness Rule ---- */}
+          <div className="flex flex-col gap-2 pt-1">
+            <FairnessLabel />
+            <p className="text-secondary text-quiet-ink">
+              Every eligible wallet records one vote. The NIM contribution is
+              shown as a separate support signal. Contributing more NIM does
+              not create additional votes.
+            </p>
+          </div>
+
+          {/* ---- Navigation ---- */}
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => goToStep(0)}
+            >
+              Back to decision
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={handleContinueFromSupport}
+            >
+              Review Votum Poll
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* STEP 2 — REVIEW                                                   */}
+      {/* ================================================================= */}
+      {step === 2 && (
+        <>
+          <PollReview
+            question={formData.question}
+            context={formData.context}
+            options={formData.options}
+            contributionMode={formData.contributionMode}
+            purpose={formData.purpose}
+            destinationWallet={formData.destinationWallet}
+            minimumNim={formData.minimumNim}
+            duration={formData.duration}
+            durationLabel={durationLabel}
+            closingTime={closingTimeStr}
+            onEditDecision={() => goToStep(0)}
+            onEditSupport={() => goToStep(1)}
+            activeAccount={activeAccount}
+            walletStatus={walletStatus}
+            sessionStatus={sessionStatus}
+            sessionError={sessionError}
+            onVerifyActiveWallet={verifyActiveWallet}
+            canPublish={canPublish}
+            publishState={publishState}
+            publishError={publishError}
+            onPublish={handlePublish}
+          />
+          <div className="pt-2">
+            <Link
+              href="/drafts"
+              onClick={saveImmediately}
+              className="text-sm text-quiet-ink hover:text-ballot-ink transition-colors"
+            >
+              Back to drafts
+            </Link>
+          </div>
+        </>
+      )}
+      </Card>
+    </ProductShell>
+  );
+}

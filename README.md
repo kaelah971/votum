@@ -1,36 +1,328 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Votum
+
+The Proof Ballot — a Nimiq Pay Mini App for community decisions backed by NIM.
+
+Votum helps communities make decisions with verified NIM-backed votes inside
+Nimiq Pay. Put NIM behind your say.
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- npm
+
+### Install
+
+```bash
+npm install
+```
+
+### Development
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+npm run start
+```
 
-## Learn More
+## Nimiq Pay Mini App Development
 
-To learn more about Next.js, take a look at the following resources:
+Votum is a Nimiq Pay Mini App. It initializes the Nimiq provider when opened
+inside Nimiq Pay and requests wallet account access after a user action.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Environment variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Copy `.env.example` to `.env.local`:
 
-## Deploy on Vercel
+```bash
+cp .env.example .env.local
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Variable | Description |
+|----------|-------------|
+| `NEXT_PUBLIC_APP_URL` | Public HTTPS URL of the *published* Mini App. Required to generate a shared `nimiqpay://` deeplink. Not needed for local network testing — enter the local URL directly in Nimiq Pay. |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Local network testing
+
+Connect your phone and development machine to the same Wi-Fi network.
+
+Start the dev server with network access:
+
+```bash
+npm run dev -- --hostname 0.0.0.0
+```
+
+The `--` separates npm args from Next.js args. The server prints your
+machine's local IP address. Open the Nimiq Pay Mini Apps testing interface
+and enter the full URL directly:
+
+```
+http://192.168.1.42:3000
+```
+
+> Local network testing does **not** require `NEXT_PUBLIC_APP_URL`. The
+> URL is entered directly — no `nimiqpay://` deeplink is used.
+
+### Production deeplink (published sharing)
+
+When Votum is deployed to a public HTTPS host, set `NEXT_PUBLIC_APP_URL`
+to the deployment URL (e.g. `https://votum.example.com`).
+
+The deeplink helper in `src/lib/nimiq/deeplink.ts` constructs:
+
+```
+nimiqpay://miniapp?url=votum.example.com
+```
+
+`getNimiqPayDeepLink()` returns `null` for:
+- Unset `NEXT_PUBLIC_APP_URL`
+- `localhost` and `127.0.0.1`
+- Private IP ranges (`10.x.x.x`, `172.16–31.x.x`, `192.168.x.x`)
+- Non-HTTPS public URLs
+- Malformed URLs
+
+Only a valid public HTTPS host produces a shareable deeplink.
+
+### Testing inside Nimiq Pay
+
+The SDK (`@nimiq/mini-app-sdk`) initializes automatically when the
+`window.nimiq` provider is injected by Nimiq Pay. The `init()` call waits
+up to 5 seconds for the provider before reporting the environment as
+unavailable.
+
+**On-device testing** (recommended):
+1. Connect phone and machine to the same Wi-Fi
+2. Run `npm run dev -- --hostname 0.0.0.0`
+3. Open Nimiq Pay → Mini Apps → enter `http://<your-ip>:3000`
+4. Verify the provider initializes (wallet button shows "Connect wallet")
+5. Tap Connect wallet and approve the account access prompt
+6. Confirm your Nimiq address appears
+
+**Deployed testing**:
+1. Deploy Votum to a public URL (Vercel, Netlify, etc.)
+2. Set `NEXT_PUBLIC_APP_URL` to the deployment URL
+3. Use the Nimiq Pay deeplink: `nimiqpay://miniapp?url=example.com`
+
+### Sharing your Mini App
+
+Once deployed, share using the official Nimiq Pay deeplink format:
+
+```
+nimiqpay://miniapp?url=votum.example.com
+```
+
+The deeplink helper in `src/lib/nimiq/deeplink.ts` constructs this
+from `NEXT_PUBLIC_APP_URL`. It returns `null` for localhost URLs.
+
+### Wallet connection flow
+
+1. Tap **Connect wallet**
+2. Nimiq Pay shows the account access prompt
+3. Approve to return your Nimiq addresses
+4. Votum stores addresses in memory (no persistence)
+5. Tap **Disconnect from Votum** to clear the session
+
+### Rejection handling
+
+If you deny the account access prompt, Votum shows a permission-denied
+state with the option to try again.
+
+### Outside Nimiq Pay
+
+When opened in a regular browser, Votum shows an `unavailable` runtime
+state after the 5-second provider timeout. Marketing pages remain usable.
+Product routes explain that wallet actions require Nimiq Pay. The app
+does not crash.
+
+## Supabase
+
+Votum uses Supabase for public poll storage and retrieval.
+
+### Environment
+
+| Variable | Source |
+|----------|--------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase Dashboard → Settings → API → Project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase Dashboard → Settings → API → anon/public key |
+
+No service-role or secret key is needed for public reads.
+
+### Migration
+
+```bash
+# Link the project (requires Supabase CLI)
+npx supabase link --project-ref <ref>
+
+# Apply migrations
+npx supabase db push
+
+# Or run manually against your Supabase SQL editor
+```
+
+The migration file is at `supabase/migrations/0001_votum_poll_foundation.sql`.
+
+### Security model
+
+- **Public reads only**: `SELECT` on `polls` (live/closed, is_public=true)
+  and `poll_options` (belonging to public polls only)
+- **No public writes**: `INSERT`, `UPDATE`, and `DELETE` are revoked for
+  `anon` and `authenticated` roles
+- **Row Level Security** enforced on both tables
+- No Supabase Auth used yet — all access is anonymous
+- No wallet proof required for public poll reading
+
+### Verify
+
+```sql
+-- Confirm anonymous writes are denied (should fail with permission error)
+INSERT INTO public.polls (creator_wallet, question, mode, destination_wallet, destination_purpose, min_nim_luna, ends_at) VALUES ('NQ...', 'test', 'creator_support', 'NQ...', 'test', 100000, now() + interval '7 days');
+-- Expected: ERROR: new row violates row-level security policy
+```
+
+### Database types
+
+When the project is linked, generate types with:
+```bash
+npx supabase gen types typescript --linked > src/types/database.ts
+```
+
+A compatible schema definition is already at `src/types/database.ts`.
+
+### Public read architecture
+
+- `src/lib/supabase/config.ts` — validates env vars, creates client
+- `src/lib/data/public-polls.ts` — `listPublicPolls()`, `getPublicPollById()`
+- Queries use the publishable key only (no service role)
+- Server-side only (never imported into client components)
+
+## Wallet Ownership Verification
+
+Votum proves wallet ownership through a cryptographic challenge-response
+flow using the Nimiq Mini App `sign()` method.
+
+### How it works
+
+1. User taps **Verify wallet ownership**
+2. Server generates a signed challenge message (5-minute expiry)
+3. Nimiq Pay shows a signature confirmation dialog
+4. User approves — signature and public key are sent to Votum
+5. Server verifies: signature is valid, public key derives to the claimed address
+6. HTTP-only session cookie is set (12-hour expiry)
+7. Refresh preserves verified state
+8. **End verified Votum session** clears the cookie
+
+### Signing convention
+
+The Mini App `sign(message)` signs the UTF-8 bytes of the message string.
+Verification uses `@nimiq/core` `PublicKey.verify()` over the same bytes.
+The public key's derived address must match the connected wallet address.
+
+### Signature convention calibration
+
+The exact bytes signed by the Mini App `sign(message)` API have not been
+confirmed through device testing. Two candidate conventions are supported
+for calibration:
+
+1. **Raw UTF-8** — `sign(message)` signs the UTF-8 bytes of the string directly
+2. **Nimiq prefixed message** — `\x16Nimiq Signed Message:\n` + length + message, SHA-256 hashed
+
+To determine which convention Nimiq Pay uses:
+
+1. Run `npm run dev -- --hostname 0.0.0.0`
+2. Connect your phone to the same Wi-Fi
+3. Open Nimiq Pay and enter `http://<your-ip>:3000`
+4. Go to `/create`, complete enough of the form to reach Review
+5. Tap **Test Nimiq Pay signature** under the calibration section
+6. Approve the native signing confirmation
+7. Record the three boolean results shown
+
+**Device tested:** Not yet tested. Signature convention is DEVICE-UNVERIFIED.
+
+**Test procedure prepared:** Calibration route at `/api/dev/wallet-proof/calibrate`
+(development only). Diagnostic UI on `/create` Review step. The route is
+blocked in production.
+
+### Server architecture
+
+- `src/lib/nimiq/server-crypto.ts` — address normalization, derivation, verification
+- `src/lib/api/session.ts` — session token management (hashed, HTTP-only cookie)
+- `src/lib/supabase/admin.ts` — server-only admin client (secret key)
+- `POST /api/wallet-proof/challenge` — creates a one-time challenge
+- `POST /api/wallet-proof/verify` — verifies signature, establishes session
+- `GET /api/wallet-proof/session` — checks current session
+- `POST /api/wallet-proof/logout` — revokes session
+
+### Security
+
+- Challenge cannot be reused (atomically consumed)
+- Session token is SHA-256 hashed before storage
+- Raw token never leaves the HTTP-only cookie
+- `wallet_challenges` and `wallet_sessions` tables have no public access
+- Secret key (`SUPABASE_SECRET_KEY`) is never exposed to client bundles
+- Wallet connection is separate from verified session
+
+### Dependencies
+
+- `@nimiq/core` — server-side address/public-key/signature operations
+
+## Project Structure
+
+```
+src/
+  app/              — App Router pages
+  components/
+    ui/             — Reusable primitives
+    product/        — Product-level components
+    poll/           — Poll view components
+    creator/        — Creator view components
+    decision/       — Create-flow components
+    state/          — Empty/Loading/Error/Unavailable states
+    layout/         — MarketingShell, ProductShell, navigation
+    marketing/      — Landing page components
+  hooks/            — Shared React hooks
+  lib/              — Utilities (format, Nimiq client, deeplink)
+  providers/        — React context providers
+  types/            — Shared TypeScript types
+```
+
+## Stack
+
+- Next.js 16 (App Router)
+- React 19
+- Tailwind CSS v4
+- TypeScript (strict)
+- @nimiq/mini-app-sdk
+
+## Commands
+
+| Command | Runs |
+|---------|------|
+| `npm run dev` | Dev server |
+| `npm run dev -- --hostname 0.0.0.0` | Dev server with network access |
+| `npm run build` | Production build |
+| `npm run start` | Start production server |
+| `npm run lint` | ESLint |
+| `npx tsc --noEmit` | TypeScript type check |
+
+## Current Status
+
+F1-F5 (Frontend foundation, marketing, explore/create, poll/receipt/creator
+views, QA) are complete. F6 (wallet identity) integrates the Nimiq Mini App
+SDK for real account access.
+
+Payments, Supabase, data persistence, and transaction verification are not
+yet implemented.
+
+## Design
+
+See `DESIGN.md` for the visual system.
+See `docs/brand-messaging.md` for product language and tone.
+See `docs/votum-product-idea.md` for product scope and audience.
