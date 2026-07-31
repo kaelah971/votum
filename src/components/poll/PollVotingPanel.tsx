@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { PollView, VoteUiState } from "@/types/poll";
+import type { PollView } from "@/types/poll";
 import { PollHeader } from "@/components/poll/PollHeader";
 import { PollSupportDetails } from "@/components/poll/PollSupportDetails";
 import { PollChoiceList } from "@/components/poll/PollChoiceList";
@@ -87,13 +87,6 @@ export default function PollVotingPanel({
     createdAt: string;
   } | null>(null);
 
-  // `voteState` tracks the high-level VoteUiState for any pending transitions.
-  // Currently unused in the render path but retained as required by the
-  // component contract (may be consumed by future sub-components).
-  const [voteState, setVoteState] = useState<VoteUiState>({ status: "idle" });
-  void voteState;
-  void setVoteState;
-  void activeAccount;
 
   // ----- Derived flags -----
   const isLive = poll.status === "live";
