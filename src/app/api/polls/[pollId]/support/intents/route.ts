@@ -97,6 +97,11 @@ export async function POST(
     );
   }
 
+  // Reject amounts that cannot be safely represented by the Mini App provider
+  if (amountLuna > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return NextResponse.json({ error: "invalid_amount", stage: "validation", requestId, message: "Amount exceeds the maximum safe integer for Nimiq Pay." }, { status: 400 });
+  }
+
   // 5. Admin client availability
   const adminConfig = getAdminConfigStatus();
   if (!adminConfig.configured) {
