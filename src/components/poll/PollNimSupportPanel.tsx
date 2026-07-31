@@ -129,6 +129,10 @@ export function PollNimSupportPanel({
   const [txHash, setTxHash] = useState<string | null>(null);
   const [confirmedContribution, setConfirmedContribution] = useState<{
     id: string;
+    optionId?: string;
+    amountLuna?: string;
+    transactionHash?: string;
+    confirmedAt?: string;
   } | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -180,6 +184,75 @@ export function PollNimSupportPanel({
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [pollId, isSessionVerified]);
 
+  // ── Restore confirmed contributions from server on mount ─────────────
+  // Only runs when NO pending record exists (pending takes priority).
+
+  useEffect(() => {
+    if (!isSessionVerified) return;
+    const pending = getPendingSupport(pollId);
+    if (pending) return; // Pending takes priority — do not restore older confirmation
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/polls/${pollId}/support/mine`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const latest = data.contributions?.[0];
+        if (latest && !cancelled) {
+          setConfirmedContribution({
+            id: latest.id,
+            optionId: latest.optionId,
+            amountLuna: latest.amountLuna,
+            transactionHash: latest.transactionHash,
+            confirmedAt: latest.confirmedAt,
+          });
+          setSelectedOptionId(latest.optionId);
+          setStage("confirmed");
+        }
+      } catch { /* non-critical */ }
+    })();
+    return () => { cancelled = true; };
+  }, [pollId, isSessionVerified]);
+
+  // ── Auto-resolve pending that is already confirmed ───────────────────
+  // If the pending transaction hash matches a confirmed contribution,
+  // transition from pending to confirmed without further polling.
+
+  useEffect(() => {
+    if (stage !== "pending" || !txHash) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/polls/${pollId}/support/mine`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const match = data.contributions?.find(
+          (c: { transactionHash?: string }) => c.transactionHash === txHash,
+        );
+        if (match && !cancelled) {
+          setConfirmedContribution({
+            id: match.id,
+            optionId: match.optionId,
+            amountLuna: match.amountLuna,
+            transactionHash: match.transactionHash,
+            confirmedAt: match.confirmedAt,
+          });
+          setSelectedOptionId(match.optionId);
+          setStage("confirmed");
+          clearPendingSupport(pollId);
+        }
+      } catch { /* non-critical */ }
+    })();
+    return () => { cancelled = true; };
+  }, [pollId, stage, txHash]);
+
   // ── Confirm contribution (with exponential-backoff polling) ────────
 
   const confirmContribution = useCallback(
@@ -203,6 +276,22 @@ export function PollNimSupportPanel({
             clearPendingSupport(pollId);
             setStage("confirmed");
             loadResults();
+            // Fetch richer contribution details from /mine
+            (async () => {
+              try {
+                const mineRes = await fetch(`/api/polls/${pollId}/support/mine`, { credentials: "same-origin", cache: "no-store" });
+                if (!mineRes.ok || !mountedRef.current) return;
+                const mineData = await mineRes.json();
+                const latest = mineData.contributions?.[0];
+                if (latest && mountedRef.current) {
+                  setConfirmedContribution({
+                    id: latest.id, optionId: latest.optionId,
+                    amountLuna: latest.amountLuna, transactionHash: latest.transactionHash,
+                    confirmedAt: latest.confirmedAt,
+                  });
+                }
+              } catch { /* non-critical */ }
+            })();
             return;
           }
 
@@ -427,9 +516,26 @@ export function PollNimSupportPanel({
             <CheckIcon /> NIM support confirmed
           </p>
           <p className="text-sm text-ballot-ink">
-            {options.find((o) => o.id === selectedOptionId)?.label ??
+            {options.find((o) => o.id === (confirmedContribution.optionId ?? selectedOptionId))?.label ??
               "Your choice"}
           </p>
+          {confirmedContribution.amountLuna && (
+            <p className="text-sm text-ballot-ink font-medium">
+              {formatLunaToNimCompact(confirmedContribution.amountLuna)} sent
+            </p>
+          )}
+          {confirmedContribution.confirmedAt && (
+            <p className="text-micro text-quiet-ink">
+              {new Date(confirmedContribution.confirmedAt).toLocaleString("en-US", {
+                month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+              })}
+            </p>
+          )}
+          {confirmedContribution.transactionHash && (
+            <p className="text-micro text-nim-blue font-proof truncate max-w-[200px]">
+              {confirmedContribution.transactionHash.slice(0, 12)}…{confirmedContribution.transactionHash.slice(-8)}
+            </p>
+          )}
           <p className="text-micro text-quiet-ink">
             Your NIM was sent directly to the poll&apos;s disclosed recipient.
           </p>
