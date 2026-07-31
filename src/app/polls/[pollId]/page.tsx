@@ -2,9 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ProductShell } from "@/components/layout/ProductShell";
 import { getPublicPollById } from "@/lib/data/public-polls";
-import { PollPageView } from "@/components/poll/PollPageView";
+import PollVotingPanel from "@/components/poll/PollVotingPanel";
 import { UnavailableState } from "@/components/state/UnavailableState";
-import type { VoteUiState } from "@/types/poll";
 
 export const dynamic = "force-dynamic";
 
@@ -63,8 +62,6 @@ export default async function PollPage({
     );
   }
 
-  const voteState: VoteUiState = { status: "wallet_required" };
-
   return (
     <ProductShell>
       {wasJustPublished && (
@@ -88,7 +85,7 @@ export default async function PollPage({
           </div>
         </div>
       )}
-      <PollPageView poll={result.poll} voteState={voteState} />
+      <PollVotingPanel poll={result.poll} />
     </ProductShell>
   );
 }
