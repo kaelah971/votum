@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { WalletButton } from "@/components/ui/WalletButton";
+import { CreatorActivityNotifications } from "@/components/insights/CreatorActivityNotifications";
 
 const VotumMark = () => (
   <>
@@ -97,8 +98,9 @@ export function ProductNav() {
           ))}
         </div>
 
-        {/* Right: wallet + hamburger */}
+        {/* Right: notifications + wallet + hamburger */}
         <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
+          <CreatorActivityNotifications />
           <div className="hidden lg:block">
             <WalletButton />
           </div>
