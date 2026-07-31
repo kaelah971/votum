@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ProductShell } from "@/components/layout/ProductShell";
 import { getPublicPollById } from "@/lib/data/public-polls";
 import PollVotingPanel from "@/components/poll/PollVotingPanel";
+import { PollNimSupportPanel } from "@/components/poll/PollNimSupportPanel";
 import { UnavailableState } from "@/components/state/UnavailableState";
 
 export const dynamic = "force-dynamic";
@@ -86,6 +87,12 @@ export default async function PollPage({
         </div>
       )}
       <PollVotingPanel poll={result.poll} />
+      <PollNimSupportPanel
+        pollId={result.poll.id}
+        options={result.poll.options}
+        isLive={result.poll.status === "live"}
+        minimumNim={result.poll.minimumNim}
+      />
     </ProductShell>
   );
 }
