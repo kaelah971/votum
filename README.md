@@ -314,12 +314,69 @@ src/
 
 ## Current Status
 
-F1-F5 (Frontend foundation, marketing, explore/create, poll/receipt/creator
-views, QA) are complete. F6 (wallet identity) integrates the Nimiq Mini App
-SDK for real account access.
+Complete MVP with:
 
-Payments, Supabase, data persistence, and transaction verification are not
-yet implemented.
+- Nimiq Pay Mini App wallet connection and ownership verification
+- Poll creation, publishing, and atomic database insertion
+- Explore (public) and My Polls (creator-owned) listings
+- One wallet · one vote with real vote results
+- Direct NIM support through Nimiq Pay (`sendBasicTransactionWithData`)
+- Pending-to-confirmed transaction verification via Nimiq PoS RPC
+- Separate vote and NIM support totals
+- Confirmed contribution restoration after refresh
+- Real mainnet NIM support successfully tested
+- Nimiq network ID: 24 (mainnet)
+
+## Deployment
+
+### Prerequisites
+
+- Node.js 18+
+- Supabase project with migrations applied
+- Nimiq Pay developer access for Mini App testing
+
+### Environment variables
+
+| Variable | Public | Required | Source |
+|----------|--------|----------|--------|
+| `NEXT_PUBLIC_APP_URL` | Yes | Production | Your deployed HTTPS URL (e.g. `https://votum.vercel.app`) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Always | Supabase Dashboard → Settings → API |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes | Always | Supabase Dashboard → Settings → API → anon key |
+| `SUPABASE_SECRET_KEY` | **No** | Always | Supabase Dashboard → Settings → API → service_role key |
+| `NIMIQ_RPC_URL` | **No** | NIM support | Nimiq PoS JSON-RPC endpoint (HTTPS required) |
+| `NIMIQ_NETWORK_ID` | **No** | NIM support | `24` for mainnet |
+
+**Never prefix `SUPABASE_SECRET_KEY`, `NIMIQ_RPC_URL`, or `NIMIQ_NETWORK_ID` with `NEXT_PUBLIC_`.**
+
+### Vercel deployment
+
+1. Import the repository into Vercel
+2. Set all environment variables in Vercel project settings
+3. Apply Supabase migrations: `npx supabase db push` (requires linked project)
+4. Deploy
+
+Votum requires **Node.js runtime** (not Edge) for API routes using `@nimiq/core` WASM and `node:crypto`.
+
+### Migration
+
+All Supabase migrations are in `supabase/migrations/`. Apply with:
+
+```bash
+npx supabase db push
+```
+
+### Local production build
+
+```bash
+npm run build
+npm run start -- --hostname 0.0.0.0
+```
+
+### Architecture
+
+Votum never holds, escrows, or redistributes NIM. All support goes
+**directly from supporter to the disclosed poll destination**. Voting
+and NIM support are separate — NIM never increases vote weight.
 
 ## Design
 
