@@ -24,6 +24,7 @@ const navLinks: NavLink[] = [
   { label: "Create", href: "/create" },
   { label: "My Polls", href: "/my-polls" },
   { label: "Drafts", href: "/drafts" },
+  { label: "Insights", href: "/insights" },
 ];
 
 export function ProductNav() {
