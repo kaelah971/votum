@@ -27,16 +27,38 @@ export async function GET(
   }
 
   try {
-    const { data, error } = await (admin as any)
+    // Query confirmed intents initiated by this wallet, then fetch
+    // contribution details by confirmed_contribution_id. This ensures
+    // the user sees contributions they INITIATED, even when Nimiq Pay
+    // funded them from a different account.
+    const { data: intents, error: intentsErr } = await (admin as any)
+      .from("nim_support_intents")
+      .select("id, confirmed_contribution_id")
+      .eq("initiator_wallet", session.address)
+      .eq("poll_id", pollId)
+      .eq("status", "confirmed")
+      .not("confirmed_contribution_id", "is", null)
+      .order("created_at", { ascending: false });
+
+    if (intentsErr) throw intentsErr;
+
+    const contributionIds = (intents ?? [])
+      .map((r: Record<string, unknown>) => r.confirmed_contribution_id as string)
+      .filter(Boolean);
+
+    if (contributionIds.length === 0) {
+      return NextResponse.json({ contributions: [] });
+    }
+
+    const { data: contribs, error: cErr } = await (admin as any)
       .from("nim_contributions")
       .select("id, option_id, amount_luna, transaction_hash, confirmed_at")
-      .eq("poll_id", pollId)
-      .eq("supporter_wallet", session.address)
+      .in("id", contributionIds)
       .order("confirmed_at", { ascending: false });
 
-    if (error) throw error;
+    if (cErr) throw cErr;
 
-    const contributions = (data ?? []).map((c: Record<string, unknown>) => ({
+    const contributions = (contribs ?? []).map((c: Record<string, unknown>) => ({
       id: c.id,
       optionId: c.option_id,
       amountLuna: String(c.amount_luna),

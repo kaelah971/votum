@@ -214,8 +214,14 @@ export async function POST(
   // 8. Generate support intent
   const reference = `votum:${randomBytes(16).toString("hex")}`;
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-  const supporterCanonical = normalizeAddress(supporterWallet) ?? supporterWallet;
-  const recipientCanonical = normalizeAddress(poll.destination_wallet) ?? poll.destination_wallet;
+  const supporterCanonical = normalizeAddress(supporterWallet);
+  if (!supporterCanonical) {
+    return NextResponse.json({ error: "invalid_address", stage: "validation", requestId, message: "Could not canonicalize supporter wallet." }, { status: 400 });
+  }
+  const recipientCanonical = normalizeAddress(poll.destination_wallet);
+  if (!recipientCanonical) {
+    return NextResponse.json({ error: "invalid_address", stage: "validation", requestId, message: "Poll destination wallet is not a valid Nimiq address." }, { status: 400 });
+  }
 
   // nim_support_intents may not be in generated Database types — use `as any`
   const intentQuery = admin.from("nim_support_intents" as any) as any;
@@ -224,6 +230,7 @@ export async function POST(
       reference,
       poll_id: pollId,
       option_id: optionId,
+      initiator_wallet: supporterCanonical,
       supporter_wallet: supporterCanonical,
       recipient_wallet: recipientCanonical,
       amount_luna: Number(amountLuna),

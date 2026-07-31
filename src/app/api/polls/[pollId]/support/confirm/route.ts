@@ -24,7 +24,10 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: "session_missing", stage: "session", requestId, message: "A verified wallet session is required." }, { status: 401 });
   }
-  const supporterWallet = normalizeAddress(session.address) ?? session.address;
+  const supporterWallet = normalizeAddress(session.address);
+  if (!supporterWallet) {
+    return NextResponse.json({ error: "session_invalid", stage: "session", requestId, message: "Session wallet address is invalid." }, { status: 401 });
+  }
 
   // 2. Parse body
   let body: unknown;
@@ -68,7 +71,7 @@ export async function POST(
   if (intent.poll_id !== pollId) {
     return NextResponse.json({ error: "intent_not_found", stage: "intent", requestId, message: "Intent does not belong to this poll." }, { status: 404 });
   }
-  if (intent.supporter_wallet !== supporterWallet) {
+  if (intent.initiator_wallet !== supporterWallet) {
     return NextResponse.json({ error: "intent_not_found", stage: "intent", requestId, message: "Intent does not belong to this wallet." }, { status: 404 });
   }
 
@@ -125,12 +128,17 @@ export async function POST(
   const tx = txResult.data;
 
   // 8. Verify transaction fields match intent
-  const txSender = normalizeAddress(tx.sender) ?? tx.sender;
-  const txRecipient = normalizeAddress(tx.recipient) ?? tx.recipient;
-
-  if (txSender !== intent.supporter_wallet) {
-    return NextResponse.json({ error: "transaction_mismatch", stage: "verification", requestId, message: "Transaction sender does not match." }, { status: 422 });
+  const txSender = normalizeAddress(tx.sender);
+  if (!txSender) {
+    return NextResponse.json({ error: "rpc_unavailable", stage: "verification", requestId, message: "Could not parse the transaction sender address." }, { status: 502 });
   }
+  const txRecipient = normalizeAddress(tx.recipient);
+  if (!txRecipient) {
+    return NextResponse.json({ error: "rpc_unavailable", stage: "verification", requestId, message: "Could not parse the transaction recipient address." }, { status: 502 });
+  }
+
+  // Sender-match check removed — Nimiq Pay may fund from any account.
+  // Enforce recipient, amount, memo, network and execution matching below.
   if (txRecipient !== intent.recipient_wallet) {
     return NextResponse.json({ error: "transaction_mismatch", stage: "verification", requestId, message: "Transaction recipient does not match." }, { status: 422 });
   }
@@ -151,6 +159,7 @@ export async function POST(
       _transaction_ts: tx.timestampMs
         ? new Date(tx.timestampMs).toISOString()
         : null,
+      _tx_sender: txSender,
     } as any,
   );
 

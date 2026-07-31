@@ -67,10 +67,6 @@ function confirmedWithHash(hash: string) {
   return { contributions: [{ id: "c-match", optionId: "opt-match", amountLuna: "300000", transactionHash: hash, confirmedAt: "2026-01-03T00:00:00Z" }] };
 }
 
-function emptyContributions() {
-  return { contributions: [] };
-}
-
 // =========================================================================
 
 function test_pendingRecordFields() {
