@@ -84,10 +84,14 @@ type PageState =
 function formatLunaToNimShort(lunaStr: string): string {
   try {
     const luna = BigInt(lunaStr);
-    const nim = Number(luna) / 100_000;
-    return nim.toFixed(5).replace(/\.?0+$/, "");
+    const LUNA_PER_NIM = BigInt(100000);
+    const whole = luna / LUNA_PER_NIM;
+    const frac = luna % LUNA_PER_NIM;
+    if (frac === BigInt(0)) return `${whole} NIM`;
+    const fracStr = frac.toString().padStart(5, "0").replace(/0+$/, "");
+    return `${whole}.${fracStr} NIM`;
   } catch {
-    return "0";
+    return "0 NIM";
   }
 }
 
@@ -355,7 +359,7 @@ export default function CreatorInsightsPage() {
                 value={formatLunaToNimShort(summary.totalNimLuna)}
               />
               <MetricCard
-                label="Supporters"
+                label="Confirmed supports"
                 value={summary.totalContributions}
               />
             </div>
