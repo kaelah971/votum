@@ -46,6 +46,72 @@ export type Database = {
           },
         ]
       }
+      poll_publication_requests: {
+        Row: {
+          created_at: string
+          creator_wallet: string
+          id: string
+          idempotency_key: string
+          poll_id: string
+          request_fingerprint: string
+        }
+        Insert: {
+          created_at?: string
+          creator_wallet: string
+          id?: string
+          idempotency_key: string
+          poll_id: string
+          request_fingerprint: string
+        }
+        Update: {
+          created_at?: string
+          creator_wallet?: string
+          id?: string
+          idempotency_key?: string
+          poll_id?: string
+          request_fingerprint?: string
+        }
+        Relationships: []
+      }
+      poll_votes: {
+        Row: {
+          created_at: string
+          id: string
+          option_id: string
+          poll_id: string
+          voter_wallet: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          option_id: string
+          poll_id: string
+          voter_wallet: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          option_id?: string
+          poll_id?: string
+          voter_wallet?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "poll_votes_option_id_fkey"
+            columns: ["option_id"]
+            isOneToOne: false
+            referencedRelation: "poll_options"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "poll_votes_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       polls: {
         Row: {
           created_at: string
@@ -165,26 +231,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      /** Atomic poll publication — returns { id, status, replay } */
+      cast_poll_vote_atomic: {
+        Args: Record<string, unknown>
+        Returns: Json
+      }
+      get_public_poll_results: {
+        Args: Record<string, unknown>
+        Returns: Json
+      }
+      /** Atomic poll publication — returns { id, status, result_kind } */
       publish_poll_atomic: {
-        Args: {
-          _creator_wallet: string
-          _question: string
-          _description: string | null
-          _mode: string
-          _destination_wallet: string
-          _destination_purpose: string
-          _min_nim_luna: number
-          _fairness_mode: string
-          _ends_at: string
-          _options: string[]
-          _idempotency_key: string
-        }
-        Returns: {
-          id: string
-          status: string
-          replay: boolean
-        }
+        Args: Record<string, unknown>
+        Returns: Json
       }
     }
     Enums: {
