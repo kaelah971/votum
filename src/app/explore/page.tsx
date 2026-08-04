@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ExplorePage() {
   const config = getConfigStatus();
+  const currentTime = new Date().toISOString();
 
   if (!config.configured) {
     return (
@@ -13,6 +14,7 @@ export default async function ExplorePage() {
         polls={null}
         configUnavailable={true}
         errorMessage={null}
+        currentTime={currentTime}
       />
     );
   }
@@ -25,6 +27,7 @@ export default async function ExplorePage() {
         polls={null}
         configUnavailable={false}
         errorMessage={result.message}
+        currentTime={currentTime}
       />
     );
   }
@@ -34,6 +37,7 @@ export default async function ExplorePage() {
       polls={result.polls}
       configUnavailable={false}
       errorMessage={null}
+      currentTime={currentTime}
     />
   );
 }

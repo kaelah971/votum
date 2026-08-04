@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { CreatorPollSummary, PollStatus } from "@/types/poll";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { PollTaxonomyBadges } from "@/components/product/PollTaxonomyBadges";
 import { WalletButton } from "@/components/ui/WalletButton";
 import { LoadingState } from "@/components/state/LoadingState";
 import { EmptyState } from "@/components/state/EmptyState";
@@ -69,7 +70,7 @@ export function MyPollsView({
           <WalletIconLarge />
         </div>
         <h2 className="text-section-heading font-display text-ballot-ink text-center">
-          Your community decisions live here.
+          Your polls live here.
         </h2>
         <p className="text-body text-quiet-ink max-w-sm text-center mt-3">
           Connect your Nimiq Pay wallet to view the Votum Polls created by this
@@ -170,6 +171,13 @@ export function MyPollsView({
                 <h3 className="text-card-heading font-display text-ballot-ink line-clamp-2">
                   {poll.question}
                 </h3>
+
+                {/* Taxonomy */}
+                <PollTaxonomyBadges
+                  category={poll.category}
+                  format={poll.format}
+                  size="sm"
+                />
 
                 {/* Status badge */}
                 <div>

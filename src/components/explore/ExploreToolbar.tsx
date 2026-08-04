@@ -1,36 +1,28 @@
 "use client";
 
 import type { ChangeEvent } from "react";
-import { Select } from "@/components/ui/Select";
+import type { ExploreSortMode } from "@/lib/explore/filters";
 import { SearchIcon } from "@/components/ui/icons";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const SORT_OPTIONS = [
-  { value: "recent", label: "Recently created" },
-  { value: "closing", label: "Closing soon" },
-  { value: "participated", label: "Most participated" },
-] as const;
 
 const STATUS_FILTERS = [
   { value: "all", label: "All polls" },
-  { value: "active", label: "Live" },
+  { value: "live", label: "Live" },
   { value: "closed", label: "Closed" },
 ] as const;
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+const SORT_OPTIONS: { value: ExploreSortMode; label: string }[] = [
+  { value: "grouped", label: "Grouped by status" },
+  { value: "recent", label: "Recently created" },
+  { value: "closing", label: "Closing first" },
+];
 
 interface ExploreToolbarProps {
   searchQuery: string;
   onSearchChange: (value: string) => void;
-  statusFilter: "all" | "active" | "closed";
-  onStatusChange: (value: "all" | "active" | "closed") => void;
-  sortBy: "recent" | "closing" | "participated";
-  onSortChange: (value: "recent" | "closing" | "participated") => void;
+  statusFilter: "all" | "live" | "closed";
+  onStatusChange: (value: "all" | "live" | "closed") => void;
+  sortBy: ExploreSortMode;
+  onSortChange: (value: ExploreSortMode) => void;
 }
 
 export function ExploreToolbar({
@@ -42,9 +34,9 @@ export function ExploreToolbar({
   onSortChange,
 }: ExploreToolbarProps) {
   return (
-    <div className="flex flex-col gap-3 sm:flex-row">
-      {/* ---- Search input ---- */}
-      <div className="relative flex-1">
+    <div className="flex flex-col gap-3">
+      {/* Search */}
+      <div className="relative w-full">
         <input
           type="text"
           value={searchQuery}
@@ -58,36 +50,48 @@ export function ExploreToolbar({
         <SearchIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-micro-grey" />
       </div>
 
-      {/* ---- Status filter pills ---- */}
-      <div className="flex flex-wrap gap-2">
-        {STATUS_FILTERS.map((filter) => {
-          const isActive = statusFilter === filter.value;
-          return (
-            <button
-              key={filter.value}
-              type="button"
-              onClick={() => onStatusChange(filter.value)}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold ${
-                isActive
-                  ? "bg-ballot-ink text-clear-ballot"
-                  : "border border-border bg-clear-ballot/60 text-quiet-ink hover:bg-clear-ballot"
-              }`}
-            >
-              {filter.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* Status + Sort row */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Status filter">
+          {STATUS_FILTERS.map((filter) => {
+            const isActive = statusFilter === filter.value;
+            return (
+              <button
+                key={filter.value}
+                type="button"
+                onClick={() => onStatusChange(filter.value)}
+                aria-pressed={isActive}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold ${
+                  isActive
+                    ? "bg-ballot-ink text-clear-ballot"
+                    : "border border-border bg-clear-ballot/60 text-quiet-ink hover:bg-clear-ballot"
+                }`}
+              >
+                {filter.label}
+              </button>
+            );
+          })}
+        </div>
 
-      {/* ---- Sort control ---- */}
-      <div className="w-full sm:w-auto sm:min-w-[190px]">
-        <Select
-          options={[...SORT_OPTIONS]}
-          value={sortBy}
-          onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-            onSortChange(e.target.value as typeof sortBy)
-          }
-        />
+        <div className="flex items-center gap-2">
+          <label htmlFor="explore-sort" className="text-sm text-quiet-ink">
+            Sort polls
+          </label>
+          <select
+            id="explore-sort"
+            value={sortBy}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+              onSortChange(e.target.value as ExploreSortMode)
+            }
+            className="rounded-full border border-border bg-clear-ballot/60 px-3.5 py-2 text-sm text-ballot-ink focus:border-signal-gold focus:outline-none focus:ring-1 focus:ring-signal-gold"
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     </div>
   );

@@ -5,7 +5,10 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
 import { Button } from "@/components/ui/Button";
+import { PollTaxonomyBadges } from "@/components/product/PollTaxonomyBadges";
 import { getLastSeenAt, setLastSeenAt } from "@/lib/activity/seen";
+import { normalizeCategory, normalizeFormat } from "@/lib/polls/taxonomy";
+import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
 
 interface ActivityItem {
   id: string;
@@ -49,6 +52,9 @@ export function CreatorActivityNotifications() {
   const [error, setError] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [mounted, setMounted] = useState(false);
+  const [pollTaxonomy, setPollTaxonomy] = useState<
+    Map<string, { category: PollCategory; format: PollFormat }>
+  >(new Map());
   const panelRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
@@ -67,6 +73,19 @@ export function CreatorActivityNotifications() {
       const data = await res.json();
       const activity = (data.activity ?? []) as ActivityItem[];
       setItems(activity.slice(0, 10));
+
+      const polls = (data.polls ?? []) as Array<{
+        id: string; category?: unknown; format?: unknown;
+      }>;
+      const map = new Map<string, { category: PollCategory; format: PollFormat }>();
+      for (const p of polls) {
+        map.set(p.id, {
+          category: normalizeCategory(p.category),
+          format: normalizeFormat(p.format),
+        });
+      }
+      setPollTaxonomy(map);
+
       const lastSeen = getLastSeenAt();
       if (lastSeen) {
         const count = activity.filter((a) => new Date(a.occurredAt).getTime() > new Date(lastSeen).getTime()).length;
@@ -131,7 +150,9 @@ export function CreatorActivityNotifications() {
 
       {!loading && !error && items && items.length > 0 && (
         <>
-          {items.map((item) => (
+          {items.map((item) => {
+            const tax = pollTaxonomy.get(item.pollId);
+            return (
             <Link key={item.id} href={`/polls/${item.pollId}`} onClick={() => setOpen(false)}
               className="flex items-start gap-3 px-4 py-3 hover:bg-soft-fog transition-colors border-b border-divider last:border-b-0">
               <span className="flex-shrink-0 mt-0.5 text-quiet-ink">
@@ -147,10 +168,16 @@ export function CreatorActivityNotifications() {
                   {item.type === "nim_support_confirmed" && `${formatLuna(item.amountLuna ?? "0")} support was confirmed for "${item.optionLabel}"`}
                   {item.type === "poll_closed" && `"${item.pollQuestion}" closed`}
                 </p>
+                {tax && (
+                  <div className="mt-1">
+                    <PollTaxonomyBadges category={tax.category} format={tax.format} size="sm" />
+                  </div>
+                )}
                 <p className="text-micro text-quiet-ink mt-0.5">{formatTime(item.occurredAt)}</p>
               </div>
             </Link>
-          ))}
+            );
+          })}
           <div className="px-4 py-2 border-t border-divider text-center">
             <button type="button" onClick={handleMarkSeen} className="text-micro text-nim-blue hover:text-signal-gold transition-colors">Mark all as read</button>
           </div>

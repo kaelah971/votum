@@ -55,6 +55,7 @@ export default function RootLayout({
 }>) {
   return (
     <html
+      suppressHydrationWarning
       lang="en"
       className={`${inter.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >

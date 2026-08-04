@@ -1,5 +1,7 @@
 import type { PollStatus } from "@/types/poll";
+import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
 import { Badge } from "@/components/ui/Badge";
+import { PollTaxonomyBadges } from "@/components/product/PollTaxonomyBadges";
 import { formatClosingTime } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
@@ -29,6 +31,8 @@ interface PollHeaderProps {
   context?: string;
   status: PollStatus;
   closingAt?: string;
+  category?: PollCategory;
+  format?: PollFormat;
   className?: string;
 }
 
@@ -45,6 +49,8 @@ export function PollHeader({
   context,
   status,
   closingAt,
+  category,
+  format,
   className = "",
 }: PollHeaderProps) {
   return (
@@ -62,6 +68,11 @@ export function PollHeader({
           </span>
         )}
       </div>
+
+      {/* Taxonomy badges */}
+      {category && format && (
+        <PollTaxonomyBadges category={category} format={format} size="sm" />
+      )}
 
       {/* Poll question */}
       <h1 className="text-section-heading font-display text-ballot-ink">

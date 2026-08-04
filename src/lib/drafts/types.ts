@@ -1,3 +1,5 @@
+import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
+
 export type DraftStatus =
   | "editing"
   | "awaiting_wallet"
@@ -16,6 +18,8 @@ export interface PollDraft {
   purpose: string;
   minimumNim: string;
   duration: string;
+  category: PollCategory;
+  format: PollFormat;
   currentStep: DraftStep;
   status: DraftStatus;
   createdAt: string;

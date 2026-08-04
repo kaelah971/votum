@@ -125,6 +125,8 @@ export function usePollDraft({
       purpose: data.purpose,
       minimumNim: data.minimumNim,
       duration: data.duration,
+      category: "communities",
+      format: "decision",
       currentStep: stepRef.current,
       status: "editing",
       createdAt: now,

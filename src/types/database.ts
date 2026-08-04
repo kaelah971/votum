@@ -114,6 +114,7 @@ export type Database = {
       }
       polls: {
         Row: {
+          category: "sports" | "entertainment" | "brands_products" | "communities" | "other"
           created_at: string
           creator_wallet: string
           description: string | null
@@ -121,6 +122,7 @@ export type Database = {
           destination_wallet: string
           ends_at: string
           fairness_mode: string
+          format: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
           id: string
           is_public: boolean
           min_nim_luna: number
@@ -132,6 +134,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          category?: "sports" | "entertainment" | "brands_products" | "communities" | "other"
           created_at?: string
           creator_wallet: string
           description?: string | null
@@ -139,6 +142,7 @@ export type Database = {
           destination_wallet: string
           ends_at: string
           fairness_mode?: string
+          format?: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
           id?: string
           is_public?: boolean
           min_nim_luna: number
@@ -150,6 +154,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          category?: "sports" | "entertainment" | "brands_products" | "communities" | "other"
           created_at?: string
           creator_wallet?: string
           description?: string | null
@@ -157,6 +162,7 @@ export type Database = {
           destination_wallet?: string
           ends_at?: string
           fairness_mode?: string
+          format?: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
           id?: string
           is_public?: boolean
           min_nim_luna?: number

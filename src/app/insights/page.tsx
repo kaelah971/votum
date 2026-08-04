@@ -10,6 +10,8 @@ import { WalletButton } from "@/components/ui/WalletButton";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
 import { useNimiqContext } from "@/providers/NimiqProvider";
 import Link from "next/link";
+import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
+import { PollTaxonomyBadges } from "@/components/product/PollTaxonomyBadges";
 
 // ---------------------------------------------------------------------------
 // API response types (mirrors GET /api/me/intelligence)
@@ -38,6 +40,8 @@ interface PollPerformance {
   id: string;
   question: string;
   status: string;
+  category: PollCategory;
+  format: PollFormat;
   createdAt: string;
   endsAt: string | null;
   totalVotes: number;
@@ -383,6 +387,13 @@ export default function CreatorInsightsPage() {
                         <h3 className="text-card-heading font-display text-ballot-ink line-clamp-2">
                           {poll.question}
                         </h3>
+                        <div className="mt-1.5">
+                          <PollTaxonomyBadges
+                            category={poll.category}
+                            format={poll.format}
+                            size="sm"
+                          />
+                        </div>
                         <div className="flex items-center gap-2 mt-1 text-micro text-quiet-ink flex-wrap">
                           <span
                             className={`rounded-full px-2.5 py-0.5 font-medium ${

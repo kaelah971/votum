@@ -9,7 +9,9 @@ function isValidSupabaseUrl(url: string): boolean {
     const parsed = new URL(url);
     return (
       parsed.hostname.endsWith(".supabase.co") ||
-      parsed.hostname === "localhost"
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "::1"
     );
   } catch {
     return false;

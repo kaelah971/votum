@@ -2,6 +2,7 @@
 
 import type { PollDraft } from "./types";
 import { createUuidV4 } from "@/lib/uuid";
+import { normalizeCategory, normalizeFormat } from "@/lib/polls/taxonomy";
 
 const STORAGE_KEY = "votum_poll_drafts_v1";
 
@@ -12,13 +13,19 @@ function readAll(): PollDraft[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    // Filter out malformed entries
-    return parsed.filter(
-      (d: unknown) =>
-        typeof d === "object" &&
-        d !== null &&
-        typeof (d as PollDraft).id === "string",
-    ) as PollDraft[];
+    return parsed
+      .filter(
+        (d: unknown) =>
+          typeof d === "object" &&
+          d !== null &&
+          typeof (d as PollDraft).id === "string",
+      )
+      .map((d: Record<string, unknown>) => {
+        const draft = d as unknown as PollDraft;
+        draft.category = normalizeCategory(draft.category);
+        draft.format = normalizeFormat(draft.format);
+        return draft;
+      });
   } catch {
     return [];
   }

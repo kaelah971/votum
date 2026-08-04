@@ -1,3 +1,5 @@
+import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
+
 export type PollStatus = "draft" | "live" | "closed" | "cancelled";
 
 export type ContributionMode = "creator" | "community";
@@ -40,6 +42,8 @@ export interface PollView {
   destinationPurpose: string;
   minimumNim: number;
   fairnessMode: string;
+  category: PollCategory;
+  format: PollFormat;
   createdAt: string;
   closingAt: string;
   status: PollStatus;
@@ -73,6 +77,8 @@ export interface CreatorPollSummary {
   id: string;
   question: string;
   status: PollStatus;
+  category: PollCategory;
+  format: PollFormat;
   createdAt: string;
   closingAt?: string;
   totalWallets?: number;

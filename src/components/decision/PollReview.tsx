@@ -1,6 +1,8 @@
 "use client";
 
 import type { ContributionMode } from "@/types/poll";
+import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
+import { CATEGORY_LABELS, FORMAT_LABELS } from "@/lib/polls/taxonomy";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Divider } from "@/components/ui/Divider";
@@ -40,6 +42,8 @@ function InfoCircleIcon({ className = "" }: { className?: string }) {
 // ---------------------------------------------------------------------------
 
 interface PollReviewProps {
+  category: PollCategory;
+  format: PollFormat;
   question: string;
   context: string;
   options: string[];
@@ -73,6 +77,8 @@ interface PollReviewProps {
 }
 
 export function PollReview({
+  category,
+  format,
   question,
   context,
   options,
@@ -116,11 +122,11 @@ export function PollReview({
       {/* ---- Review Card ---- */}
       <Card className="p-6">
         <div className="flex flex-col gap-0">
-          {/* ---- Section: Question ---- */}
+          {/* ---- Section: Category ---- */}
           <section>
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-micro text-quiet-ink tracking-wider uppercase">
-                Question
+                Category
               </h2>
               <button
                 type="button"
@@ -130,6 +136,30 @@ export function PollReview({
                 Edit question and options
               </button>
             </div>
+            <p className="text-body text-ballot-ink">
+              {CATEGORY_LABELS[category]}
+            </p>
+          </section>
+
+          <Divider />
+
+          {/* ---- Section: Format ---- */}
+          <section>
+            <h2 className="text-micro text-quiet-ink tracking-wider uppercase mb-2">
+              Participation format
+            </h2>
+            <p className="text-body text-ballot-ink">
+              {FORMAT_LABELS[format]}
+            </p>
+          </section>
+
+          <Divider />
+
+          {/* ---- Section: Question ---- */}
+          <section>
+            <h2 className="text-micro text-quiet-ink tracking-wider uppercase mb-2">
+              Question
+            </h2>
             <p className="text-card-heading font-display text-ballot-ink">
               {question}
             </p>

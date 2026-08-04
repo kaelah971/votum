@@ -19,12 +19,16 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { usePollDraft } from "@/lib/drafts/usePollDraft";
 import { getDraft, ensurePublicationKey, deleteDraft } from "@/lib/drafts/storage";
+import { CATEGORY_LABELS, FORMAT_LABELS, POLL_CATEGORIES, POLL_FORMATS } from "@/lib/polls/taxonomy";
+import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface PollFormData {
+  category: PollCategory;
+  format: PollFormat;
   question: string;
   context: string;
   options: string[];
@@ -53,6 +57,8 @@ interface SupportErrors {
 // ---------------------------------------------------------------------------
 
 const INITIAL_FORM_DATA: PollFormData = {
+  category: "communities",
+  format: "decision",
   question: "",
   context: "",
   options: ["", ""],
@@ -86,6 +92,15 @@ const DURATION_LABELS: Record<string, string> = {
   "3days": "3 days",
   "7days": "7 days",
   "14days": "14 days",
+};
+
+const FORMAT_PLACEHOLDER: Record<PollFormat, string> = {
+  decision: "E.g. Which product feature should we prioritize?",
+  prediction: "E.g. Who will win the match?",
+  fan_vote: "E.g. Who was the best performer?",
+  ranking: "E.g. Rank these options from best to worst",
+  nomination: "E.g. Who should be nominated?",
+  audience_choice: "E.g. What should happen next?",
 };
 
 const STEP_LABELS = ["decision", "support", "review"];
@@ -228,6 +243,8 @@ export default function CreatePollPage() {
     if (existing) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring draft on mount
       setFormData({
+        category: existing.category,
+        format: existing.format,
         question: existing.question,
         context: existing.context,
         options:
@@ -327,6 +344,8 @@ export default function CreatePollPage() {
 
     // Stage 2: Serialize request
     const body = {
+      category: formData.category,
+      format: formData.format,
       question: formData.question,
       description: formData.context || null,
       options: formData.options.filter(o => o.trim()),
@@ -486,8 +505,8 @@ export default function CreatePollPage() {
           Build a Votum Poll.
         </h1>
         <p className="mt-2 text-body text-quiet-ink">
-          Define the decision, disclose the NIM support destination, then
-          review before publishing.
+          Choose the category, define the participation, disclose the NIM
+          support destination, then review before publishing.
         </p>
       </Card>
 
@@ -498,12 +517,64 @@ export default function CreatePollPage() {
       {/* ================================================================= */}
       {step === 0 && (
         <div className={sectionSpacing}>
+          {/* ---- Category ---- */}
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium text-ballot-ink">
+              What is this poll about?
+            </legend>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {POLL_CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  role="radio"
+                  aria-checked={formData.category === cat}
+                  tabIndex={formData.category === cat ? 0 : -1}
+                  onClick={() => updateField("category", cat)}
+                  className={`px-3 py-2 text-sm font-medium rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold ${
+                    formData.category === cat
+                      ? "bg-signal-gold/10 border-signal-gold text-ballot-ink"
+                      : "bg-soft-fog border-border text-quiet-ink hover:border-quiet-ink"
+                  }`}
+                >
+                  {CATEGORY_LABELS[cat]}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          {/* ---- Format ---- */}
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium text-ballot-ink">
+              What kind of participation is this?
+            </legend>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {POLL_FORMATS.map((fmt) => (
+                <button
+                  key={fmt}
+                  type="button"
+                  role="radio"
+                  aria-checked={formData.format === fmt}
+                  tabIndex={formData.format === fmt ? 0 : -1}
+                  onClick={() => updateField("format", fmt)}
+                  className={`px-3 py-2 text-sm font-medium rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold ${
+                    formData.format === fmt
+                      ? "bg-signal-gold/10 border-signal-gold text-ballot-ink"
+                      : "bg-soft-fog border-border text-quiet-ink hover:border-quiet-ink"
+                  }`}
+                >
+                  {FORMAT_LABELS[fmt]}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
           {/* ---- Question ---- */}
           <div className="flex flex-col gap-1.5">
             <Input
-              label="What should your community decide?"
-              hint="Keep the question specific enough that someone can understand the choice immediately."
-              placeholder="E.g. Should we fund the community mural on Main Street?"
+              label="What is your poll asking?"
+              hint="Keep it specific enough that participants can understand the choice immediately."
+              placeholder={FORMAT_PLACEHOLDER[formData.format]}
               value={formData.question}
               onChange={(e: ChangeEvent<HTMLInputElement>) =>
                 updateField("question", e.target.value)
@@ -520,7 +591,7 @@ export default function CreatePollPage() {
           <Textarea
             label="Add context"
             hint="Help participants understand why this decision matters."
-            placeholder="Provide background information, links, or reasoning that helps voters understand the decision."
+            placeholder="Provide background information, links, or reasoning that helps participants understand the choice."
             value={formData.context}
             onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
               updateField("context", e.target.value)
@@ -696,6 +767,8 @@ export default function CreatePollPage() {
       {step === 2 && (
         <>
           <PollReview
+            category={formData.category}
+            format={formData.format}
             question={formData.question}
             context={formData.context}
             options={formData.options}

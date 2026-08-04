@@ -4,6 +4,7 @@ import { getVerifiedWalletSession } from "@/lib/api/session";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 import { nimDecimalToLuna } from "@/lib/nimiq/units";
+import { isPollCategory, isPollFormat } from "@/lib/polls/taxonomy";
 
 export const runtime = "nodejs";
 
@@ -45,6 +46,8 @@ interface FieldError {
 }
 
 interface ValidatedPayload {
+  category: string;
+  format: string;
   question: string;
   description: string | null;
   dbMode: string;
@@ -90,6 +93,30 @@ function validatePayload(
       field: "description",
       message: `Description must be at most ${MAX_DESCRIPTION_LENGTH} characters.`,
     });
+  }
+
+  // ── category (required, validated against canonical set) ─────────
+  const rawCategory = typeof body.category === "string" ? body.category : "";
+  const category =
+    rawCategory === ""
+      ? "communities" // backward compatible: missing → default
+      : isPollCategory(rawCategory)
+        ? rawCategory
+        : "";
+  if (rawCategory !== "" && !isPollCategory(rawCategory)) {
+    errors.push({ field: "category", message: "Invalid poll category." });
+  }
+
+  // ── format (required, validated against canonical set) ──────────
+  const rawFormat = typeof body.format === "string" ? body.format : "";
+  const format =
+    rawFormat === ""
+      ? "decision" // backward compatible: missing → default
+      : isPollFormat(rawFormat)
+        ? rawFormat
+        : "";
+  if (rawFormat !== "" && !isPollFormat(rawFormat)) {
+    errors.push({ field: "format", message: "Invalid participation format." });
   }
 
   // ── mode (creator / community → creator_support / community_support)
@@ -207,6 +234,8 @@ function validatePayload(
   return {
     valid: true,
     data: {
+      category,
+      format,
       question,
       description: description || null,
       dbMode,
@@ -327,6 +356,8 @@ export async function POST(request: Request) {
 
   // 6. Build request fingerprint for content-aware idempotency
   const fingerprintPayload = {
+    category: d.category,
+    format: d.format,
     question: d.question,
     description: d.description,
     options: d.options,
@@ -396,6 +427,8 @@ export async function POST(request: Request) {
         _options: d.options,
         _idempotency_key: d.idempotencyKey,
         _request_fingerprint: requestFingerprint,
+        _category: d.category,
+        _format: d.format,
       },
     );
 

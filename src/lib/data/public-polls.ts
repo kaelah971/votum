@@ -2,6 +2,7 @@ import { createServerClient, getConfigStatus } from "@/lib/supabase/config";
 import type { Database } from "@/types/database";
 import type { PollView, PollStatus, ContributionMode } from "@/types/poll";
 import { lunaToNim } from "@/lib/nimiq/units";
+import { normalizeCategory, normalizeFormat } from "@/lib/polls/taxonomy";
 
 type PollRow = Database["public"]["Tables"]["polls"]["Row"];
 type PollOptionRow = Database["public"]["Tables"]["poll_options"]["Row"];
@@ -25,6 +26,8 @@ function mapPollRow(row: PollRow, options: OptionRows): PollView {
     destinationPurpose: row.destination_purpose,
     minimumNim: lunaToNim(row.min_nim_luna),
     fairnessMode: row.fairness_mode,
+    category: normalizeCategory(row.category),
+    format: normalizeFormat(row.format),
     createdAt: row.created_at,
     closingAt: row.ends_at,
     status: row.status as PollStatus,
@@ -64,7 +67,7 @@ export async function listPublicPolls(): Promise<PollsResult> {
   try {
     const { data: polls, error } = await supabase
       .from("polls")
-      .select("id, question, description, mode, destination_wallet, destination_purpose, min_nim_luna, fairness_mode, status, starts_at, ends_at, is_public, created_at")
+      .select("id, question, description, mode, destination_wallet, destination_purpose, min_nim_luna, fairness_mode, status, starts_at, ends_at, is_public, created_at, category, format")
       .in("status", ["live", "closed"])
       .eq("is_public", true)
       .order("created_at", { ascending: false });

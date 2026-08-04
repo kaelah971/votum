@@ -222,6 +222,8 @@ export default function PollVotingPanel({
         context={poll.context}
         status={poll.status}
         closingAt={poll.closingAt}
+        category={poll.category}
+        format={poll.format}
       />
 
       {/* 2. Support details — only for live polls where the user hasn't voted */}

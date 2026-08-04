@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { getVerifiedWalletSession } from "@/lib/api/session";
 import { createServerClient, getConfigStatus } from "@/lib/supabase/config";
+import { normalizeCategory, normalizeFormat } from "@/lib/polls/taxonomy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ export async function GET() {
     const { data: polls, error } = await supabase
       .from("polls")
       .select(
-        "id, question, description, mode, destination_wallet, destination_purpose, min_nim_luna, fairness_mode, status, starts_at, ends_at, is_public, created_at",
+        "id, question, description, mode, destination_wallet, destination_purpose, min_nim_luna, fairness_mode, status, starts_at, ends_at, is_public, created_at, category, format",
       )
       .eq("creator_wallet", creatorWallet)
       .order("created_at", { ascending: false })
@@ -82,6 +83,8 @@ export async function GET() {
       destinationPurpose: p.destination_purpose,
       minimumNim: p.min_nim_luna,
       fairnessMode: p.fairness_mode,
+      category: normalizeCategory(p.category),
+      format: normalizeFormat(p.format),
       status: p.status,
       optionCount: (optsByPoll.get(p.id) ?? []).length,
       isPublic: p.is_public,

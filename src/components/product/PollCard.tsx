@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { PollTaxonomyBadges } from "@/components/product/PollTaxonomyBadges";
 import type { PollStatus } from "@/types/poll";
+import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
+import { parseTimestamp } from "@/lib/explore/filters";
 
 interface PollCardProps {
   question: string;
@@ -11,6 +14,9 @@ interface PollCardProps {
   optionCount?: number;
   status: PollStatus;
   href: string;
+  category?: PollCategory;
+  format?: PollFormat;
+  closingAt?: string;
   className?: string;
 }
 
@@ -36,20 +42,42 @@ export function PollCard({
   optionCount,
   status,
   href,
+  category,
+  format,
+  closingAt,
   className = "",
 }: PollCardProps) {
   return (
     <Link href={href} className={`block ${className}`}>
-      <Card className="p-6 space-y-4 hover:shadow-card transition-shadow">
+      <Card className="p-6 space-y-3 hover:shadow-card transition-shadow">
         {/* Question */}
         <h3 className="text-card-heading font-display text-ballot-ink line-clamp-2">
           {question}
         </h3>
 
+        {/* Taxonomy */}
+        {category && format && (
+          <PollTaxonomyBadges category={category} format={format} size="sm" />
+        )}
+
         {/* Creator */}
         {creatorName && (
           <p className="text-secondary text-quiet-ink">{creatorName}</p>
         )}
+
+        {/* Closing info */}
+        {(() => {
+          const endsAt = parseTimestamp(closingAt);
+          if (endsAt === null) return null;
+          if (status !== "live") return null;
+          return (
+            <p className="text-micro text-fairness-amber">
+              Closes {new Date(endsAt).toLocaleDateString("en-US", {
+                month: "short", day: "numeric",
+              })}
+            </p>
+          );
+        })()}
 
         {/* Stats row: wallets + NIM */}
         {(totalWallets !== undefined || totalNim !== undefined) && (
