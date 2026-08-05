@@ -81,7 +81,7 @@ async function run() {
 // Fixtures (built around a captured `now` for deterministic classification)
 // ===========================================================================
 
-async function setupFixtures() {
+async function setupFixtures(now: Date) {
   console.log("─── Fixtures ───");
 
   const base = now.getTime();
