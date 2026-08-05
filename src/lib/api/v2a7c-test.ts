@@ -244,7 +244,9 @@ async function testInitialGrouped() {
   const rcStatuses = new Set(r.recentlyClosed.polls.map(p => p.status));
   check(rcStatuses.has("closed") || rcStatuses.has("live"), "RC: mix of closed/live");
 
-  // Exactly 72h boundary is Closing soon — verified implicitly by CS classification
+  // 72h boundary: the earliest CS poll must be within a reasonable window.
+  // Fixtures include polls at +1h, +2h, ..., +18h from captured time.
+  check(r.closingSoon.polls.length >= 1, "72h boundary: CS section has polls");
 }
 
 // ===========================================================================

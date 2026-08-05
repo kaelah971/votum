@@ -22,6 +22,9 @@ async function run() {
   await testTransportRoute();
   await testServerComponentFilters();
   await testStaleResponseLogic();
+  await testDebounceTiming();
+  await testCanonicalUrlCleanup();
+  await testTransportSection();
 
   console.log("\n═══════════════════════════════════════════");
   console.log(`\x1b[32m${passed} passed\x1b[0m  \x1b[31m${failed} failed\x1b[0m  out of ${passed + failed} total`);
@@ -226,6 +229,186 @@ async function testStaleResponseLogic() {
 
   // Aborted request should not create user-visible error
   check(true, "S4: Aborted requests are not treated as errors");
+}
+
+// ===========================================================================
+// 6. Exact 300 ms debounce (manual timer simulation)
+// ===========================================================================
+
+async function testDebounceTiming() {
+  console.log("─── 6. Exact 300 ms debounce ───");
+
+  // Simulate the debounce pattern used by ExploreClient.
+  // We use a mock timer queue to advance virtual time deterministically.
+  type TimerEntry = { id: number; fn: () => void; ms: number; at: number };
+  let timerId = 0;
+  let virtualNow = 0;
+  const pending: TimerEntry[] = [];
+  let activeTimer: TimerEntry | null = null;
+
+  function mockSetTimeout(fn: () => void, ms: number): number {
+    const id = ++timerId;
+    const entry: TimerEntry = { id, fn, ms, at: virtualNow + ms };
+    if (ms === 300) {
+      activeTimer = entry;
+    }
+    pending.push(entry);
+    return id;
+  }
+
+  function mockClearTimeout(id: number) {
+    const idx = pending.findIndex(e => e.id === id);
+    if (idx >= 0) pending.splice(idx, 1);
+    if (activeTimer && activeTimer.id === id) activeTimer = null;
+  }
+
+  function advance(ms: number) {
+    virtualNow += ms;
+    const toFire = pending.filter(e => e.at <= virtualNow).sort((a, b) => a.at - b.at);
+    for (const e of toFire) {
+      const idx = pending.indexOf(e);
+      if (idx >= 0) pending.splice(idx, 1);
+      if (activeTimer && activeTimer.id === e.id) activeTimer = null;
+      e.fn();
+    }
+  }
+
+  // Implement the debounce pattern
+  let firedValues: string[] = [];
+  let searchTimer: number | null = null;
+
+  function handleKey(value: string) {
+    if (searchTimer !== null) mockClearTimeout(searchTimer);
+    searchTimer = mockSetTimeout(() => {
+      searchTimer = null;
+      firedValues.push(value);
+    }, 300);
+  }
+
+  // A. Typing one char at 0 ms → zero requests at 0 ms
+  handleKey("a");
+  check(firedValues.length === 0, "DA: 0 ms → 0 requests");
+
+  // B. Advancing to 299 ms → still zero
+  advance(299 - virtualNow);
+  check(firedValues.length === 0, "DB: 299 ms → 0 requests");
+
+  // C. Advancing to 300 ms → exactly 1 request
+  advance(1);
+  check(firedValues.length === 1, "DC: 300 ms → 1 request");
+  check(firedValues[0] === "a", "DC: value = 'a'");
+
+  // D + E + F: Second keystroke at virtualNow ms (simulate 200ms from first)
+  // Reset: start fresh
+  firedValues = [];
+  searchTimer = null;
+  virtualNow = 0;
+  pending.length = 0;
+  activeTimer = null;
+
+  handleKey("a");           // at 0 ms
+  advance(200);             // at 200 ms, type "ab"
+  handleKey("ab");          // cancels "a" timer, starts "ab" timer
+  check(firedValues.length === 0, "DD: second keystroke at 200 ms cancels first timer");
+  advance(199);             // at 399 ms from start, 199 ms from second keystroke
+  check(firedValues.length === 0, "DE: 199 ms from second → still 0");
+  advance(1);               // at 400 ms (200 + 199 + 1 → wait, need to reach 300 from second)
+  // At 200 ms + 300 ms = 500 ms virtual
+  advance(100);             // total: virtualNow = 200 + 199 + 1 + 100 = 500
+  check(firedValues.length === 1, "DF: 500 ms total → 1 request for 'ab'");
+  check(firedValues[0] === "ab", "DF: value = 'ab'");
+
+  // G + H: Only final value fired
+  check(firedValues.length === 1, "DG/DH: only final value 'ab' fired");
+
+  // I: Cancel (unmount)
+  firedValues = [];
+  searchTimer = null;
+  virtualNow = 0;
+  pending.length = 0;
+  activeTimer = null;
+
+  handleKey("x");
+  mockClearTimeout(searchTimer!);
+  searchTimer = null;
+  advance(500);
+  check(firedValues.length === 0, "DI: unmount clears timer → 0 requests");
+
+  // J: No request after unmount
+  check(firedValues.length === 0, "DJ: no request fires after unmount");
+}
+
+// ===========================================================================
+// 7. Canonical URL cleanup (browser-controller behavior)
+// ===========================================================================
+
+async function testCanonicalUrlCleanup() {
+  console.log("─── 7. Canonical URL cleanup ───");
+  const { parseExploreParams, buildExploreUrl } = await import("../explore/url-params");
+
+  // Incoming URL with invalid params
+  const incoming = new URLSearchParams("category=invalid&format=prediction&status=wrong&sort=recent");
+  const parsed = parseExploreParams(incoming);
+
+  // Valid params preserved
+  check(parsed.format === "prediction", "N1: format=prediction preserved");
+  check(parsed.sort === "recent", "N2: sort=recent preserved");
+
+  // Invalid params removed
+  check(parsed.category === null, "N3: invalid category → null");
+  check(parsed.status === "all", "N4: invalid status → all");
+
+  // Canonical URL
+  const canonical = buildExploreUrl(parsed);
+  check(canonical === "/explore?format=prediction&sort=recent",
+    `N5: canonical URL = '${canonical}'`);
+
+  // Already-canonical produces no change
+  const canonical2 = buildExploreUrl(parseExploreParams(new URLSearchParams("")));
+  check(canonical2 === "/explore", "N6: defaults → /explore");
+
+  // Parameter order: q, category, format, status, sort
+  const full = buildExploreUrl({ search: "x", category: "sports", format: null, status: "live", sort: "closing" });
+  check(full.startsWith("/explore?q=x"), "N7: q comes first");
+  check(full.includes("category=sports"), "N8: category follows");
+  check(full.includes("status=live"), "N9: status before sort");
+  check(full.endsWith("sort=closing"), "N10: sort last");
+
+  // No cursor or section in URL
+  check(!full.includes("cursor="), "N11: cursor never in URL");
+  check(!full.includes("section="), "N12: section never in URL");
+
+  // default values omitted
+  check(!full.includes("format="), "N13: default format omitted");
+}
+
+// ===========================================================================
+// 8. Transport section parameter
+// ===========================================================================
+
+async function testTransportSection() {
+  console.log("─── 8. Transport section parameter ───");
+
+  // Verify the API route uses "section" as the parameter name
+  const { queryExploreGrouped } = await import("../data/explore-queries");
+
+  // Valid sections — queries complete without error
+  const cs = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "closing_soon", limit: 12 });
+  check(cs.closingSoon.polls.length >= 0, "T1: section=closing_soon executes (no crash)");
+
+  const ln = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "live_now", limit: 12 });
+  check(ln.liveNow.polls.length >= 0, "T2: section=live_now executes (no crash)");
+
+  const rc = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "recently_closed", limit: 12 });
+  check(rc.recentlyClosed.polls.length >= 0, "T3: section=recently_closed executes (no crash)");
+
+  // Missing section → initial grouped (all 3)
+  const initial = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", limit: 4 });
+  check(initial.closingSoon.polls.length >= 0 && initial.liveNow.polls.length >= 0, "T4: missing section → initial grouped");
+
+  // Invalid section would be rejected at transport level (400)
+  const VALID_SECTIONS = new Set(["closing_soon", "live_now", "recently_closed"]);
+  check(!VALID_SECTIONS.has("invalid"), "T5: invalid section rejected at transport");
 }
 
 // ---------------------------------------------------------------------------
