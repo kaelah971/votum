@@ -295,6 +295,14 @@ No `check(true, ...)` assertions found in V2A.7 tests. All assertions test concr
 
 ---
 
+## Actual Nimiq Pay Device QA ✅
+
+Physical device tested on 2026-08-05 at commit `350c45a`. All core features verified: wallet auth, explore, filters, search, clear filters, voting, layout. One Important crash found and fixed (coordinator.dispose). Full report: `docs/superpowers/reviews/2026-08-05-v2a7-nimiq-pay-device-qa.md`
+
+**Device QA Result: PASS WITH MINOR LIMITATIONS**
+
+---
+
 ## Unresolved Limitations
 
 1. **Shared AbortController prevents simultaneous grouped section loads.** Current implementation cancels other sections' in-flight requests. Users must complete one section's Load more before starting another. Recommend per-section AbortController refactor in V2A.8.
