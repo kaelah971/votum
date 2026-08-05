@@ -249,7 +249,9 @@ export async function queryExploreFlat(
     // Mode-specific ordering and limits
     if (sort === "closing") {
       // Closing first: live polls only, valid future deadlines
-      query = query.eq("status", "live").not("ends_at", "is", null);
+      query = query.eq("status", "live")
+        .not("ends_at", "is", null)
+        .gt("ends_at", new Date().toISOString());
 
       query = query
         .order("ends_at", { ascending: true })
