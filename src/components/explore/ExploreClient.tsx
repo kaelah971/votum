@@ -196,17 +196,27 @@ export function ExploreClient({
         setFlatHasMore(r.hasMore);
       } else {
         const gr = data as GroupedExploreResult;
-        setGrouped((prev) => ({
-          closing_soon: section === "closing_soon"
-            ? { ...gr.closingSoon, polls: appendUnique(section ? prev.closing_soon.polls : [], gr.closingSoon.polls) }
-            : prev.closing_soon,
-          live_now: section === "live_now"
-            ? { ...gr.liveNow, polls: appendUnique(section ? prev.live_now.polls : [], gr.liveNow.polls) }
-            : prev.live_now,
-          recently_closed: section === "recently_closed"
-            ? { ...gr.recentlyClosed, polls: appendUnique(section ? prev.recently_closed.polls : [], gr.recentlyClosed.polls) }
-            : prev.recently_closed,
-        }));
+        if (section === null) {
+          // Initial/filter load: replace all three sections
+          setGrouped({
+            closing_soon: gr.closingSoon,
+            live_now: gr.liveNow,
+            recently_closed: gr.recentlyClosed,
+          });
+        } else {
+          // Section load more: append only to the requested section
+          setGrouped((prev) => ({
+            closing_soon: section === "closing_soon"
+              ? { ...gr.closingSoon, polls: appendUnique(prev.closing_soon.polls, gr.closingSoon.polls) }
+              : prev.closing_soon,
+            live_now: section === "live_now"
+              ? { ...gr.liveNow, polls: appendUnique(prev.live_now.polls, gr.liveNow.polls) }
+              : prev.live_now,
+            recently_closed: section === "recently_closed"
+              ? { ...gr.recentlyClosed, polls: appendUnique(prev.recently_closed.polls, gr.recentlyClosed.polls) }
+              : prev.recently_closed,
+          }));
+        }
       }
       setError(null);
     } catch (err: unknown) {
