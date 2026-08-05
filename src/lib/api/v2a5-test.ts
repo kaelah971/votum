@@ -9,7 +9,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import type { PollView } from "@/types/poll";
-import { execFileSync } from "node:child_process";
 
 import "./load-local-env";
 
@@ -33,23 +32,7 @@ function assert(condition: boolean, label: string): void {
   else { failed++; console.log(`  \x1b[31mFAIL\x1b[0m ${label}`); }
 }
 
-async function cleanupWallet(wallet: string): Promise<void> {
-  const sql = `
-    DELETE FROM public.poll_options
-      WHERE poll_id IN (SELECT id FROM public.polls WHERE creator_wallet = '${wallet}');
-    DELETE FROM public.poll_publication_requests
-      WHERE creator_wallet = '${wallet}';
-    DELETE FROM public.polls
-      WHERE creator_wallet = '${wallet}';
-  `;
-  try {
-    execFileSync("docker", [
-      "exec", "supabase_db_votum",
-      "psql", "-U", "postgres", "-d", "postgres",
-      "-c", sql,
-    ], { stdio: "pipe" });
-  } catch { /* non-critical */ }
-}
+import { cleanupTestWallet } from "./local-test-cleanup";
 
 const creator = `NQ07 V2A5 TEST ${randomBytes(4).toString("hex")}`;
 
@@ -91,7 +74,7 @@ async function run() {
   await testPublishingAndRegression();
 
   console.log("\nCleaning up...");
-  await cleanupWallet(creator);
+  cleanupTestWallet(creator);
 
   console.log("\n═══════════════════════════════════════════");
   console.log(`\x1b[32m${passed} passed\x1b[0m  \x1b[31m${failed} failed\x1b[0m  out of ${passed + failed} total`);

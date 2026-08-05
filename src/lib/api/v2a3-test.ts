@@ -48,19 +48,7 @@ function assert(condition: boolean, label: string): void {
   }
 }
 
-async function cleanupWallet(wallet: string): Promise<void> {
-  const { data: polls } = await admin.from("polls").select("id").eq("creator_wallet", wallet);
-  const pollIds = (polls ?? []).map((p) => p.id);
-  if (pollIds.length > 0) {
-    await admin.from("poll_votes").delete().in("poll_id", pollIds);
-    await admin.from("nim_contributions").delete().in("poll_id", pollIds);
-    await admin.from("nim_support_intents").delete().in("poll_id", pollIds);
-    await admin.from("poll_options").delete().in("poll_id", pollIds);
-    await admin.from("poll_publication_requests").delete().eq("creator_wallet", wallet);
-    await admin.from("polls").delete().eq("creator_wallet", wallet);
-  }
-  await admin.from("poll_votes").delete().like("voter_wallet", "NQ33 V2A3%");
-}
+import { cleanupTestWallet } from "./local-test-cleanup";
 
 const creator = `NQ07 V2A3 TEST ${randomBytes(4).toString("hex")}`;
 
@@ -79,7 +67,7 @@ async function run() {
 
   // Cleanup
   console.log("\nCleaning up...");
-  await cleanupWallet(creator);
+  cleanupTestWallet(creator);
 
   // Summary
   console.log("\n═══════════════════════════════════════════");

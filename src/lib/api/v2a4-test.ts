@@ -34,16 +34,7 @@ function assert(condition: boolean, label: string): void {
   else { failed++; console.log(`  \x1b[31mFAIL\x1b[0m ${label}`); }
 }
 
-async function cleanup(wallet: string): Promise<void> {
-  const { data: polls } = await admin.from("polls").select("id").eq("creator_wallet", wallet);
-  const ids = (polls ?? []).map((p) => p.id);
-  if (ids.length > 0) {
-    await admin.from("poll_votes").delete().in("poll_id", ids);
-    await admin.from("poll_options").delete().in("poll_id", ids);
-    await admin.from("poll_publication_requests").delete().eq("creator_wallet", wallet);
-    await admin.from("polls").delete().eq("creator_wallet", wallet);
-  }
-}
+import { cleanupTestWallet } from "./local-test-cleanup";
 
 const creator = `NQ07 V2A4 TEST ${randomBytes(4).toString("hex")}`;
 
@@ -60,7 +51,7 @@ async function run() {
   await testRegressions();
 
   console.log("\nCleaning up...");
-  await cleanup(creator);
+  cleanupTestWallet(creator);
 
   console.log("\n═══════════════════════════════════════════");
   console.log(`\x1b[32m${passed} passed\x1b[0m  \x1b[31m${failed} failed\x1b[0m  out of ${passed + failed} total`);
