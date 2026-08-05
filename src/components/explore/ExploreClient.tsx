@@ -99,15 +99,6 @@ export function ExploreClient({
   const [searchText, setSearchText] = useState(filters.search);
   const debouncedSearch = useRef<ReturnType<typeof createDebouncedSearch> | null>(null);
 
-  // Initialise debounce controller once
-  useEffect(() => {
-    debouncedSearch.current = createDebouncedSearch((trimmed) => {
-      applyFilterChange((prev) => ({ ...prev, search: trimmed }));
-    }, DEBOUNCE_MS);
-    return () => { debouncedSearch.current?.cancel(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   function handleSearchChange(value: string) {
     setSearchText(value);
     debouncedSearch.current?.notify(value);
@@ -160,32 +151,12 @@ export function ExploreClient({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(serverErrorMessage);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const [sectionLoading, setSectionLoading] = useState<Partial<Record<PollSection, boolean>>>({});
+  const [sectionError, setSectionError] = useState<Partial<Record<PollSection, string | null>>>({});
 
-  // ── Apply filter change ─────────────────────────────────────────
-  function applyFilterChange(
-    updater: (prev: ExploreFilterState) => ExploreFilterState,
-  ) {
-    cancelPending();
-    const newFilters = updater(filters);
-    const url = buildExploreUrl(newFilters);
-
-    // Only replace if URL actually changed
-    if (url !== buildExploreUrl(filters)) {
-      router.replace(url);
-    }
-
-    // Reset data
-    setFlatPolls([]);
-    setFlatCursor(null);
-    setFlatHasMore(false);
-    setGrouped({ closing_soon: emptySection(), live_now: emptySection(), recently_closed: emptySection() });
-    setError(null);
-
-    // Fetch first page
-    fetchResults(newFilters, null, null);
-  }
-
-  // ── Fetch results ───────────────────────────────────────────────
+  // ── Fetch results (must be before applyFilterChange) ────────────
   async function fetchResults(
     filterState: ExploreFilterState,
     section: PollSection | null,
@@ -212,7 +183,7 @@ export function ExploreClient({
       });
 
       if (ac.signal.aborted) return;
-      if (rid !== requestIdRef.current) return; // stale
+      if (rid !== requestIdRef.current) return;
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -257,6 +228,38 @@ export function ExploreClient({
     }
   }
 
+  // ── Apply filter change ─────────────────────────────────────────
+  function applyFilterChange(
+    updater: (prev: ExploreFilterState) => ExploreFilterState,
+  ) {
+    cancelPending();
+    const newFilters = updater(filters);
+    const url = buildExploreUrl(newFilters);
+
+    if (url !== buildExploreUrl(filters)) {
+      router.replace(url);
+    }
+
+    setFlatPolls([]);
+    setFlatCursor(null);
+    setFlatHasMore(false);
+    setGrouped({ closing_soon: emptySection(), live_now: emptySection(), recently_closed: emptySection() });
+    setError(null);
+    setLoadMoreError(null);
+    setSectionError({});
+
+    fetchResults(newFilters, null, null);
+  }
+
+  // Initialise debounce controller
+  useEffect(() => {
+    debouncedSearch.current = createDebouncedSearch((trimmed) => {
+      applyFilterChange((prev) => ({ ...prev, search: trimmed }));
+    }, DEBOUNCE_MS);
+    return () => { debouncedSearch.current?.cancel(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Filter change handlers ──────────────────────────────────────
   const onCategoryChange = useCallback((cat: PollCategory | "all") => {
     applyFilterChange((prev) => ({ ...prev, category: cat === "all" ? null : cat }));
@@ -295,6 +298,125 @@ export function ExploreClient({
 
   function handleRetry() {
     fetchResults(filters, null, null);
+  }
+
+  // ── Load more handlers ─────────────────────────────────────────
+  function handleFlatLoadMore() {
+    if (loadingMore) return;
+    setLoadMoreError(null);
+    setLoadingMore(true);
+    const currentCursor = isFlat(filters.sort) ? _flatCursor : null;
+    // Re-fetch with the cursor (needs access to _flatCursor state directly)
+    executeFlatLoadMore(currentCursor);
+  }
+
+  async function executeFlatLoadMore(cursor: string | null) {
+    if (!cursor) { setLoadingMore(false); return; }
+    const rid = nextRequestId();
+    const ac = new AbortController();
+    if (abortRef.current) { try { abortRef.current.abort(); } catch { /* ok */ } }
+    abortRef.current = ac;
+
+    try {
+      const params = new URLSearchParams();
+      if (filters.search) params.set("q", filters.search);
+      if (filters.category) params.set("category", filters.category);
+      if (filters.format) params.set("format", filters.format);
+      if (filters.status !== "all") params.set("status", filters.status);
+      if (filters.sort !== "grouped") params.set("sort", filters.sort);
+      params.set("cursor", cursor);
+
+      const res = await fetch(`/api/explore?${params.toString()}`, { signal: ac.signal });
+      if (ac.signal.aborted) return;
+      if (rid !== requestIdRef.current) return;
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (rid !== requestIdRef.current) return;
+        setLoadMoreError(body.message ?? "Failed to load more");
+        setLoadingMore(false);
+        return;
+      }
+
+      const data: ExploreQueryResult = await res.json();
+      if (rid !== requestIdRef.current) return;
+
+      setFlatPolls((prev) => appendUnique(prev, data.polls));
+      setFlatCursor(data.nextCursor);
+      setFlatHasMore(data.hasMore);
+      setLoadMoreError(null);
+    } catch (err: unknown) {
+      if (ac.signal.aborted) return;
+      if (rid !== requestIdRef.current) return;
+      const msg = err instanceof Error ? err.message : "Request failed";
+      if (msg !== "The user aborted a request.") {
+        setLoadMoreError(msg);
+      }
+    } finally {
+      if (rid === requestIdRef.current) setLoadingMore(false);
+    }
+  }
+
+  async function handleSectionLoadMore(section: PollSection) {
+    if (sectionLoading[section]) return;
+    const cursor = grouped[section].nextCursor;
+    if (!cursor) return;
+    setSectionLoading((prev) => ({ ...prev, [section]: true }));
+    setSectionError((prev) => ({ ...prev, [section]: null }));
+
+    const rid = nextRequestId();
+    const ac = new AbortController();
+    if (abortRef.current) { try { abortRef.current.abort(); } catch { /* ok */ } }
+    abortRef.current = ac;
+
+    try {
+      const params = new URLSearchParams();
+      if (filters.search) params.set("q", filters.search);
+      if (filters.category) params.set("category", filters.category);
+      if (filters.format) params.set("format", filters.format);
+      if (filters.status !== "all") params.set("status", filters.status);
+      params.set("sort", "grouped");
+      params.set("section", section);
+      params.set("cursor", cursor);
+
+      const res = await fetch(`/api/explore?${params.toString()}`, { signal: ac.signal });
+      if (ac.signal.aborted) return;
+      if (rid !== requestIdRef.current) return;
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (rid !== requestIdRef.current) return;
+        setSectionError((prev) => ({ ...prev, [section]: body.message ?? "Failed" }));
+        setSectionLoading((prev) => ({ ...prev, [section]: false }));
+        return;
+      }
+
+      const data: GroupedExploreResult = await res.json();
+      if (rid !== requestIdRef.current) return;
+
+      const result = section === "closing_soon" ? data.closingSoon
+        : section === "live_now" ? data.liveNow
+        : data.recentlyClosed;
+
+      setGrouped((prev) => ({
+        ...prev,
+        [section]: {
+          polls: appendUnique(prev[section].polls, result.polls),
+          nextCursor: result.nextCursor,
+          hasMore: result.hasMore,
+        },
+      }));
+      setSectionError((prev) => ({ ...prev, [section]: null }));
+    } catch (err: unknown) {
+      if (ac.signal.aborted) return;
+      if (rid !== requestIdRef.current) return;
+      const msg = err instanceof Error ? err.message : "Request failed";
+      if (msg !== "The user aborted a request.") {
+        setSectionError((prev) => ({ ...prev, [section]: msg }));
+      }
+    } finally {
+      if (rid === requestIdRef.current) setSectionLoading((prev) => ({ ...prev, [section]: false }));
+    }
   }
 
   // ── Compute display state ───────────────────────────────────────
@@ -506,39 +628,95 @@ export function ExploreClient({
       </Card>
 
       {/* Results */}
-      {loading && totalPolls === 0 ? (
-        <LoadingState variant="list" count={3} />
-      ) : error && totalPolls === 0 ? (
-        <ErrorState title="Could not load polls" description={error} onRetry={handleRetry} />
-      ) : totalPolls === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-body text-quiet-ink">No polls match your filters.</p>
-          <div className="mt-6">
-            <Link href="/create" className={goldPillLinkClasses}>
-              Create a Votum Poll
-            </Link>
+      <div aria-live="polite" aria-atomic="false">
+        {loading && totalPolls === 0 ? (
+          <LoadingState variant="list" count={3} />
+        ) : error && totalPolls === 0 ? (
+          <ErrorState title="Could not load polls" description={error} onRetry={handleRetry} />
+        ) : totalPolls === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-body text-quiet-ink">No polls match your filters.</p>
+            {showClear && (
+              <button onClick={handleClearFilters} className="mt-3 text-sm text-nim-blue hover:underline">Clear filters</button>
+            )}
+            <div className="mt-6">
+              <Link href="/create" className={goldPillLinkClasses}>
+                Create a Votum Poll
+              </Link>
+            </div>
           </div>
-        </div>
-      ) : isFlat(filters.sort) ? (
-        <div>
-          {sectionHeading(filters.sort === "recent" ? "Recently created" : "Closing first", flatPolls.length)}
-          <div className="space-y-4">{renderCards(flatPolls)}</div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-8">
-          {(["closing_soon", "live_now", "recently_closed"] as PollSection[]).map((sec) => {
-            const sp = grouped[sec].polls;
-            if (sp.length === 0) return null;
-            const label = sec === "closing_soon" ? "Closing soon" : sec === "live_now" ? "Live now" : "Recently closed";
-            return (
-              <div key={sec}>
-                {sectionHeading(label, sp.length)}
-                <div className="space-y-4">{renderCards(sp)}</div>
+        ) : isFlat(filters.sort) ? (
+          /* Flat results */
+          <div>
+            {sectionHeading(filters.sort === "recent" ? "Recently created" : "Closing first", flatPolls.length)}
+            <div className="space-y-4">{renderCards(flatPolls)}</div>
+            {/* Load more / exhausted / retry */}
+            {_flatHasMore && _flatCursor ? (
+              <div className="mt-6 text-center">
+                {loadMoreError && (
+                  <div className="mb-2" role="alert">
+                    <p className="text-sm text-reject-red mb-1">{loadMoreError}</p>
+                    <button onClick={handleFlatLoadMore} className="text-sm text-nim-blue hover:underline">Retry</button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleFlatLoadMore}
+                  disabled={loadingMore}
+                  aria-busy={loadingMore}
+                  aria-label={loadingMore ? "Loading more polls" : "Load more polls"}
+                  className="rounded-full border border-border bg-clear-ballot px-6 py-2.5 text-sm font-medium text-ballot-ink transition-colors hover:bg-clear-ballot/80 disabled:opacity-50"
+                >
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
               </div>
-            );
-          })}
-        </div>
-      )}
+            ) : flatPolls.length > 0 ? (
+              <p className="mt-6 text-center text-sm text-quiet-ink">You&rsquo;ve reached the end.</p>
+            ) : null}
+          </div>
+        ) : (
+          /* Grouped results */
+          <div className="flex flex-col gap-8">
+            {(["closing_soon", "live_now", "recently_closed"] as PollSection[]).map((sec) => {
+              const sp = grouped[sec].polls;
+              const gr = grouped[sec];
+              const secLoading = sectionLoading[sec] ?? false;
+              const secErr = sectionError[sec];
+              const label = sec === "closing_soon" ? "Closing soon" : sec === "live_now" ? "Live now" : "Recently closed";
+
+              return (
+                <div key={sec}>
+                  {sectionHeading(label, sp.length)}
+                  <div className="space-y-4">{renderCards(sp)}</div>
+                  {/* Section load more / retry / exhausted */}
+                  {gr.hasMore && gr.nextCursor ? (
+                    <div className="mt-4 text-center">
+                      {secErr && (
+                        <div className="mb-2" role="alert">
+                          <p className="text-sm text-reject-red mb-1">{secErr}</p>
+                          <button onClick={() => handleSectionLoadMore(sec)} className="text-sm text-nim-blue hover:underline">Retry</button>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleSectionLoadMore(sec)}
+                        disabled={secLoading}
+                        aria-busy={secLoading}
+                        aria-label={secLoading ? `Loading more ${label} polls` : `Load more ${label} polls`}
+                        className="rounded-full border border-border bg-clear-ballot px-6 py-2.5 text-sm font-medium text-ballot-ink transition-colors hover:bg-clear-ballot/80 disabled:opacity-50"
+                      >
+                        {secLoading ? "Loading…" : "Load more"}
+                      </button>
+                    </div>
+                  ) : sp.length > 0 ? (
+                    <p className="mt-4 text-center text-sm text-quiet-ink">You&rsquo;ve reached the end.</p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </ProductShell>
   );
 }
