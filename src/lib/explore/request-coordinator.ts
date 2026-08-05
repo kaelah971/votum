@@ -75,9 +75,7 @@ export function createExploreRequestCoordinator(): ExploreRequestCoordinator {
       return isCurrentHandle(handle);
     },
 
-    finish(_handle: RequestHandle): void {
-      // No-op: just mark complete. Other slots remain active.
-    },
+    finish(_req: RequestHandle): void { void _req; },
 
     dispose(): void {
       this.advanceFilterGeneration();

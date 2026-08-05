@@ -110,7 +110,7 @@ export function ExploreClient({
 
   // Cleanup on unmount
   useEffect(() => {
-    return () => { coordinator.destroy(); };
+    return () => { coordinator.dispose(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
