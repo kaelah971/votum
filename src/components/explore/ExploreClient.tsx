@@ -25,6 +25,7 @@ import { LoadingState } from "@/components/state/LoadingState";
 import { PollCard } from "@/components/product/PollCard";
 import { Card } from "@/components/ui/Card";
 import { ArrowUpRightIcon, SearchIcon } from "@/components/ui/icons";
+import { createDebouncedSearch } from "@/lib/explore/debounce";
 
 // ── Props ─────────────────────────────────────────────────────────────
 
@@ -96,25 +97,21 @@ export function ExploreClient({
 
   // ── Search input state (immediate) + debounced value ────────────
   const [searchText, setSearchText] = useState(filters.search);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSearch = useRef(filters.search);
+  const debouncedSearch = useRef<ReturnType<typeof createDebouncedSearch> | null>(null);
+
+  // Initialise debounce controller once
+  useEffect(() => {
+    debouncedSearch.current = createDebouncedSearch((trimmed) => {
+      applyFilterChange((prev) => ({ ...prev, search: trimmed }));
+    }, DEBOUNCE_MS);
+    return () => { debouncedSearch.current?.cancel(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function handleSearchChange(value: string) {
     setSearchText(value);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      const trimmed = value.trim();
-      if (trimmed !== pendingSearch.current) {
-        pendingSearch.current = trimmed;
-        applyFilterChange((prev) => ({ ...prev, search: trimmed }));
-      }
-    }, DEBOUNCE_MS);
+    debouncedSearch.current?.notify(value);
   }
-
-  // Cleanup timer on unmount
-  useEffect(() => {
-    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
-  }, []);
 
   // ── Request tracking ────────────────────────────────────────────
   const requestIdRef = useRef(0);
@@ -285,7 +282,8 @@ export function ExploreClient({
   function handleClearFilters() {
     cancelPending();
     setSearchText("");
-    pendingSearch.current = "";
+    debouncedSearch.current?.cancel();
+    debouncedSearch.current?.reset();
     setFlatPolls([]);
     setFlatCursor(null);
     setFlatHasMore(false);

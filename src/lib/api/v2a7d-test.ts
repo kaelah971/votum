@@ -236,31 +236,30 @@ async function testStaleResponseLogic() {
 // ===========================================================================
 
 async function testDebounceTiming() {
-  console.log("─── 6. Exact 300 ms debounce ───");
+  console.log("─── 6. Exact 300 ms debounce (production helper) ───");
 
-  // Simulate the debounce pattern used by ExploreClient.
-  // We use a mock timer queue to advance virtual time deterministically.
+  // Test the EXACT production helper used by ExploreClient:
+  //   import { createDebouncedSearch } from "@/lib/explore/debounce";
+  const { createDebouncedSearch } = await import("../explore/debounce");
+
+  // Mock timers
   type TimerEntry = { id: number; fn: () => void; ms: number; at: number };
   let timerId = 0;
   let virtualNow = 0;
   const pending: TimerEntry[] = [];
-  let activeTimer: TimerEntry | null = null;
 
-  function mockSetTimeout(fn: () => void, ms: number): number {
+  const origSetTimeout = globalThis.setTimeout as typeof setTimeout;
+  const origClearTimeout = globalThis.clearTimeout as typeof clearTimeout;
+
+  (globalThis as unknown as Record<string, unknown>).setTimeout = (fn: () => void, ms: number) => {
     const id = ++timerId;
-    const entry: TimerEntry = { id, fn, ms, at: virtualNow + ms };
-    if (ms === 300) {
-      activeTimer = entry;
-    }
-    pending.push(entry);
+    pending.push({ id, fn, ms, at: virtualNow + ms });
     return id;
-  }
-
-  function mockClearTimeout(id: number) {
+  };
+  (globalThis as unknown as Record<string, unknown>).clearTimeout = (id: unknown) => {
     const idx = pending.findIndex(e => e.id === id);
     if (idx >= 0) pending.splice(idx, 1);
-    if (activeTimer && activeTimer.id === id) activeTimer = null;
-  }
+  };
 
   function advance(ms: number) {
     virtualNow += ms;
@@ -268,74 +267,59 @@ async function testDebounceTiming() {
     for (const e of toFire) {
       const idx = pending.indexOf(e);
       if (idx >= 0) pending.splice(idx, 1);
-      if (activeTimer && activeTimer.id === e.id) activeTimer = null;
       e.fn();
     }
   }
 
-  // Implement the debounce pattern
-  let firedValues: string[] = [];
-  let searchTimer: number | null = null;
+  try {
+    let firedValues: string[] = [];
+    const debounce = createDebouncedSearch((val) => { firedValues.push(val); }, 300);
 
-  function handleKey(value: string) {
-    if (searchTimer !== null) mockClearTimeout(searchTimer);
-    searchTimer = mockSetTimeout(() => {
-      searchTimer = null;
-      firedValues.push(value);
-    }, 300);
+    // A. 0 ms → 0 requests
+    debounce.notify("a");
+    check(firedValues.length === 0, "DA: 0 ms → 0 requests");
+
+    // B. 299 ms → 0 requests
+    advance(299);
+    check(firedValues.length === 0, "DB: 299 ms → 0 requests");
+
+    // C. 300 ms → 1 request
+    advance(1);
+    check(firedValues.length === 1, "DC: 300 ms → 1 request");
+    check(firedValues[0] === "a", "DC: value = 'a'");
+
+    // D-F. Second keystroke at 200 ms cancels first
+    firedValues = [];
+    pending.length = 0;
+    virtualNow = 0;
+
+    debounce.notify("a");       // at 0 ms
+    advance(200);
+    debounce.notify("ab");      // cancels first, starts new
+    check(firedValues.length === 0, "DD: second keystroke at 200 ms cancels first timer");
+    advance(299);               // 200 + 299 = 499 ms
+    check(firedValues.length === 0, "DE: 499 ms total → 0 requests");
+    advance(1);                 // 200 + 300 = 500 ms
+    check(firedValues.length === 1, "DF: 500 ms → 1 request for 'ab'");
+    check(firedValues[0] === "ab", "DF: value = 'ab'");
+
+    // G/H. Only final value
+    check(firedValues[0] === "ab", "DG/DH: only final value fired");
+
+    // I/J. Cancel (unmount)
+    firedValues = [];
+    pending.length = 0;
+    virtualNow = 0;
+
+    debounce.notify("x");
+    debounce.cancel();
+    advance(500);
+    check(firedValues.length === 0, "DI: cancel → 0 requests");
+    check(firedValues.length === 0, "DJ: no request fires after cancel");
+  } finally {
+    (globalThis as unknown as Record<string, unknown>).setTimeout = origSetTimeout;
+    (globalThis as unknown as Record<string, unknown>).clearTimeout = origClearTimeout;
   }
-
-  // A. Typing one char at 0 ms → zero requests at 0 ms
-  handleKey("a");
-  check(firedValues.length === 0, "DA: 0 ms → 0 requests");
-
-  // B. Advancing to 299 ms → still zero
-  advance(299 - virtualNow);
-  check(firedValues.length === 0, "DB: 299 ms → 0 requests");
-
-  // C. Advancing to 300 ms → exactly 1 request
-  advance(1);
-  check(firedValues.length === 1, "DC: 300 ms → 1 request");
-  check(firedValues[0] === "a", "DC: value = 'a'");
-
-  // D + E + F: Second keystroke at virtualNow ms (simulate 200ms from first)
-  // Reset: start fresh
-  firedValues = [];
-  searchTimer = null;
-  virtualNow = 0;
-  pending.length = 0;
-  activeTimer = null;
-
-  handleKey("a");           // at 0 ms
-  advance(200);             // at 200 ms, type "ab"
-  handleKey("ab");          // cancels "a" timer, starts "ab" timer
-  check(firedValues.length === 0, "DD: second keystroke at 200 ms cancels first timer");
-  advance(199);             // at 399 ms from start, 199 ms from second keystroke
-  check(firedValues.length === 0, "DE: 199 ms from second → still 0");
-  advance(1);               // at 400 ms (200 + 199 + 1 → wait, need to reach 300 from second)
-  // At 200 ms + 300 ms = 500 ms virtual
-  advance(100);             // total: virtualNow = 200 + 199 + 1 + 100 = 500
-  check(firedValues.length === 1, "DF: 500 ms total → 1 request for 'ab'");
-  check(firedValues[0] === "ab", "DF: value = 'ab'");
-
-  // G + H: Only final value fired
-  check(firedValues.length === 1, "DG/DH: only final value 'ab' fired");
-
-  // I: Cancel (unmount)
-  firedValues = [];
-  searchTimer = null;
-  virtualNow = 0;
-  pending.length = 0;
-  activeTimer = null;
-
-  handleKey("x");
-  mockClearTimeout(searchTimer!);
-  searchTimer = null;
-  advance(500);
-  check(firedValues.length === 0, "DI: unmount clears timer → 0 requests");
-
-  // J: No request after unmount
-  check(firedValues.length === 0, "DJ: no request fires after unmount");
 }
 
 // ===========================================================================
