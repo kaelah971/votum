@@ -131,6 +131,23 @@ async function setupFixtures(now: Date) {
   });
   if (ba) after72hPollId = ba.id;
 
+  // ── Retrieve boundary poll IDs from DB ──
+  const { data: boundaryPolls } = await admin.from("polls")
+    .select("id, question")
+    .eq("creator_wallet", creator)
+    .in("question", [
+      "V2A7C exact 72h boundary test ok",
+      "V2A7C 1ms before 72h boundary ok",
+      "V2A7C 1ms after 72h boundary ok",
+    ]);
+  if (boundaryPolls) {
+    for (const p of boundaryPolls) {
+      if (p.question.includes("exact 72h")) boundary72hPollId = p.id;
+      if (p.question.includes("1ms before")) before72hPollId = p.id;
+      if (p.question.includes("1ms after")) after72hPollId = p.id;
+    }
+  }
+
   // ── Closing soon: ends_at within [now+1h, now+72h] ──
   for (let i = 0; i < 18; i++) {
     const endsAt = new Date(base + (i + 1) * H).toISOString(); // 1h, 2h, ..., 18h
@@ -240,7 +257,7 @@ async function setupFixtures(now: Date) {
 // 1. Initial grouped result
 // ===========================================================================
 
-async function testInitialGrouped() {
+async function testInitialGrouped(now: Date) {
   console.log("─── 1. Initial grouped (4/4/4) ───");
   const { queryExploreGrouped } = await import("../data/explore-queries");
   const r = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", limit: 4 });
@@ -278,34 +295,38 @@ async function testInitialGrouped() {
   const rcStatuses = new Set(r.recentlyClosed.polls.map(p => p.status));
   check(rcStatuses.has("closed") || rcStatuses.has("live"), "RC: mix of closed/live");
 
-  // Boundary poll (exactly now + 72h) should NOT be in recently_closed
+  // Boundary poll (exactly now + 72h) → closing_soon (deterministic)
+  // Re-query with fixed `now` to eliminate timing drift
+  const allCS = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "closing_soon", limit: 50 }, now);
+  const allLN = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "live_now", limit: 50 }, now);
+  const allRC = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "recently_closed", limit: 50 }, now);
+
+  const csIds = new Set(allCS.closingSoon.polls.map(p => p.id));
+  const lnIds = new Set(allLN.liveNow.polls.map(p => p.id));
+  const rcIds = new Set(allRC.recentlyClosed.polls.map(p => p.id));
+
+  // Verify the boundary fixture IDs were found
+  check(boundary72hPollId !== null, "72h boundary: fixture ID found in DB");
+
   if (boundary72hPollId) {
-    const inRC = allRC.recentlyClosed.polls.some(p => p.id === boundary72hPollId);
-    check(!inRC, "72h boundary: not in recently_closed (expired)");
-    // Verifying exact CS/LN placement is drift-sensitive; the exclusion proof
-    // above confirms the poll is not closed.
-    check(true, "72h boundary: exclusion from RC confirmed");
+    check(csIds.has(boundary72hPollId), "72h boundary: exact 72h is closing_soon");
+    check(!lnIds.has(boundary72hPollId), "72h boundary: not in live_now");
+    check(!rcIds.has(boundary72hPollId), "72h boundary: not in recently_closed");
   } else {
-    check(true, "72h boundary: fixture unavailable (timing drift)");
+    check(false, "72h boundary: fixture missing");
   }
 
-  // 1ms before 72h → should be live, not closed
   if (before72hPollId) {
-    const inRC = allRC.recentlyClosed.polls.some(p => p.id === before72hPollId);
-    check(!inRC, "72h-1ms: not in recently_closed (still live)");
-  } else {
-    check(true, "72h-1ms: fixture unavailable");
-  }
+    check(csIds.has(before72hPollId), "72h-1ms: is closing_soon");
+    check(!lnIds.has(before72hPollId), "72h-1ms: not in live_now");
+    check(!rcIds.has(before72hPollId), "72h-1ms: not in recently_closed");
+  } else { check(false, "72h-1ms: fixture missing"); }
 
-  // 1ms after 72h → not CS, not RC (must be live_now)
   if (after72hPollId) {
-    const inCS = allCS.closingSoon.polls.some(p => p.id === after72hPollId);
-    const inRC = allRC.recentlyClosed.polls.some(p => p.id === after72hPollId);
-    check(!inCS, "72h+1ms: not in closing_soon");
-    check(!inRC, "72h+1ms: not in recently_closed");
-  } else {
-    check(true, "72h+1ms: fixture unavailable");
-  }
+    check(!csIds.has(after72hPollId), "72h+1ms: not in closing_soon");
+    check(lnIds.has(after72hPollId), "72h+1ms: is live_now");
+    check(!rcIds.has(after72hPollId), "72h+1ms: not in recently_closed");
+  } else { check(false, "72h+1ms: fixture missing"); }
 }
 
 // ===========================================================================

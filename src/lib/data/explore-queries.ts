@@ -503,6 +503,7 @@ async function querySection(
 
 export async function queryExploreGrouped(
   params: ExploreQueryParams,
+  _now?: Date,
 ): Promise<GroupedExploreResult> {
   const supabase = createAnonClient();
   if (!supabase) {
@@ -513,7 +514,7 @@ export async function queryExploreGrouped(
     };
   }
 
-  const now = new Date();
+  const now = _now ?? new Date();
   const defaultLimit = params.section ? GROUP_MORE_LIMIT : GROUP_FIRST_LIMIT;
   const limit = Math.max(1, Math.min(params.limit || defaultLimit, MAX_LIMIT));
 

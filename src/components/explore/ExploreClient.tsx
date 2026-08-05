@@ -26,6 +26,7 @@ import { PollCard } from "@/components/product/PollCard";
 import { Card } from "@/components/ui/Card";
 import { ArrowUpRightIcon, SearchIcon } from "@/components/ui/icons";
 import { createDebouncedSearch } from "@/lib/explore/debounce";
+import { createExploreRequestCoordinator } from "@/lib/explore/request-coordinator";
 
 // ── Props ─────────────────────────────────────────────────────────────
 
@@ -104,19 +105,14 @@ export function ExploreClient({
     debouncedSearch.current?.notify(value);
   }
 
-  // ── Request tracking ────────────────────────────────────────────
-  const requestIdRef = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
+  // ── Request coordination (per-section isolation) ────────────────
+  const coordinator = useRef(createExploreRequestCoordinator()).current;
 
-  function nextRequestId(): number {
-    requestIdRef.current += 1;
-    return requestIdRef.current;
-  }
-
-  function cancelPending() {
-    abortRef.current?.abort();
-    abortRef.current = null;
-  }
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { coordinator.destroy(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Data state ──────────────────────────────────────────────────
   const [flatPolls, setFlatPolls] = useState<PollCardData[]>(
@@ -162,10 +158,7 @@ export function ExploreClient({
     section: PollSection | null,
     cursor: string | null,
   ) {
-    const rid = nextRequestId();
-    const ac = new AbortController();
-    if (abortRef.current) { try { abortRef.current.abort(); } catch { /* ok */ } }
-    abortRef.current = ac;
+    const handle = coordinator.startFirstPage();
     setLoading(true);
 
     try {
@@ -179,22 +172,22 @@ export function ExploreClient({
       if (cursor) params.set("cursor", cursor);
 
       const res = await fetch(`/api/explore?${params.toString()}`, {
-        signal: ac.signal,
+        signal: handle.ac.signal,
       });
 
-      if (ac.signal.aborted) return;
-      if (rid !== requestIdRef.current) return;
+      if (handle.ac.signal.aborted) return;
+      if (!coordinator.isCurrent(handle)) return;
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        if (rid !== requestIdRef.current) return;
+        if (!coordinator.isCurrent(handle)) return;
         setError(body.message ?? "Query failed");
         setLoading(false);
         return;
       }
 
       const data = await res.json();
-      if (rid !== requestIdRef.current) return;
+      if (!coordinator.isCurrent(handle)) return;
 
       if (isFlat(filterState.sort)) {
         const r = data as ExploreQueryResult;
@@ -217,14 +210,14 @@ export function ExploreClient({
       }
       setError(null);
     } catch (err: unknown) {
-      if (ac.signal.aborted) return;
-      if (rid !== requestIdRef.current) return;
+      if (handle.ac.signal.aborted) return;
+      if (!coordinator.isCurrent(handle)) return;
       const msg = err instanceof Error ? err.message : "Request failed";
       if (msg !== "The user aborted a request.") {
         setError(msg);
       }
     } finally {
-      if (rid === requestIdRef.current) setLoading(false);
+      if (coordinator.isCurrent(handle)) setLoading(false);
     }
   }
 
@@ -232,7 +225,7 @@ export function ExploreClient({
   function applyFilterChange(
     updater: (prev: ExploreFilterState) => ExploreFilterState,
   ) {
-    cancelPending();
+    coordinator.advanceFilterGeneration();
     const newFilters = updater(filters);
     const url = buildExploreUrl(newFilters);
 
@@ -283,7 +276,7 @@ export function ExploreClient({
 
   // Clear filters
   function handleClearFilters() {
-    cancelPending();
+    coordinator.advanceFilterGeneration();
     setSearchText("");
     debouncedSearch.current?.cancel();
     debouncedSearch.current?.reset();
@@ -312,10 +305,7 @@ export function ExploreClient({
 
   async function executeFlatLoadMore(cursor: string | null) {
     if (!cursor) { setLoadingMore(false); return; }
-    const rid = nextRequestId();
-    const ac = new AbortController();
-    if (abortRef.current) { try { abortRef.current.abort(); } catch { /* ok */ } }
-    abortRef.current = ac;
+    const handle = coordinator.startFlatMore();
 
     try {
       const params = new URLSearchParams();
@@ -326,34 +316,34 @@ export function ExploreClient({
       if (filters.sort !== "grouped") params.set("sort", filters.sort);
       params.set("cursor", cursor);
 
-      const res = await fetch(`/api/explore?${params.toString()}`, { signal: ac.signal });
-      if (ac.signal.aborted) return;
-      if (rid !== requestIdRef.current) return;
+      const res = await fetch(`/api/explore?${params.toString()}`, { signal: handle.ac.signal });
+      if (handle.ac.signal.aborted) return;
+      if (!coordinator.isCurrent(handle)) return;
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        if (rid !== requestIdRef.current) return;
+        if (!coordinator.isCurrent(handle)) return;
         setLoadMoreError(body.message ?? "Failed to load more");
         setLoadingMore(false);
         return;
       }
 
       const data: ExploreQueryResult = await res.json();
-      if (rid !== requestIdRef.current) return;
+      if (!coordinator.isCurrent(handle)) return;
 
       setFlatPolls((prev) => appendUnique(prev, data.polls));
       setFlatCursor(data.nextCursor);
       setFlatHasMore(data.hasMore);
       setLoadMoreError(null);
     } catch (err: unknown) {
-      if (ac.signal.aborted) return;
-      if (rid !== requestIdRef.current) return;
+      if (handle.ac.signal.aborted) return;
+      if (!coordinator.isCurrent(handle)) return;
       const msg = err instanceof Error ? err.message : "Request failed";
       if (msg !== "The user aborted a request.") {
         setLoadMoreError(msg);
       }
     } finally {
-      if (rid === requestIdRef.current) setLoadingMore(false);
+      if (coordinator.isCurrent(handle)) setLoadingMore(false);
     }
   }
 
@@ -364,10 +354,7 @@ export function ExploreClient({
     setSectionLoading((prev) => ({ ...prev, [section]: true }));
     setSectionError((prev) => ({ ...prev, [section]: null }));
 
-    const rid = nextRequestId();
-    const ac = new AbortController();
-    if (abortRef.current) { try { abortRef.current.abort(); } catch { /* ok */ } }
-    abortRef.current = ac;
+    const handle = coordinator.startSectionMore(section);
 
     try {
       const params = new URLSearchParams();
@@ -379,20 +366,20 @@ export function ExploreClient({
       params.set("section", section);
       params.set("cursor", cursor);
 
-      const res = await fetch(`/api/explore?${params.toString()}`, { signal: ac.signal });
-      if (ac.signal.aborted) return;
-      if (rid !== requestIdRef.current) return;
+      const res = await fetch(`/api/explore?${params.toString()}`, { signal: handle.ac.signal });
+      if (handle.ac.signal.aborted) return;
+      if (!coordinator.isCurrent(handle)) return;
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        if (rid !== requestIdRef.current) return;
+        if (!coordinator.isCurrent(handle)) return;
         setSectionError((prev) => ({ ...prev, [section]: body.message ?? "Failed" }));
         setSectionLoading((prev) => ({ ...prev, [section]: false }));
         return;
       }
 
       const data: GroupedExploreResult = await res.json();
-      if (rid !== requestIdRef.current) return;
+      if (!coordinator.isCurrent(handle)) return;
 
       const result = section === "closing_soon" ? data.closingSoon
         : section === "live_now" ? data.liveNow
@@ -408,14 +395,14 @@ export function ExploreClient({
       }));
       setSectionError((prev) => ({ ...prev, [section]: null }));
     } catch (err: unknown) {
-      if (ac.signal.aborted) return;
-      if (rid !== requestIdRef.current) return;
+      if (handle.ac.signal.aborted) return;
+      if (!coordinator.isCurrent(handle)) return;
       const msg = err instanceof Error ? err.message : "Request failed";
       if (msg !== "The user aborted a request.") {
         setSectionError((prev) => ({ ...prev, [section]: msg }));
       }
     } finally {
-      if (rid === requestIdRef.current) setSectionLoading((prev) => ({ ...prev, [section]: false }));
+      if (coordinator.isCurrent(handle)) setSectionLoading((prev) => ({ ...prev, [section]: false }));
     }
   }
 
