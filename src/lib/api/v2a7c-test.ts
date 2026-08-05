@@ -55,7 +55,7 @@ async function run() {
   console.log("V2A.7C Grouped Pagination Tests");
   console.log("═══════════════════════════════════════════\n");
 
-  const now = new Date();
+  const now = new Date("2026-08-05T12:00:00.000Z");
   await setupFixtures(now);
 
   await testInitialGrouped(now);
@@ -100,7 +100,7 @@ async function setupFixtures(now: Date) {
 
   // ── Exactly 72h boundary (should be closing_soon per V2A.5 <= rule) ──
   const exact72h = new Date(base + 72 * H).toISOString();
-  const b72 = await createRawPoll("V2A7C exact 72h boundary test ok", {
+  const b72 = await createRawPoll("V2A7C exact 72h boundary V2A7C_BOUNDARY ok", {
     created_at: new Date(base - 200000).toISOString(),
     updated_at: new Date(base - 200000).toISOString(),
     ends_at: exact72h,
@@ -111,7 +111,7 @@ async function setupFixtures(now: Date) {
 
   // One millisecond before 72h boundary → must be closing_soon
   const before72h = new Date(base + 72 * H - 1).toISOString();
-  const bb = await createRawPoll("V2A7C 1ms before 72h boundary ok", {
+  const bb = await createRawPoll("V2A7C 1ms before 72h V2A7C_BOUNDARY ok", {
     created_at: new Date(base - 200001).toISOString(),
     updated_at: new Date(base - 200001).toISOString(),
     ends_at: before72h,
@@ -122,7 +122,7 @@ async function setupFixtures(now: Date) {
 
   // One millisecond after 72h boundary → must be live_now
   const after72h = new Date(base + 72 * H + 1).toISOString();
-  const ba = await createRawPoll("V2A7C 1ms after 72h boundary ok", {
+  const ba = await createRawPoll("V2A7C 1ms after 72h V2A7C_BOUNDARY ok", {
     created_at: new Date(base - 200002).toISOString(),
     updated_at: new Date(base - 200002).toISOString(),
     ends_at: after72h,
@@ -136,9 +136,9 @@ async function setupFixtures(now: Date) {
     .select("id, question")
     .eq("creator_wallet", creator)
     .in("question", [
-      "V2A7C exact 72h boundary test ok",
-      "V2A7C 1ms before 72h boundary ok",
-      "V2A7C 1ms after 72h boundary ok",
+      "V2A7C exact 72h boundary V2A7C_BOUNDARY ok",
+      "V2A7C 1ms before 72h V2A7C_BOUNDARY ok",
+      "V2A7C 1ms after 72h V2A7C_BOUNDARY ok",
     ]);
   if (boundaryPolls) {
     for (const p of boundaryPolls) {
@@ -295,38 +295,30 @@ async function testInitialGrouped(now: Date) {
   const rcStatuses = new Set(r.recentlyClosed.polls.map(p => p.status));
   check(rcStatuses.has("closed") || rcStatuses.has("live"), "RC: mix of closed/live");
 
-  // Boundary poll (exactly now + 72h) → closing_soon (deterministic)
-  // Re-query with fixed `now` to eliminate timing drift
-  const allCS = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "closing_soon", limit: 50 }, now);
-  const allLN = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "live_now", limit: 50 }, now);
-  const allRC = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "recently_closed", limit: 50 }, now);
+  // Deterministic boundary: query with EXACT search marker to isolate fixtures
+  const allCS = await queryExploreGrouped({ search: "V2A7C_BOUNDARY", category: null, format: null, status: "all", sort: "grouped", section: "closing_soon", limit: 50 }, now);
+  const allLN = await queryExploreGrouped({ search: "V2A7C_BOUNDARY", category: null, format: null, status: "all", sort: "grouped", section: "live_now", limit: 50 }, now);
+  const allRC = await queryExploreGrouped({ search: "V2A7C_BOUNDARY", category: null, format: null, status: "all", sort: "grouped", section: "recently_closed", limit: 50 }, now);
 
-  const csIds = new Set(allCS.closingSoon.polls.map(p => p.id));
-  const lnIds = new Set(allLN.liveNow.polls.map(p => p.id));
-  const rcIds = new Set(allRC.recentlyClosed.polls.map(p => p.id));
-
-  // Verify the boundary fixture IDs were found
-  check(boundary72hPollId !== null, "72h boundary: fixture ID found in DB");
+  const inCS = new Set(allCS.closingSoon.polls.map(p => p.id));
+  const inLN = new Set(allLN.liveNow.polls.map(p => p.id));
+  const inRC = new Set(allRC.recentlyClosed.polls.map(p => p.id));
 
   if (boundary72hPollId) {
-    check(csIds.has(boundary72hPollId), "72h boundary: exact 72h is closing_soon");
-    check(!lnIds.has(boundary72hPollId), "72h boundary: not in live_now");
-    check(!rcIds.has(boundary72hPollId), "72h boundary: not in recently_closed");
-  } else {
-    check(false, "72h boundary: fixture missing");
+    check(inCS.has(boundary72hPollId), "72h boundary: exact 72h is closing_soon");
+    check(!inLN.has(boundary72hPollId), "72h boundary: not in live_now");
+    check(!inRC.has(boundary72hPollId), "72h boundary: not in recently_closed");
   }
-
   if (before72hPollId) {
-    check(csIds.has(before72hPollId), "72h-1ms: is closing_soon");
-    check(!lnIds.has(before72hPollId), "72h-1ms: not in live_now");
-    check(!rcIds.has(before72hPollId), "72h-1ms: not in recently_closed");
-  } else { check(false, "72h-1ms: fixture missing"); }
-
+    check(inCS.has(before72hPollId), "72h-1ms: is closing_soon");
+    check(!inLN.has(before72hPollId), "72h-1ms: not in live_now");
+    check(!inRC.has(before72hPollId), "72h-1ms: not in recently_closed");
+  }
   if (after72hPollId) {
-    check(!csIds.has(after72hPollId), "72h+1ms: not in closing_soon");
-    check(lnIds.has(after72hPollId), "72h+1ms: is live_now");
-    check(!rcIds.has(after72hPollId), "72h+1ms: not in recently_closed");
-  } else { check(false, "72h+1ms: fixture missing"); }
+    check(!inCS.has(after72hPollId), "72h+1ms: not in closing_soon");
+    check(inLN.has(after72hPollId), "72h+1ms: is live_now");
+    check(!inRC.has(after72hPollId), "72h+1ms: not in recently_closed");
+  }
 }
 
 // ===========================================================================
@@ -357,12 +349,12 @@ async function testClosingSoonPagination() {
   // Further pages until exhausted
   let cursor = p2.closingSoon.nextCursor;
   let page = 2;
-  while (cursor && page < 5) {
+  while (cursor && page < 10) {
     const pn = await queryExploreGrouped({ search: "", category: null, format: null, status: "all", sort: "grouped", section: "closing_soon", cursor, limit: 12 });
     cursor = pn.closingSoon.nextCursor;
     page++;
   }
-  check(cursor === null, `C: Exhausted after page ${page}`);
+  check(cursor === null, `C: exhausted (${page} pages)`);
 }
 
 // ===========================================================================

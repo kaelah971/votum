@@ -1,105 +1,85 @@
 /**
- * V2A.7F.1A Explore Request Coordinator
+ * V2A.7F Explore Request Coordinator
  *
- * Manages independent request lifecycles for:
- *   1. Initial/filter-change requests (shared filter generation)
- *   2. Flat Load more requests
- *   3. Grouped per-section Load more requests
+ * Manages independent request lifecycles with per-slot generation tracking.
+ * Each slot has its own AbortController and request generation counter.
  *
- * Each grouped section has its own AbortController so that
- * Loading one section never cancels another section.
- *
- * Filter changes cancel ALL active requests from the old generation.
+ * Slots: firstPage, flatMore, closing_soon, live_now, recently_closed.
  */
 
 import type { PollSection } from "@/lib/explore/filters";
 
 export interface RequestHandle {
-  ac: AbortController;
-  gen: number;
-  filterGen: number;
+  readonly ac: AbortController;
+  readonly slot: string;
+  readonly filterGen: number;
+  readonly reqGen: number;
 }
 
 export interface ExploreRequestCoordinator {
-  /** Start a new first-page request (initial load or filter change). */
   startFirstPage(): RequestHandle;
-  /** Start a flat Load more request. */
   startFlatMore(): RequestHandle;
-  /** Start a grouped section Load more request. */
   startSectionMore(section: PollSection): RequestHandle;
-
-  /** True if this handle's generation is still current for its mode. */
-  isCurrent(handle: RequestHandle): boolean;
-
-  /** New filter generation — aborts ALL active requests. */
   advanceFilterGeneration(): void;
-  /** Abort everything and reset state. Called on unmount. */
-  destroy(): void;
+  isCurrent(handle: RequestHandle): boolean;
+  finish(handle: RequestHandle): void;
+  dispose(): void;
 }
 
 export function createExploreRequestCoordinator(): ExploreRequestCoordinator {
   let filterGen = 1;
 
-  let firstGen = 0;
-  let firstAc: AbortController | null = null;
+  // Per-slot state
+  const slots = new Map<string, { ac: AbortController | null; gen: number }>();
 
-  let flatGen = 0;
-  let flatAc: AbortController | null = null;
-
-  const sectionGen: Partial<Record<PollSection, number>> = {};
-  const sectionAc: Partial<Record<PollSection, AbortController | null>> = {};
-
-  // ── Helpers ──────────────────────────────────────────────────────
-
-  function newHandle(ac: AbortController, gen: number): RequestHandle {
-    return { ac, gen, filterGen };
+  function getSlot(key: string) {
+    let s = slots.get(key);
+    if (!s) { s = { ac: null, gen: 0 }; slots.set(key, s); }
+    return s;
   }
 
   function abort(ac: AbortController | null): void {
     if (ac) { try { ac.abort(); } catch { /* ok */ } }
   }
 
-  // ── Public API ───────────────────────────────────────────────────
+  function startSlot(key: string): RequestHandle {
+    const s = getSlot(key);
+    abort(s.ac);
+    s.gen += 1;
+    s.ac = new AbortController();
+    return { ac: s.ac, slot: key, filterGen, reqGen: s.gen };
+  }
+
+  function isCurrentHandle(handle: RequestHandle): boolean {
+    if (handle.filterGen !== filterGen) return false;
+    const s = slots.get(handle.slot);
+    if (!s) return false;
+    return handle.reqGen === s.gen;
+  }
+
+  function abortAll(): void {
+    for (const s of slots.values()) { abort(s.ac); s.ac = null; }
+  }
 
   return {
-    startFirstPage(): RequestHandle {
-      abort(firstAc);
-      firstGen += 1;
-      firstAc = new AbortController();
-      return newHandle(firstAc, firstGen);
-    },
-
-    startFlatMore(): RequestHandle {
-      abort(flatAc);
-      flatGen += 1;
-      flatAc = new AbortController();
-      return newHandle(flatAc, flatGen);
-    },
-
-    startSectionMore(section: PollSection): RequestHandle {
-      abort(sectionAc[section] ?? null);
-      const prev = sectionGen[section] ?? 0;
-      sectionGen[section] = prev + 1;
-      sectionAc[section] = new AbortController();
-      return newHandle(sectionAc[section]!, sectionGen[section]!);
-    },
-
-    isCurrent(handle: RequestHandle): boolean {
-      return handle.filterGen === filterGen;
-    },
+    startFirstPage(): RequestHandle { return startSlot("firstPage"); },
+    startFlatMore(): RequestHandle { return startSlot("flatMore"); },
+    startSectionMore(section: PollSection): RequestHandle { return startSlot(`section:${section}`); },
 
     advanceFilterGeneration(): void {
       filterGen += 1;
-      // Abort ALL active requests from the old generation
-      abort(firstAc); firstAc = null;
-      abort(flatAc); flatAc = null;
-      for (const sec of Object.keys(sectionAc) as PollSection[]) {
-        abort(sectionAc[sec]!);
-        sectionAc[sec] = null;
-      }
+      abortAll();
     },
 
-    destroy(): void {
+    isCurrent(handle: RequestHandle): boolean {
+      return isCurrentHandle(handle);
+    },
+
+    finish(_handle: RequestHandle): void {
+      // No-op: just mark complete. Other slots remain active.
+    },
+
+    dispose(): void {
       this.advanceFilterGeneration();
     },
   };
