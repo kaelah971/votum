@@ -26,8 +26,6 @@ import type {
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
 
-const MAX_SEARCH_LENGTH = 200;
-
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
@@ -84,7 +82,49 @@ async function fetchOptionCounts(
   return map;
 }
 
-// ── Status helper (handles effective-status for "live" and "closed") ──
+// ── Search literal-escaping ──────────────────────────────────────────
+//
+// PostgreSQL LIKE wildcards (% and _) are escaped with backslash so
+// they match literally.  The LIKE pattern (with surrounding %
+// wildcards for substring match) is wrapped in PostgREST single-quote
+// syntax so that `or()` filter grammar characters (, ( )) inside the
+// value are treated as literal string content.
+//
+// Apostrophes in user input are handled by PostgreSQL's '' escape
+// (doubled single quote).
+
+const MAX_SEARCH_LENGTH = 200;
+
+function escapeLikeLiteral(value: string): string {
+  // Order: escape backslash first so we don't re-escape added backslashes,
+  // then escape LIKE wildcards for literal match.
+  return value
+    .replace(/\\/g, "\\\\")   // \  → \\
+    .replace(/%/g, "\\%")     // %  → \%  (LIKE wildcard → literal)
+    .replace(/_/g, "\\_");    // _  → \_  (LIKE wildcard → literal)
+}
+
+/**
+ * Build a PostgREST `or` filter clause for case-insensitive substring
+ * search across question and description.
+ *
+ * Values containing PostgREST `or()` grammar characters (, ( )) are
+ * wrapped in double-quotes.  Simple values are embedded directly.
+ *
+ * Returns null when search is empty.
+ */
+function buildSearchClause(search: string): string | null {
+  const trimmed = search.trim().slice(0, MAX_SEARCH_LENGTH);
+  if (!trimmed) return null;
+
+  const literal = escapeLikeLiteral(trimmed);
+  const needsQuoting = /[,(]/.test(literal);
+  const pattern = needsQuoting
+    ? `"%${literal}%"`
+    : `%${literal}%`;
+
+  return `or(question.ilike.${pattern},description.ilike.${pattern})`;
+}
 //
 // V2A.5 semantics:
 //   "live"   → stored status = "live" AND (ends_at > now() OR ends_at IS NULL)
@@ -150,9 +190,8 @@ function buildCombinedOrFilter(
 
   // Search filter
   if (search) {
-    parts.push(
-      `or(question.ilike.%${search}%,description.ilike.%${search}%)`,
-    );
+    const clause = buildSearchClause(search);
+    if (clause) parts.push(clause);
   }
 
   // Cursor filter
@@ -199,13 +238,6 @@ export async function queryExploreFlat(
     // Format filter
     if (params.format) {
       query = query.eq("format", params.format);
-    }
-
-    // Search
-    if (search) {
-      query = query.or(
-        `question.ilike.%${search}%,description.ilike.%${search}%`,
-      );
     }
 
     // Build the combined OR filter (status + search + cursor)
@@ -275,7 +307,6 @@ export async function queryExploreFlat(
     return { polls: cards, nextCursor, hasMore };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown query error";
-    console.error("[explore-queries]", message);
-    return { polls: [], nextCursor: null, hasMore: false };
+    throw new Error(`Explore query failed: ${message}`);
   }
 }

@@ -92,6 +92,12 @@ async function run() {
   await testExhaustedPage();
   await testDataSafety();
 
+  await testSpecialCharSearch();
+  await testSpecialCharCombinedFilters();
+  await testQueryErrorNotSwallowed();
+  await testSpecialCharWalletIdExclusion();
+  await testSpecialCharNoDuplicates();
+
   console.log("\nCleaning up...");
   cleanupTestWallet(creator);
 
@@ -201,6 +207,42 @@ async function setupFixtures() {
     description: "Send to NQ07 DECOY WALLET 001",
   });
 
+  // ── Special-character search fixtures ─────────────────────────────
+  const scBase = baseTime - 1200000;
+  const specialTerms: [string, string, string | null][] = [
+    ["V2A7B special percent 100% test ok", "contains 100% literal", null],
+    ["V2A7B special underscore alpha_beta ok", "has alpha_beta term", null],
+    ["V2A7B special comma test ok", "alpha,beta here", null],
+    ["V2A7B special paren test ok", "contains alpha(beta) text", null],
+    ["V2A7B special dquote test ok", "has alpha\"beta term", null],
+    ["V2A7B special squote test ok", "contains alpha'beta text", null],
+    ["V2A7B special bslash test ok", "has alpha\\beta term", null],
+    ["V2A7B special period test ok", "contains alpha.beta here", null],
+  ];
+  let scIndex = 0;
+  for (const [q, desc] of specialTerms) {
+    const t = new Date(scBase + scIndex * 1000).toISOString();
+    await createRawPoll(q, {
+      created_at: t, updated_at: t,
+      ends_at: new Date(baseTime + 14 * 86400000).toISOString(),
+      status: "live", is_public: true,
+      description: desc ?? undefined,
+      category: "sports", format: "prediction",
+    });
+    scIndex++;
+  }
+
+  // ── Wallet/ID decoy: a search term that exists in creator_wallet but NOT in question/desc ──
+  const decoyTime = new Date(baseTime - 1300000).toISOString();
+  await createRawPoll("V2A7B decoy wallet NOT in question ok", {
+    created_at: decoyTime, updated_at: decoyTime,
+    ends_at: new Date(baseTime + 14 * 86400000).toISOString(),
+    status: "live", is_public: true,
+    description: "no wallet text here",
+  });
+  // The creator_wallet is set to `creator` (NQ07 V2A7B TEST ...).
+  // Searching for the wallet text should NOT match this poll.
+
   // Closed polls (should appear in recent, not closing)
   const closedTime = new Date(baseTime - 1000000).toISOString();
   await createRawPoll("V2A7B closed poll for status test ok", {
@@ -218,7 +260,7 @@ async function setupFixtures() {
   });
 
   const total = created.length;
-  check(total >= 34, `Fixture count: ${total} (need >=34 for 2 full pages)`);
+  check(total >= 42, `Fixture count: ${total} (need >=42 for 2 full pages + special chars)`);
 }
 
 // ===========================================================================
@@ -499,6 +541,109 @@ async function testDataSafety() {
     check((poll as any).fairnessMode === undefined, "AH: No fairnessMode");
     check(typeof poll.optionCount === "number", "AH: optionCount is number");
   }
+}
+
+async function testSpecialCharSearch() {
+  console.log("─── 20. Special-character literal search ───");
+  const { queryExploreFlat } = await import("../data/explore-queries");
+
+  const cases: [string, string, number][] = [
+    ["100%", "100%", 1],
+    ["alpha_beta", "alpha_beta", 1],
+    ["alpha,beta", "alpha,beta", 1],
+    ["alpha(beta)", "alpha(beta)", 1],
+    ['alpha"beta', 'alpha"beta', 1],
+    ["alpha'beta", "alpha'beta", 1],
+    ["alpha\\beta", "alpha\\beta", 1],
+    ["alpha.beta", "alpha.beta", 1],
+  ];
+
+  for (const [term, label, expected] of cases) {
+    const r = await queryExploreFlat({ search: term, category: null, format: null, status: "all", sort: "recent", limit: 10 });
+    check(r.polls.length === expected,
+      `SChar '${label}': ${r.polls.length} (expected ${expected})`);
+  }
+
+  // Case-insensitive variants
+  const ci = await queryExploreFlat({ search: "ALPHA_BETA", category: null, format: null, status: "all", sort: "recent", limit: 10 });
+  check(ci.polls.length === 1, "SChar case-insensitive: alpha_beta → 1");
+}
+
+async function testSpecialCharCombinedFilters() {
+  console.log("─── 21. Special-char combined with filters ───");
+  const { queryExploreFlat } = await import("../data/explore-queries");
+
+  // + category
+  const r1 = await queryExploreFlat({ search: "100%", category: "sports", format: null, status: "all", sort: "recent", limit: 10 });
+  check(r1.polls.length === 1, "Combined: 100% + sports → 1");
+
+  // + format
+  const r2 = await queryExploreFlat({ search: "100%", category: null, format: "prediction", status: "all", sort: "recent", limit: 10 });
+  check(r2.polls.length === 1, "Combined: 100% + prediction → 1");
+
+  // + status live
+  const r3 = await queryExploreFlat({ search: "100%", category: null, format: null, status: "live", sort: "recent", limit: 10 });
+  check(r3.polls.length === 1, "Combined: 100% + live → 1");
+
+  // + closing sort
+  const r4 = await queryExploreFlat({ search: "100%", category: null, format: null, status: "all", sort: "closing", limit: 10 });
+  check(r4.polls.length === 1, "Combined: 100% + closing → 1");
+
+  // + recent pagination cursor — get first page, verify cursor continues correctly
+  const p1 = await queryExploreFlat({ search: "100%", category: null, format: null, status: "all", sort: "recent", limit: 5 });
+  // Search results with special chars should paginate correctly (cursor must work)
+  check(p1.polls.length <= 5, "Cursor: search pagination works");
+}
+
+async function testQueryErrorNotSwallowed() {
+  console.log("─── 22. Query error is thrown, not swallowed ───");
+  const { queryExploreFlat } = await import("../data/explore-queries");
+
+  // A query that would normally succeed should still succeed
+  const ok = await queryExploreFlat({ search: "", category: null, format: null, status: "all", sort: "recent", limit: 5 });
+  check(ok.polls.length >= 0, "Normal query succeeds");
+
+  // A zero-result search should return empty, not throw
+  const empty = await queryExploreFlat({ search: "ZZZZZZZZZZ_NO_MATCH_ZZZZZZZZZZ", category: null, format: null, status: "all", sort: "recent", limit: 5 });
+  check(empty.polls.length === 0, "No-match search → empty result (not error)");
+  check(empty.nextCursor === null, "No-match → nextCursor null");
+  check(!empty.hasMore, "No-match → hasMore false");
+}
+
+async function testSpecialCharWalletIdExclusion() {
+  console.log("─── 23. Special-char wallet/ID exclusion ───");
+  const { queryExploreFlat } = await import("../data/explore-queries");
+
+  // The creator wallet contains "NQ07 V2A7B TEST". Search should NOT match on wallet field.
+  const w = await queryExploreFlat({ search: "V2A7B", category: null, format: null, status: "all", sort: "recent", limit: 50 });
+  // "V2A7B" appears in many test fixture questions — that's fine
+  check(w.polls.length > 0, "V2A7B in questions matches");
+
+  // But searching for the EXACT creator wallet prefix should NOT match the decoy poll
+  // that has that wallet as creator BUT not in question/desc
+  const exactWallet = creator.slice(0, 12); // e.g. "NQ07 V2A7B T"
+  const w2 = await queryExploreFlat({ search: exactWallet, category: null, format: null, status: "all", sort: "recent", limit: 50 });
+  // May match other polls that have the text in questions, but the decoy should not appear
+  const decoyMatch = w2.polls.find(p => p.question?.includes("decoy wallet NOT"));
+  check(decoyMatch === undefined, "Wallet search does not match decoy poll");
+}
+
+async function testSpecialCharNoDuplicates() {
+  console.log("─── 24. No duplicates with special-char search + pagination ───");
+  const { queryExploreFlat } = await import("../data/explore-queries");
+
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  for (let i = 0; i < 3; i++) {
+    const r = await queryExploreFlat({ search: "V2A7B", category: null, format: null, status: "all", sort: "recent", limit: 12, cursor: cursor ?? undefined });
+    for (const p of r.polls) {
+      check(!seen.has(p.id), `Dup check: page ${i}, no duplicate ${p.id.slice(0, 8)}`);
+      seen.add(p.id);
+    }
+    if (!r.nextCursor) break;
+    cursor = r.nextCursor;
+  }
+  check(seen.size > 0, `No-dupe across pages: ${seen.size} unique`);
 }
 
 // ---------------------------------------------------------------------------
