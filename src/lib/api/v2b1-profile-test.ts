@@ -33,6 +33,7 @@ import { serializePublicProfile } from "@/lib/profiles/serialize";
 import type { ParticipantPublicProfile } from "@/lib/profiles/types";
 import {
   admin,
+  NEXT_BASE,
   startNextDev,
   stopNextDev,
   randomNimiqHex,
@@ -43,6 +44,23 @@ import {
   apiGet,
 } from "./v2b1-dev-server";
 import { Address } from "@nimiq/core";
+
+export async function apiPut(
+  path: string,
+  body: unknown,
+  cookie?: string,
+): Promise<{ status: number; data: any }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (cookie) headers["Cookie"] = `votum_session=${cookie}`;
+  const res = await fetch(`${NEXT_BASE}${path}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(body),
+  });
+  let data: any = null;
+  try { data = await res.json(); } catch { /* ok */ }
+  return { status: res.status, data };
+}
 
 // ---------------------------------------------------------------------------
 // T2 — Handle rules (pure functions)
@@ -566,6 +584,147 @@ async function testPublicQuery(wallets: string[]) {
 }
 
 // ---------------------------------------------------------------------------
+// T5 — Profile editing + handle availability/concurrency
+// ---------------------------------------------------------------------------
+
+async function testEdit(wallets: string[]) {
+  console.log("\n-- Profile editing + handle concurrency --");
+
+  const walletC = randomNimiqHex();
+  const walletD = randomNimiqHex();
+  wallets.push(walletC, walletD);
+
+  // Unauthenticated edit.
+  const anonPut = await apiPut("/api/profile/me", { displayName: "X" });
+  check(anonPut.status === 401, "unauthenticated edit → 401");
+
+  // Editing without a profile.
+  const noProfileToken = await createTestSession(walletD);
+  const noProfile = await apiPut("/api/profile/me", { displayName: "X" }, noProfileToken);
+  check(noProfile.status === 404, "edit without existing profile → 404");
+
+  const tokenC = await createTestSession(walletC);
+  await apiPost("/api/profile/bootstrap", {}, tokenC);
+
+  // Display name.
+  const setDn = await apiPut("/api/profile/me", { displayName: "Cai" }, tokenC);
+  check(setDn.status === 200 && setDn.data?.profile?.displayName === "Cai", "display name set");
+  const updateDn = await apiPut("/api/profile/me", { displayName: "  Cai Renamed  " }, tokenC);
+  check(
+    updateDn.status === 200 && updateDn.data?.profile?.displayName === "Cai Renamed",
+    "display name update trims",
+  );
+  const clearDn = await apiPut("/api/profile/me", { displayName: "" }, tokenC);
+  check(clearDn.status === 200 && clearDn.data?.profile?.displayName === null, "display name clears to null");
+  const longDn = await apiPut("/api/profile/me", { displayName: "x".repeat(41) }, tokenC);
+  check(longDn.status === 400 && longDn.data?.error === "invalid_display_name", "display name 41 chars → 400");
+
+  // Handle creation with canonicalisation.
+  const createHandle = await apiPut("/api/profile/me", { handle: "Cai_01" }, tokenC);
+  check(createHandle.status === 200, "handle creation → 200");
+  check(createHandle.data?.profile?.handle === "cai_01", "handle stored canonical lowercase");
+
+  // Wallet is immutable.
+  check(createHandle.data?.profile?.walletAddress === walletC, "wallet address immutable across edits");
+
+  // Editing another wallet is impossible — body wallet is ignored.
+  const spoof = await apiPut("/api/profile/me", { displayName: "Hacked" }, tokenC);
+  check(spoof.data?.profile?.walletAddress === walletC, "edit target always the session wallet");
+
+  // Handle rename — old handle is released.
+  const rename = await apiPut("/api/profile/me", { handle: "cai_renamed" }, tokenC);
+  check(rename.status === 200 && rename.data?.profile?.handle === "cai_renamed", "handle rename");
+  const tokenD = await createTestSession(walletD);
+  await apiPost("/api/profile/bootstrap", {}, tokenD);
+  const claimOld = await apiPut("/api/profile/me", { handle: "cai_01" }, tokenD);
+  check(claimOld.status === 200 && claimOld.data?.profile?.handle === "cai_01", "renamed-away handle is released and claimable");
+
+  // Duplicate handle.
+  const dup = await apiPut("/api/profile/me", { handle: "cai_01" }, tokenC);
+  check(dup.status === 409 && dup.data?.error === "handle_taken", "duplicate handle → 409 handle_taken");
+
+  // Reserved / malformed.
+  const reserved = await apiPut("/api/profile/me", { handle: "votum" }, tokenC);
+  check(reserved.status === 409 && reserved.data?.error === "reserved_handle", "reserved handle → 409");
+  const malformed = await apiPut("/api/profile/me", { handle: "no way!" }, tokenC);
+  check(malformed.status === 400 && malformed.data?.error === "invalid_handle", "malformed handle → 400");
+  const upperReserved = await apiPut("/api/profile/me", { handle: "ADMIN" }, tokenC);
+  check(upperReserved.status === 409 && upperReserved.data?.error === "reserved_handle", "reserved handle case-insensitive → 409");
+
+  // Clearing the handle.
+  const clearHandle = await apiPut("/api/profile/me", { handle: "" }, tokenC);
+  check(clearHandle.status === 200 && clearHandle.data?.profile?.handle === null, "handle clears to null");
+
+  // No-op same-handle update is allowed.
+  await apiPut("/api/profile/me", { handle: "cai_renamed" }, tokenC);
+  const sameHandle = await apiPut("/api/profile/me", { handle: "cai_renamed" }, tokenC);
+  check(sameHandle.status === 200, "re-claiming your own handle is a no-op success");
+
+  // Concurrent race — two wallets claim the same free handle simultaneously.
+  const walletE = randomNimiqHex();
+  const walletF = randomNimiqHex();
+  wallets.push(walletE, walletF);
+  const tokenE = await createTestSession(walletE);
+  const tokenF = await createTestSession(walletF);
+  await apiPost("/api/profile/bootstrap", {}, tokenE);
+  await apiPost("/api/profile/bootstrap", {}, tokenF);
+
+  const raceTarget = `race_${sha256Hex(walletE).slice(0, 8)}`;
+  const [resE, resF] = await Promise.all([
+    apiPut("/api/profile/me", { handle: raceTarget }, tokenE),
+    apiPut("/api/profile/me", { handle: raceTarget }, tokenF),
+  ]);
+  const winners = [resE, resF].filter((r) => r.status === 200);
+  const losers = [resE, resF].filter((r) => r.status === 409 && r.data?.error === "handle_taken");
+  check(winners.length === 1, "concurrent handle race → exactly one winner");
+  check(losers.length === 1, "concurrent handle race → exactly one clean 409 handle_taken");
+
+  const holder = await admin
+    .from("participant_profiles")
+    .select("wallet_address")
+    .eq("handle", raceTarget)
+    .maybeSingle();
+  check(holder.data !== null, "database has exactly one owner of the raced handle");
+  const { count: holderCount } = await admin
+    .from("participant_profiles")
+    .select("handle", { count: "exact", head: true })
+    .eq("handle", raceTarget);
+  check(holderCount === 1, "unique index guarantees a single handle owner row");
+
+  // Availability endpoint (UX-only).
+  const anonAvail = await apiGet("/api/profile/me/availability?handle=freebie");
+  check(anonAvail.status === 401, "availability without session → 401");
+  const freeAvail = await apiGet("/api/profile/me/availability?handle=freebie", tokenC);
+  check(freeAvail.status === 200 && freeAvail.data?.available === true, "availability: free handle → true");
+  const takenAvail = await apiGet(`/api/profile/me/availability?handle=${raceTarget}`, tokenC);
+  check(
+    takenAvail.status === 200 && takenAvail.data?.available === false && takenAvail.data?.reason === "taken",
+    "availability: taken handle → false/taken",
+  );
+  const reservedAvail = await apiGet("/api/profile/me/availability?handle=explore", tokenC);
+  check(
+    reservedAvail.status === 200 && reservedAvail.data?.available === false && reservedAvail.data?.reason === "reserved",
+    "availability: reserved handle → false/reserved",
+  );
+  const badAvail = await apiGet("/api/profile/me/availability?handle=x", tokenC);
+  check(badAvail.status === 400, "availability: malformed handle → 400");
+
+  // GET /api/profile/me — owner fetch.
+  const ownerGet = await apiGet("/api/profile/me", tokenC);
+  check(ownerGet.status === 200 && ownerGet.data?.profile?.walletAddress === walletC, "GET /api/profile/me returns owner profile");
+  const ownerGetOther = await apiGet("/api/profile/me", tokenD);
+  check(
+    ownerGetOther.status === 200 && ownerGetOther.data?.profile?.walletAddress === walletD,
+    "GET /api/profile/me is scoped to the session wallet",
+  );
+
+  await deleteTestSession(tokenC);
+  await deleteTestSession(tokenD);
+  await deleteTestSession(tokenE);
+  await deleteTestSession(tokenF);
+}
+
+// ---------------------------------------------------------------------------
 
 async function run() {
   console.log("V2B.1 Profile Suite");
@@ -579,6 +738,7 @@ async function run() {
   try {
     await testBootstrap(wallets);
     await testPublicQuery(wallets);
+    await testEdit(wallets);
   } finally {
     for (const w of wallets) cleanupTestWallet(w);
     stopNextDev();
