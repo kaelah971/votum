@@ -112,6 +112,33 @@ export type Database = {
           },
         ]
       }
+      participant_profiles: {
+        Row: {
+          wallet_address: string
+          display_name: string | null
+          handle: string | null
+          verified_at: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          wallet_address: string
+          display_name?: string | null
+          handle?: string | null
+          verified_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          wallet_address?: string
+          display_name?: string | null
+          handle?: string | null
+          verified_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       polls: {
         Row: {
           category: "sports" | "entertainment" | "brands_products" | "communities" | "other"
@@ -248,6 +275,16 @@ export type Database = {
       /** Atomic poll publication — returns { id, status, result_kind } */
       publish_poll_atomic: {
         Args: Record<string, unknown>
+        Returns: Json
+      }
+      /** Public participant profile + derived stats + recent activity */
+      get_participant_public_profile: {
+        Args: { _wallet: string }
+        Returns: Json
+      }
+      /** Public participant profile resolved by canonical handle */
+      get_participant_public_profile_by_handle: {
+        Args: { _handle: string }
         Returns: Json
       }
     }

@@ -20,6 +20,7 @@ function check(condition: boolean, label: string): void {
   }
 }
 
+import { cleanupTestWallet } from "./local-test-cleanup";
 import {
   RESERVED_HANDLES,
   normalizeHandle,
@@ -30,6 +31,16 @@ import {
 } from "@/lib/profiles/handles";
 import { serializePublicProfile } from "@/lib/profiles/serialize";
 import type { ParticipantPublicProfile } from "@/lib/profiles/types";
+import {
+  admin,
+  startNextDev,
+  stopNextDev,
+  randomNimiqHex,
+  createTestSession,
+  deleteTestSession,
+  sha256Hex,
+  apiPost,
+} from "./v2b1-dev-server";
 
 // ---------------------------------------------------------------------------
 // T2 — Handle rules (pure functions)
@@ -181,11 +192,171 @@ function testSerializer() {
 }
 
 // ---------------------------------------------------------------------------
+// T3 — Session-gated bootstrap
+// ---------------------------------------------------------------------------
+
+async function testBootstrap(wallets: string[]) {
+  console.log("\n-- Bootstrap --");
+
+  const walletA = randomNimiqHex();
+  const other = randomNimiqHex();
+  wallets.push(walletA);
+
+  const noSession = await apiPost("/api/profile/bootstrap", {});
+  check(
+    noSession.status === 401 && noSession.data?.error === "session_missing",
+    "bootstrap without session → 401",
+  );
+
+  const token = await createTestSession(walletA);
+  const first = await apiPost("/api/profile/bootstrap", {}, token);
+  check(first.status === 200, "bootstrap with session → 200");
+  check(
+    first.data?.profile?.walletAddress === walletA,
+    "profile created for session wallet",
+  );
+  check(
+    first.data?.profile?.displayName === null && first.data?.profile?.handle === null,
+    "new profile has no presentation fields",
+  );
+
+  const bodySpoof = await apiPost("/api/profile/bootstrap", { wallet: other }, token);
+  check(
+    bodySpoof.status === 200 && bodySpoof.data?.profile?.walletAddress === walletA,
+    "arbitrary body wallet ignored — session wallet is authoritative",
+  );
+
+  const verifiedAt = first.data.profile.verifiedAt;
+  const second = await apiPost("/api/profile/bootstrap", {}, token);
+  check(
+    second.data?.profile?.walletAddress === walletA,
+    "repeated bootstrap returns the same profile",
+  );
+  check(
+    second.data?.profile?.verifiedAt === verifiedAt,
+    "verified_at preserved across repeats",
+  );
+  const { count: rowCount } = await admin
+    .from("participant_profiles")
+    .select("wallet_address", { count: "exact", head: true })
+    .eq("wallet_address", walletA);
+  check(rowCount === 1, "exactly one profile row per wallet");
+
+  await admin
+    .from("participant_profiles")
+    .update({ display_name: "Kaelah", handle: "kaelah", updated_at: new Date().toISOString() })
+    .eq("wallet_address", walletA);
+  const third = await apiPost("/api/profile/bootstrap", {}, token);
+  check(third.data?.profile?.displayName === "Kaelah", "display_name preserved across bootstrap");
+  check(third.data?.profile?.handle === "kaelah", "handle preserved across bootstrap");
+
+  const token2 = await createTestSession(walletA);
+  await admin
+    .from("wallet_sessions")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("token_hash", sha256Hex(token2));
+  const revoked = await apiPost("/api/profile/bootstrap", {}, token2);
+  check(revoked.status === 401, "revoked session cannot bootstrap");
+  const afterRevoke = await admin
+    .from("participant_profiles")
+    .select("wallet_address")
+    .eq("wallet_address", walletA)
+    .maybeSingle();
+  check(afterRevoke.data !== null, "revoked session / disconnect does not delete the profile");
+
+  // Bootstrap must not alter vote/support records.
+  const pollRes = await admin.from("polls").insert({
+    creator_wallet: walletA,
+    question: "Bootstrap neutrality test poll?",
+    mode: "creator_support",
+    destination_wallet: walletA,
+    destination_purpose: "test",
+    min_nim_luna: 10,
+    fairness_mode: "one_wallet_one_vote",
+    status: "live",
+    is_public: true,
+    category: "other",
+    format: "decision",
+    ends_at: new Date(Date.now() + 86400000).toISOString(),
+    starts_at: new Date(Date.now() - 86400000).toISOString(),
+  }).select("id").single();
+  check(pollRes.data !== null, "fixture poll created");
+  if (pollRes.data) {
+    const pollId = pollRes.data.id as string;
+    const optRes = await admin.from("poll_options").insert([
+      { poll_id: pollId, label: "Option One", sort_order: 0 },
+      { poll_id: pollId, label: "Option Two", sort_order: 1 },
+    ]).select("id");
+    const optionId = optRes.data?.[0]?.id as string;
+
+    await admin.from("poll_votes").insert({
+      poll_id: pollId,
+      option_id: optionId,
+      voter_wallet: walletA,
+    });
+
+    const intentRes = await admin.from("nim_support_intents").insert({
+      reference: `v2b1-${sha256Hex(walletA).slice(0, 16)}`,
+      poll_id: pollId,
+      option_id: optionId,
+      supporter_wallet: walletA,
+      recipient_wallet: walletA,
+      amount_luna: 100,
+      memo: "v2b1 test",
+      status: "confirmed",
+      expires_at: new Date(Date.now() + 3600000).toISOString(),
+    }).select("id").single();
+    const intentId = intentRes.data?.id as string;
+
+    await admin.from("nim_contributions").insert({
+      intent_id: intentId,
+      poll_id: pollId,
+      option_id: optionId,
+      supporter_wallet: walletA,
+      recipient_wallet: walletA,
+      amount_luna: 100,
+      transaction_hash: `tx-${sha256Hex(walletA).slice(0, 24)}`,
+    });
+
+    const voteCount = () =>
+      admin.from("poll_votes").select("id", { count: "exact", head: true }).eq("poll_id", pollId);
+    const contribCount = () =>
+      admin.from("nim_contributions").select("id", { count: "exact", head: true }).eq("poll_id", pollId);
+
+    const votesBefore = (await voteCount()).count ?? -1;
+    const contribsBefore = (await contribCount()).count ?? -1;
+
+    const boot4 = await apiPost("/api/profile/bootstrap", {}, token);
+    check(boot4.status === 200, "bootstrap succeeds with existing activity");
+
+    const votesAfter = (await voteCount()).count ?? -2;
+    const contribsAfter = (await contribCount()).count ?? -2;
+    check(
+      votesAfter === votesBefore && contribsAfter === contribsBefore,
+      "bootstrap does not alter vote/support records",
+    );
+  }
+
+  await deleteTestSession(token);
+}
+
+// ---------------------------------------------------------------------------
 
 async function run() {
   console.log("V2B.1 Profile Suite");
   testHandleRules();
   testSerializer();
+
+  const wallets: string[] = [];
+  console.log("Starting Next.js dev server...");
+  await startNextDev();
+  console.log("Next.js ready.\n");
+  try {
+    await testBootstrap(wallets);
+  } finally {
+    for (const w of wallets) cleanupTestWallet(w);
+    stopNextDev();
+  }
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }

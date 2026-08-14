@@ -46,6 +46,8 @@ export function cleanupTestWallet(wallet: string): void {
       WHERE creator_wallet = '${wallet}';
     DELETE FROM public.participant_profiles
       WHERE wallet_address = '${wallet}';
+    DELETE FROM public.wallet_sessions
+      WHERE wallet_address = '${wallet}';
   `;
 
   execFileSync("docker", [
