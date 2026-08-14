@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useNimiqContext } from "@/providers/NimiqProvider";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
+import { useOnboarding } from "@/providers/OnboardingProvider";
 import { truncateAddress } from "@/lib/format";
 import { WalletIcon, CheckIcon } from "@/components/ui/icons";
 
@@ -26,6 +28,8 @@ export function WalletButton() {
     isSessionVerified,
     isWalletMatched,
   } = useVotumSession();
+
+  const { openOnboarding } = useOnboarding();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -105,7 +109,7 @@ export function WalletButton() {
     return (
       <button
         type="button"
-        onClick={connectWallet}
+        onClick={() => openOnboarding({ intent: "generic_connect" })}
         aria-label="Connect wallet"
         className="inline-flex min-h-[44px] items-center rounded-full border border-ballot-ink/18 bg-clear-ballot/45 px-3 py-2 text-sm font-medium text-ballot-ink backdrop-blur transition-colors hover:bg-clear-ballot/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold focus-visible:ring-offset-2"
       >
@@ -214,6 +218,53 @@ export function WalletButton() {
             </ul>
 
             <hr className="my-2 border-divider" />
+
+            {/* Verified account actions */}
+            {isSessionVerified && isWalletMatched && verifiedWalletAddress && (
+              <ul className="space-y-0.5">
+                <li>
+                  <Link
+                    href={`/profile/${verifiedWalletAddress}`}
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left inline-flex items-center min-h-[44px] px-3 py-2 rounded-thumbnail text-sm text-ballot-ink hover:bg-soft-fog transition-colors"
+                  >
+                    View profile
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/profile/edit"
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left inline-flex items-center min-h-[44px] px-3 py-2 rounded-thumbnail text-sm text-quiet-ink hover:bg-soft-fog hover:text-ballot-ink transition-colors"
+                  >
+                    Edit profile
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/my-polls"
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left inline-flex items-center min-h-[44px] px-3 py-2 rounded-thumbnail text-sm text-quiet-ink hover:bg-soft-fog hover:text-ballot-ink transition-colors"
+                  >
+                    My polls
+                  </Link>
+                </li>
+              </ul>
+            )}
+
+            {/* Connected-but-unverified: clear verify action */}
+            {walletStatus === "connected" && !isSessionVerified && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openOnboarding({ intent: "generic_connect" });
+                }}
+                className="w-full text-left inline-flex items-center min-h-[44px] px-3 py-2 rounded-thumbnail text-sm text-signal-gold font-medium hover:bg-soft-fog transition-colors cursor-pointer"
+              >
+                Verify this wallet
+              </button>
+            )}
 
             <button
               type="button"

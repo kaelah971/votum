@@ -15,8 +15,9 @@ import { PollReview } from "@/components/decision/PollReview";
 import { formatClosingTime, truncateAddress } from "@/lib/format";
 import { useNimiqContext } from "@/providers/NimiqProvider";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
+import { useOnboarding } from "@/providers/OnboardingProvider";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { usePollDraft } from "@/lib/drafts/usePollDraft";
 import { getDraft, ensurePublicationKey, deleteDraft } from "@/lib/drafts/storage";
 import { CATEGORY_LABELS, FORMAT_LABELS, POLL_CATEGORIES, POLL_FORMATS } from "@/lib/polls/taxonomy";
@@ -222,6 +223,8 @@ export default function CreatePollPage() {
     isSessionVerified,
     isWalletMatched,
   } = useVotumSession();
+  const { openOnboarding } = useOnboarding();
+  const pathname = usePathname();
 
   // ---- Publication state ----
   type PublishState = "idle" | "preparing" | "publishing" | "success" | "error";
@@ -316,19 +319,27 @@ export default function CreatePollPage() {
   }, [formData.duration]);
 
   // ---- Publishing eligibility ----
+  // Wallet/session verification is NOT a hard gate here: an unverified user
+  // tapping Publish opens onboarding with the create_poll intent instead,
+  // keeping their form state intact. Authorization is still enforced
+  // server-side by the publish route's verified-session check.
   const canPublish = useMemo(() => {
     if (publishState !== "idle" && publishState !== "error") return false;
     if (!draft) return false;
-    if (walletStatus !== "connected") return false;
-    if (!isSessionVerified) return false;
-    if (!isWalletMatched) return false;
     // Form must be valid (question non-empty, options >= 2)
     if (!formData.question.trim() || formData.options.filter(o => o.trim()).length < 2) return false;
     return true;
-  }, [publishState, draft, walletStatus, isSessionVerified, isWalletMatched, formData]);
+  }, [publishState, draft, formData]);
 
   // ---- Publish handler ----
   const handlePublish = useCallback(async () => {
+    // Gate: unverified → onboarding with the create intent; form state
+    // (including the persisted draft) is preserved for the return.
+    if (!isSessionVerified || !isWalletMatched) {
+      openOnboarding({ intent: "create_poll", returnPath: pathname });
+      return;
+    }
+
     setPublishState("preparing");
     setPublishError(null);
 
@@ -417,7 +428,7 @@ export default function CreatePollPage() {
       setPublishError(message || "Votum could not publish this poll. Your draft is still safe.");
     }
     setPublishState("error");
-  }, [draft, formData, router]);
+  }, [draft, formData, router, isSessionVerified, isWalletMatched, openOnboarding, pathname]);
 
   // ---- Field updaters ----
   function updateField<K extends keyof PollFormData>(

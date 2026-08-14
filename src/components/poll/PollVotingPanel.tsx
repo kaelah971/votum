@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import type { PollView } from "@/types/poll";
 import { PollHeader } from "@/components/poll/PollHeader";
 import { PollSupportDetails } from "@/components/poll/PollSupportDetails";
@@ -11,6 +12,7 @@ import { Card } from "@/components/ui/Card";
 import { FairnessLabel } from "@/components/ui/FairnessLabel";
 import { useNimiqContext } from "@/providers/NimiqProvider";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
+import { useOnboarding } from "@/providers/OnboardingProvider";
 
 // ---------------------------------------------------------------------------
 // API response shapes (matching the real API contracts)
@@ -74,6 +76,8 @@ export default function PollVotingPanel({
   const { walletStatus } = useNimiqContext();
   const { isSessionVerified, isWalletMatched } =
     useVotumSession();
+  const { openOnboarding } = useOnboarding();
+  const pathname = usePathname();
 
   // ----- Client-side state -----
   const [results, setResults] = useState<ResultsData | null>(null);
@@ -193,6 +197,15 @@ export default function PollVotingPanel({
 
   // ----- Eligibility -----
 
+  // True when voting is blocked only by missing wallet verification
+  // (an option must be chosen first so the intent resumes the real action).
+  const needsOnboarding =
+    isLive &&
+    selectedOptionId !== null &&
+    !hasVoted &&
+    !submitting &&
+    (!isSessionVerified || !isWalletMatched);
+
   const canVote =
     isLive &&
     selectedOptionId !== null &&
@@ -211,6 +224,17 @@ export default function PollVotingPanel({
       return "The connected wallet does not match the verified wallet.";
     return null;
   })();
+
+  // ----- Vote gate: open onboarding with the vote intent, never auto-submit -----
+
+  const handleVoteClick = useCallback(() => {
+    if (submitting) return;
+    if (!isSessionVerified || !isWalletMatched) {
+      openOnboarding({ intent: "vote", returnPath: pathname });
+      return;
+    }
+    void handleCastVote();
+  }, [submitting, isSessionVerified, isWalletMatched, openOnboarding, pathname, handleCastVote]);
 
   // ----- Render -----
 
@@ -287,11 +311,17 @@ export default function PollVotingPanel({
                 <Button
                   type="button"
                   variant="primary"
-                  disabled={!canVote}
-                  onClick={handleCastVote}
+                  disabled={!canVote && !needsOnboarding}
+                  onClick={handleVoteClick}
                   className="w-full"
                 >
-                  {submitting ? "Recording vote…" : "Cast vote"}
+                  {submitting
+                    ? "Recording vote…"
+                    : needsOnboarding
+                      ? walletStatus === "connected"
+                        ? "Verify wallet ownership to vote"
+                        : "Connect wallet to vote"
+                      : "Cast vote"}
                 </Button>
 
                 {eligibilityHint && !submitting && (
