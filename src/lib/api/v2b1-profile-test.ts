@@ -40,7 +40,9 @@ import {
   deleteTestSession,
   sha256Hex,
   apiPost,
+  apiGet,
 } from "./v2b1-dev-server";
+import { Address } from "@nimiq/core";
 
 // ---------------------------------------------------------------------------
 // T2 — Handle rules (pure functions)
@@ -299,6 +301,7 @@ async function testBootstrap(wallets: string[]) {
       reference: `v2b1-${sha256Hex(walletA).slice(0, 16)}`,
       poll_id: pollId,
       option_id: optionId,
+      initiator_wallet: walletA,
       supporter_wallet: walletA,
       recipient_wallet: walletA,
       amount_luna: 100,
@@ -306,9 +309,10 @@ async function testBootstrap(wallets: string[]) {
       status: "confirmed",
       expires_at: new Date(Date.now() + 3600000).toISOString(),
     }).select("id").single();
+    check(intentRes.data !== null, "neutrality intent fixture inserted");
     const intentId = intentRes.data?.id as string;
 
-    await admin.from("nim_contributions").insert({
+    const contribRes = await admin.from("nim_contributions").insert({
       intent_id: intentId,
       poll_id: pollId,
       option_id: optionId,
@@ -317,6 +321,7 @@ async function testBootstrap(wallets: string[]) {
       amount_luna: 100,
       transaction_hash: `tx-${sha256Hex(walletA).slice(0, 24)}`,
     });
+    check(contribRes.error === null, "neutrality contribution fixture inserted");
 
     const voteCount = () =>
       admin.from("poll_votes").select("id", { count: "exact", head: true }).eq("poll_id", pollId);
@@ -341,6 +346,226 @@ async function testBootstrap(wallets: string[]) {
 }
 
 // ---------------------------------------------------------------------------
+// T4 — Public profile query layer + derived stats/activity + privacy
+// ---------------------------------------------------------------------------
+
+async function testPublicQuery(wallets: string[]) {
+  console.log("\n-- Public query + stats + activity --");
+
+  const walletB = randomNimiqHex();
+  wallets.push(walletB);
+
+  const token = await createTestSession(walletB);
+  await apiPost("/api/profile/bootstrap", {}, token);
+
+  await admin
+    .from("participant_profiles")
+    .update({ display_name: "Briar", handle: "briar", updated_at: new Date().toISOString() })
+    .eq("wallet_address", walletB);
+
+  // Public live poll + vote + confirmed contribution.
+  const livePoll = await admin.from("polls").insert({
+    creator_wallet: walletB,
+    question: "Which feature should we build next?",
+    mode: "creator_support",
+    destination_wallet: walletB,
+    destination_purpose: "test",
+    min_nim_luna: 10,
+    fairness_mode: "one_wallet_one_vote",
+    status: "live",
+    is_public: true,
+    category: "other",
+    format: "decision",
+    ends_at: new Date(Date.now() + 86400000).toISOString(),
+    starts_at: new Date(Date.now() - 86400000).toISOString(),
+  }).select("id").single();
+
+  const liveId = livePoll.data?.id as string;
+  const liveOpts = await admin.from("poll_options").insert([
+    { poll_id: liveId, label: "Mobile App", sort_order: 0 },
+    { poll_id: liveId, label: "Web App", sort_order: 1 },
+  ]).select("id");
+  const liveOption = liveOpts.data?.[0]?.id as string;
+
+  await admin.from("poll_votes").insert({
+    poll_id: liveId,
+    option_id: liveOption,
+    voter_wallet: walletB,
+  });
+
+  const liveIntent = await admin.from("nim_support_intents").insert({
+    reference: `v2b1-live-${sha256Hex(walletB).slice(0, 12)}`,
+    poll_id: liveId,
+    option_id: liveOption,
+    initiator_wallet: walletB,
+    supporter_wallet: walletB,
+    recipient_wallet: walletB,
+    amount_luna: 100,
+    memo: "v2b1 test",
+    status: "confirmed",
+    expires_at: new Date(Date.now() + 3600000).toISOString(),
+  }).select("id").single();
+  check(liveIntent.data !== null, "support intent fixture inserted");
+
+  const contribInsert = await admin.from("nim_contributions").insert({
+    intent_id: liveIntent.data?.id as string,
+    poll_id: liveId,
+    option_id: liveOption,
+    supporter_wallet: walletB,
+    recipient_wallet: walletB,
+    amount_luna: 100,
+    transaction_hash: `tx-live-${sha256Hex(walletB).slice(0, 20)}`,
+  });
+  check(contribInsert.error === null, "confirmed contribution fixture inserted");
+
+  // Public closed poll + vote.
+  const closedPoll = await admin.from("polls").insert({
+    creator_wallet: walletB,
+    question: "Which football position is hardest to master?",
+    mode: "creator_support",
+    destination_wallet: walletB,
+    destination_purpose: "test",
+    min_nim_luna: 10,
+    fairness_mode: "one_wallet_one_vote",
+    status: "closed",
+    is_public: true,
+    category: "sports",
+    format: "decision",
+    ends_at: new Date(Date.now() - 3600000).toISOString(),
+    starts_at: new Date(Date.now() - 172800000).toISOString(),
+  }).select("id").single();
+
+  const closedId = closedPoll.data?.id as string;
+  const closedOpts = await admin.from("poll_options").insert([
+    { poll_id: closedId, label: "Goalkeeper", sort_order: 0 },
+    { poll_id: closedId, label: "Striker", sort_order: 1 },
+  ]).select("id");
+  await admin.from("poll_votes").insert({
+    poll_id: closedId,
+    option_id: closedOpts.data?.[0]?.id as string,
+    voter_wallet: walletB,
+  });
+
+  // Private poll + vote — must be excluded everywhere.
+  const privatePoll = await admin.from("polls").insert({
+    creator_wallet: walletB,
+    question: "Secret internal decision",
+    mode: "creator_support",
+    destination_wallet: walletB,
+    destination_purpose: "test",
+    min_nim_luna: 10,
+    fairness_mode: "one_wallet_one_vote",
+    status: "live",
+    is_public: false,
+    category: "other",
+    format: "decision",
+    ends_at: new Date(Date.now() + 86400000).toISOString(),
+    starts_at: new Date(Date.now() - 86400000).toISOString(),
+  }).select("id").single();
+
+  const privateId = privatePoll.data?.id as string;
+  const privateOpts = await admin.from("poll_options").insert([
+    { poll_id: privateId, label: "Secret A", sort_order: 0 },
+  ]).select("id");
+  await admin.from("poll_votes").insert({
+    poll_id: privateId,
+    option_id: privateOpts.data?.[0]?.id as string,
+    voter_wallet: walletB,
+  });
+
+  // --- Lookups ---
+  const hexLookup = await apiGet(`/api/profile?wallet=${walletB}`);
+  check(hexLookup.status === 200, "wallet lookup → 200");
+  check(hexLookup.data?.profile?.walletAddress === walletB, "wallet lookup returns canonical address");
+  check(hexLookup.data?.profile?.displayName === "Briar", "display name present");
+  check(hexLookup.data?.profile?.handle === "briar", "handle present");
+  check(typeof hexLookup.data?.profile?.verifiedAt === "string", "verifiedAt present");
+  check(typeof hexLookup.data?.profile?.joinedDate === "string", "joinedDate present");
+
+  const nqAddress = Address.fromString(walletB).toUserFriendlyAddress();
+  const nqLookup = await apiGet(`/api/profile?wallet=${encodeURIComponent(nqAddress)}`);
+  check(nqLookup.status === 200, "NQ-format wallet lookup → 200");
+  check(
+    nqLookup.data?.profile?.walletAddress === walletB,
+    "NQ-format lookup resolves to the same canonical profile",
+  );
+
+  const handleLookup = await apiGet("/api/profile?handle=briar");
+  check(handleLookup.status === 200, "handle lookup → 200");
+  check(
+    handleLookup.data?.profile?.walletAddress === walletB,
+    "handle route resolves the same underlying profile",
+  );
+  const upperHandleLookup = await apiGet("/api/profile?handle=BRIAR");
+  check(
+    upperHandleLookup.status === 200 &&
+      upperHandleLookup.data?.profile?.walletAddress === walletB,
+    "handle lookup is case-insensitive (canonical lowercase)",
+  );
+
+  const unknownWallet = await apiGet(`/api/profile?wallet=${randomNimiqHex()}`);
+  check(unknownWallet.status === 404, "unknown wallet → 404");
+  const malformedWallet = await apiGet("/api/profile?wallet=not-a-wallet-address");
+  check(malformedWallet.status === 404, "malformed wallet → 404");
+  const unknownHandle = await apiGet("/api/profile?handle=ghost_user");
+  check(unknownHandle.status === 404, "unknown handle → 404");
+  const bothParams = await apiGet(`/api/profile?wallet=${walletB}&handle=briar`);
+  check(bothParams.status === 400, "both wallet and handle → 400");
+  const noParams = await apiGet("/api/profile");
+  check(noParams.status === 400, "neither wallet nor handle → 400");
+
+  // --- Stats ---
+  const stats = hexLookup.data?.stats;
+  check(stats?.pollsCreated === 2, "stats.pollsCreated = 2 public polls only");
+  check(stats?.participations === 2, "stats.participations = 2 public votes only");
+  check(stats?.nimSupportedLuna === "100", "stats.nimSupportedLuna = confirmed-only 100");
+  check(stats?.nimEarnedLuna === "0", "stats.nimEarnedLuna truthful 0");
+
+  // --- Activity ---
+  const activity = hexLookup.data?.activity as any[];
+  check(Array.isArray(activity) && activity.length === 4, "activity has 4 public items");
+  check(activity.length <= 12, "activity bounded at 12");
+  check(
+    activity.every((a) => a.kind === "created" || a.kind === "participated"),
+    "activity kinds are created/participated only",
+  );
+  check(
+    activity.every((a) => typeof a.pollId === "string" && typeof a.question === "string" && typeof a.at === "string"),
+    "activity items expose pollId/question/at only",
+  );
+  check(
+    activity.some((a) => a.question === "Which feature should we build next?"),
+    "public poll title appears in activity",
+  );
+  check(
+    !activity.some((a) => a.question === "Secret internal decision"),
+    "private poll activity does not appear",
+  );
+  check(
+    !activity.some((a) => a.question === "Mobile App" || a.question === "Goalkeeper"),
+    "option labels never appear as activity items",
+  );
+
+  // --- Deep allowlist / privacy ---
+  const json = JSON.stringify(hexLookup.data);
+  check(json.includes("option_id") === false, "option_id absent from response JSON");
+  check(json.includes("optionId") === false, "optionId absent from response JSON");
+  check(json.includes("token_hash") === false, "token_hash absent from response JSON");
+  check(json.includes("session") === false, "session data absent from response JSON");
+  check(json.includes("challenge") === false, "challenge data absent from response JSON");
+  check(json.includes("cookie") === false, "cookie/auth data absent from response JSON");
+
+  // Chosen-option leak proof: the exact chosen labels must not appear.
+  check(json.includes("Mobile App") === false, "chosen option text never leaked");
+  check(json.includes("Web App") === false, "unchosen option text also absent");
+
+  const handleJson = JSON.stringify(handleLookup.data);
+  check(handleJson.includes("option") === false, "handle lookup also option-free");
+
+  await deleteTestSession(token);
+}
+
+// ---------------------------------------------------------------------------
 
 async function run() {
   console.log("V2B.1 Profile Suite");
@@ -353,6 +578,7 @@ async function run() {
   console.log("Next.js ready.\n");
   try {
     await testBootstrap(wallets);
+    await testPublicQuery(wallets);
   } finally {
     for (const w of wallets) cleanupTestWallet(w);
     stopNextDev();
