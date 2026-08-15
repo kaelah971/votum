@@ -1,5 +1,6 @@
 /**
- * V2B.1 — Profile contract, handle-rule, bootstrap, query, and edit tests.
+ * V2B.1 — Profile contract, handle-rule, bootstrap, query, edit, and
+ * public-page tests.
  *
  * Usage:
  *   npx tsx src/lib/api/v2b1-profile-test.ts
@@ -44,6 +45,8 @@ import {
   apiGet,
 } from "./v2b1-dev-server";
 import { Address } from "@nimiq/core";
+import { truncateAddress, formatDate } from "@/lib/format";
+import { formatNimAmount } from "@/lib/nimiq/units";
 
 export async function apiPut(
   path: string,
@@ -725,6 +728,263 @@ async function testEdit(wallets: string[]) {
 }
 
 // ---------------------------------------------------------------------------
+// T9 — Public profile pages (/profile/[wallet] and /u/[handle])
+// ---------------------------------------------------------------------------
+
+async function fetchHtml(path: string): Promise<{ status: number; html: string }> {
+  const res = await fetch(`${NEXT_BASE}${path}`, {
+    signal: AbortSignal.timeout(90000),
+    redirect: "manual",
+  });
+  return { status: res.status, html: await res.text() };
+}
+
+function textOf(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countOccurrences(text: string, needle: string): number {
+  let count = 0;
+  let idx = text.indexOf(needle);
+  while (idx !== -1) {
+    count++;
+    idx = text.indexOf(needle, idx + needle.length);
+  }
+  return count;
+}
+
+async function testProfilePages(wallets: string[]) {
+  console.log("\n-- Public profile pages (/profile/[wallet], /u/[handle]) --");
+
+  const walletG = randomNimiqHex();
+  wallets.push(walletG);
+  const handle = `t9_${sha256Hex(walletG).slice(0, 8)}`;
+
+  const token = await createTestSession(walletG);
+  await apiPost("/api/profile/bootstrap", {}, token);
+  await admin
+    .from("participant_profiles")
+    .update({ display_name: "T9 Participant", handle, updated_at: new Date().toISOString() })
+    .eq("wallet_address", walletG);
+
+  // Public live poll + vote + confirmed contribution (500000 Luna = 5 NIM).
+  const livePoll = await admin.from("polls").insert({
+    creator_wallet: walletG,
+    question: "T9 flagship question?",
+    mode: "creator_support",
+    destination_wallet: walletG,
+    destination_purpose: "test",
+    min_nim_luna: 10,
+    fairness_mode: "one_wallet_one_vote",
+    status: "live",
+    is_public: true,
+    category: "other",
+    format: "decision",
+    ends_at: new Date(Date.now() + 86400000).toISOString(),
+    starts_at: new Date(Date.now() - 86400000).toISOString(),
+  }).select("id").single();
+  const liveId = livePoll.data?.id as string;
+  const liveOpts = await admin.from("poll_options").insert([
+    { poll_id: liveId, label: "T9Chosen", sort_order: 0 },
+    { poll_id: liveId, label: "T9Unchosen", sort_order: 1 },
+  ]).select("id");
+  const liveOption = liveOpts.data?.[0]?.id as string;
+  await admin.from("poll_votes").insert({
+    poll_id: liveId,
+    option_id: liveOption,
+    voter_wallet: walletG,
+  });
+  const liveIntent = await admin.from("nim_support_intents").insert({
+    reference: `v2b1-t9-${sha256Hex(walletG).slice(0, 12)}`,
+    poll_id: liveId,
+    option_id: liveOption,
+    initiator_wallet: walletG,
+    supporter_wallet: walletG,
+    recipient_wallet: walletG,
+    amount_luna: 500000,
+    memo: "v2b1 test",
+    status: "confirmed",
+    expires_at: new Date(Date.now() + 3600000).toISOString(),
+  }).select("id").single();
+  await admin.from("nim_contributions").insert({
+    intent_id: liveIntent.data?.id as string,
+    poll_id: liveId,
+    option_id: liveOption,
+    supporter_wallet: walletG,
+    recipient_wallet: walletG,
+    amount_luna: 500000,
+    transaction_hash: `tx-t9-${sha256Hex(walletG).slice(0, 20)}`,
+  });
+
+  // Public closed poll + vote.
+  const closedPoll = await admin.from("polls").insert({
+    creator_wallet: walletG,
+    question: "T9 closed poll question?",
+    mode: "creator_support",
+    destination_wallet: walletG,
+    destination_purpose: "test",
+    min_nim_luna: 10,
+    fairness_mode: "one_wallet_one_vote",
+    status: "closed",
+    is_public: true,
+    category: "sports",
+    format: "decision",
+    ends_at: new Date(Date.now() - 3600000).toISOString(),
+    starts_at: new Date(Date.now() - 172800000).toISOString(),
+  }).select("id").single();
+  const closedId = closedPoll.data?.id as string;
+  const closedOpts = await admin.from("poll_options").insert([
+    { poll_id: closedId, label: "T9ClosedChosen", sort_order: 0 },
+    { poll_id: closedId, label: "T9ClosedUnchosen", sort_order: 1 },
+  ]).select("id");
+  await admin.from("poll_votes").insert({
+    poll_id: closedId,
+    option_id: closedOpts.data?.[0]?.id as string,
+    voter_wallet: walletG,
+  });
+
+  // Private poll + vote — must be absent from the page.
+  const privatePoll = await admin.from("polls").insert({
+    creator_wallet: walletG,
+    question: "T9 private secret question?",
+    mode: "creator_support",
+    destination_wallet: walletG,
+    destination_purpose: "test",
+    min_nim_luna: 10,
+    fairness_mode: "one_wallet_one_vote",
+    status: "live",
+    is_public: false,
+    category: "other",
+    format: "decision",
+    ends_at: new Date(Date.now() + 86400000).toISOString(),
+    starts_at: new Date(Date.now() - 86400000).toISOString(),
+  }).select("id").single();
+  const privateId = privatePoll.data?.id as string;
+  const privateOpts = await admin.from("poll_options").insert([
+    { poll_id: privateId, label: "T9SecretOption", sort_order: 0 },
+  ]).select("id");
+  await admin.from("poll_votes").insert({
+    poll_id: privateId,
+    option_id: privateOpts.data?.[0]?.id as string,
+    voter_wallet: walletG,
+  });
+
+  // Reference data via the public API — the page must render exactly this.
+  const api = await apiGet(`/api/profile?wallet=${walletG}`);
+  check(api.status === 200, "fixture profile resolves via public API");
+  check(api.data?.stats?.pollsCreated === 2, "fixture: 2 public polls counted");
+  check(api.data?.stats?.participations === 2, "fixture: 2 public votes counted");
+  check(api.data?.stats?.nimSupportedLuna === "500000", "fixture: confirmed-only 500000 Luna");
+  check(api.data?.activity?.length === 4, "fixture: 4 public activity items");
+
+  const joinedText = `Joined ${formatDate(new Date(api.data.profile.joinedDate))}`;
+  const truncated = truncateAddress(walletG);
+  const nimEarnedText = formatNimAmount(BigInt(api.data.stats.nimEarnedLuna));
+  const nimSupportedText = formatNimAmount(BigInt(api.data.stats.nimSupportedLuna));
+
+  // --- Canonical wallet route ---
+  const walletPage = await fetchHtml(`/profile/${walletG}`);
+  check(walletPage.status === 200, "canonical wallet page → 200");
+  const walletText = textOf(walletPage.html);
+  check(walletText.includes("T9 Participant"), "header: display name rendered");
+  check(walletText.includes(`@${handle}`), "header: @handle rendered");
+  check(walletText.includes(truncated), "header: shortened wallet rendered");
+  check(walletText.includes("Verified"), "header: Verified state represented");
+  check(walletText.includes(joinedText), `header: joined date rendered (${joinedText})`);
+  check(/2\s+Participations/.test(walletText), "stats: participations = 2");
+  check(/2\s+Polls created/.test(walletText), "stats: polls created = 2");
+  check(
+    walletText.includes(`${nimEarnedText} NIM earned`),
+    `stats: NIM earned renders truthful 0 (${nimEarnedText})`,
+  );
+  check(
+    walletText.includes(`${nimSupportedText} NIM supported`),
+    `stats: NIM supported renders confirmed total (${nimSupportedText})`,
+  );
+
+  // --- Handle route resolves the same participant ---
+  const handlePage = await fetchHtml(`/u/${handle}`);
+  check(handlePage.status === 200, "handle page → 200");
+  const handleText = textOf(handlePage.html);
+  check(handleText.includes(truncated), "handle route renders the same wallet identity");
+  check(handleText.includes(`@${handle}`), "handle route renders the same @handle");
+
+  // --- NQ-format wallet resolves canonically ---
+  // NQ user-friendly addresses contain spaces; %20-encoded spaces in a
+  // dynamic path segment are not routed by Next.js dev (404 at the router),
+  // so the space-less NQ form is exercised at page level here. NQ-with-spaces
+  // canonicalisation is already covered by the T4 API-level tests.
+  const nqAddress = Address.fromString(walletG).toUserFriendlyAddress();
+  const nqPage = await fetchHtml(`/profile/${nqAddress.replace(/ /g, "")}`);
+  check(nqPage.status === 200, "NQ-format wallet page → 200");
+  check(
+    textOf(nqPage.html).includes(truncated),
+    "NQ wallet route resolves to the same canonical profile",
+  );
+
+  // --- Activity renders only kind + question, exactly the bounded API list ---
+  const createdCount = countOccurrences(walletText, "Created \u201C");
+  const participatedCount = countOccurrences(walletText, "Participated in \u201C");
+  check(
+    createdCount + participatedCount === api.data.activity.length,
+    `activity renders exactly the bounded query result (${createdCount + participatedCount} of ${api.data.activity.length})`,
+  );
+  check(createdCount + participatedCount <= 12, "activity stays bounded at 12");
+  for (const item of api.data.activity as any[]) {
+    check(
+      walletPage.html.includes(`/polls/${item.pollId}`),
+      "activity item links to its public poll",
+    );
+    const expected =
+      item.kind === "created"
+        ? `Created \u201C${item.question}\u201D`
+        : `Participated in \u201C${item.question}\u201D`;
+    check(
+      walletText.includes(expected),
+      `activity item renders only kind + question (${item.kind})`,
+    );
+  }
+
+  // --- Chosen option must never appear ---
+  check(walletText.includes("T9Chosen") === false, "chosen option text absent from page");
+  check(walletText.includes("T9Unchosen") === false, "unchosen option text absent from page");
+  check(walletText.includes("T9ClosedChosen") === false, "closed-poll chosen option absent");
+  check(walletText.includes("T9ClosedUnchosen") === false, "closed-poll unchosen option absent");
+  check(walletText.includes("T9SecretOption") === false, "private poll option absent");
+  check(walletText.includes("option_id") === false, "option_id absent from rendered page");
+  check(walletText.includes("optionId") === false, "optionId absent from rendered page");
+
+  // --- Private/draft activity stays off the page ---
+  check(
+    walletText.includes("T9 private secret question?") === false,
+    "private poll activity absent from page",
+  );
+
+  // --- Not-found behavior (clean 404, no internals) ---
+  const unknownWallet = await fetchHtml(`/profile/${randomNimiqHex()}`);
+  check(unknownWallet.status === 404, "unknown wallet page → 404");
+  const malformedWallet = await fetchHtml("/profile/not-a-wallet-address");
+  check(malformedWallet.status === 404, "malformed wallet page → 404");
+  const unknownHandle = await fetchHtml("/u/ghost_user");
+  check(unknownHandle.status === 404, "unknown handle page → 404");
+  const malformedHandle = await fetchHtml("/u/x");
+  check(malformedHandle.status === 404, "malformed handle page → 404");
+  const notFoundBody =
+    unknownWallet.html + malformedWallet.html + unknownHandle.html + malformedHandle.html;
+  check(notFoundBody.includes("Supabase") === false, "404 pages expose no Supabase internals");
+  check(notFoundBody.includes("postgrest") === false, "404 pages expose no postgrest internals");
+  check(notFoundBody.includes("RPC") === false, "404 pages expose no RPC internals");
+
+  await deleteTestSession(token);
+}
+
+// ---------------------------------------------------------------------------
 
 async function run() {
   console.log("V2B.1 Profile Suite");
@@ -739,6 +999,7 @@ async function run() {
     await testBootstrap(wallets);
     await testPublicQuery(wallets);
     await testEdit(wallets);
+    await testProfilePages(wallets);
   } finally {
     for (const w of wallets) cleanupTestWallet(w);
     stopNextDev();
