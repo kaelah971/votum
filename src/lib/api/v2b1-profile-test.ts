@@ -985,6 +985,37 @@ async function testProfilePages(wallets: string[]) {
 }
 
 // ---------------------------------------------------------------------------
+// T10 — /profile/edit owner gate (server-side exposure)
+// ---------------------------------------------------------------------------
+
+async function testProfileEditGate() {
+  console.log("\n-- /profile/edit owner gate (server-side exposure) --");
+
+  const page = await fetchHtml("/profile/edit");
+  check(page.status === 200, "/profile/edit renders (client-gated shell)");
+  check(
+    page.html.includes("<input") === false,
+    "no editable form fields are exposed without a verified session",
+  );
+  check(
+    page.html.includes("Display name") === false,
+    "display-name field absent from unauthenticated HTML",
+  );
+  check(
+    page.html.includes("Save changes") === false,
+    "save control absent from unauthenticated HTML",
+  );
+  check(
+    page.html.includes("verifiedWalletAddress") === false,
+    "no session wallet data in unauthenticated HTML",
+  );
+  check(
+    page.html.includes("participant_profiles") === false,
+    "no database internals in unauthenticated HTML",
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 async function run() {
   console.log("V2B.1 Profile Suite");
@@ -1000,6 +1031,7 @@ async function run() {
     await testPublicQuery(wallets);
     await testEdit(wallets);
     await testProfilePages(wallets);
+    await testProfileEditGate();
   } finally {
     for (const w of wallets) cleanupTestWallet(w);
     stopNextDev();
