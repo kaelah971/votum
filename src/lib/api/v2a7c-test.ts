@@ -55,7 +55,7 @@ async function run() {
   console.log("V2A.7C Grouped Pagination Tests");
   console.log("═══════════════════════════════════════════\n");
 
-  const now = new Date("2026-08-05T12:00:00.000Z");
+  const now = new Date();
   await setupFixtures(now);
 
   await testInitialGrouped(now);
