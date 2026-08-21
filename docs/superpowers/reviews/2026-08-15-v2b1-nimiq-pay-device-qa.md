@@ -1,6 +1,6 @@
 # V2B.1 — Nimiq Pay Device QA Checklist
 
-> **Status: PENDING** — no physical device result is recorded yet.
+> **Status: IN PROGRESS** — T12 physical session in progress.
 >
 > All checklist items start as `PENDING`. Every `PASS`/`FAIL` must come from an
 > explicit user observation during a real Nimiq Pay device session. Results are
@@ -15,7 +15,7 @@
 | Physical device model | *to be supplied by user* |
 | OS / version | *to be supplied by user* |
 | Nimiq Pay version / build | *to be supplied by user (if visible)* |
-| LAN URL | `http://192.168.0.3:3000` |
+| LAN URL | `http://192.168.1.58:3000` |
 | Tested commit | `de4a6b3f0bfe4743d016cd299ab3a5525fb09ba6` |
 | Branch | `feat/v2-participation-record` |
 | Notes / screenshots | *to be supplied by user* |
@@ -26,8 +26,8 @@
 
 | # | Item | Result | Notes |
 |---|------|--------|-------|
-| 1 | Mini App launches inside Nimiq Pay | PENDING | |
-| 2 | Landing-page Connect Wallet | PENDING | |
+| 1 | Mini App launches inside Nimiq Pay | **PASS** | T12 physical observation: landing page renders inside Nimiq Pay. |
+| 2 | Landing-page Connect Wallet | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: no visible/tappable Votum wallet control in the mobile landing header (logo, `+127` stat pill, and `Create` were shown; the `+127` pill is a static NIM-signalled stat, not interactive). Fixed by rendering `WalletButton` in the marketing header. **NOT marked PASS — physical retest required.** |
 | 3 | Explicit Verify ownership step | PENDING | |
 | 4 | Successful signed-message verification | PENDING | |
 | 5 | Automatic profile bootstrap | PENDING | |

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { FrameStatPill } from "@/components/layout/FrameStatPill";
+import { WalletButton } from "@/components/ui/WalletButton";
 
 const VotumMark = () => (
   <>
@@ -65,6 +66,7 @@ export function MarketingNav() {
         </div>
 
         <div className="flex items-center gap-2 justify-self-end">
+          <WalletButton />
           <FrameStatPill
             value="+127"
             label="NIM signalled"
