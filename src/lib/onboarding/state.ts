@@ -1,4 +1,5 @@
 import type { OnboardingInputs, OnboardingIntent, OnboardingState } from "./types";
+import { profileWalletPath } from "@/lib/profiles/path";
 
 /**
  * V2B.1 onboarding state machine (pure).
@@ -58,6 +59,6 @@ export function resolveIntentPath(
   intent: OnboardingIntent,
   walletAddress: string,
 ): string | null {
-  if (intent === "profile") return `/profile/${walletAddress}`;
+  if (intent === "profile") return `/profile/${profileWalletPath(walletAddress)}`;
   return null;
 }

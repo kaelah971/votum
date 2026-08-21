@@ -143,6 +143,27 @@ describe("WalletButton — verified", () => {
     expect(screen.getByText("Session verified")).toBeInTheDocument();
   });
 
+  it("builds a route-safe View profile href from a spaced NQ wallet", () => {
+    mocks.nimiq.walletStatus = "connected";
+    mocks.nimiq.accounts = [ADDRESS];
+    mocks.nimiq.activeAccount = ADDRESS;
+    mocks.session.status = "verified";
+    mocks.session.verifiedWalletAddress = ADDRESS;
+    mocks.session.isSessionVerified = true;
+    mocks.session.isWalletMatched = true;
+
+    render(<WalletButton />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Wallet account menu" }));
+
+    const viewProfile = screen.getByRole("link", { name: "View profile" });
+    const href = viewProfile.getAttribute("href") ?? "";
+    // Spaces are removed so the dynamic route never receives a %20-encoded
+    // segment that fails wallet normalisation.
+    expect(href).toBe(`/profile/${ADDRESS.replace(/\s+/g, "")}`);
+    expect(href).not.toMatch(/[\s%]/);
+  });
+
   it("anchors the menu to the trigger's right edge with a viewport-safe width cap", () => {
     mocks.nimiq.walletStatus = "connected";
     mocks.nimiq.accounts = [ADDRESS];

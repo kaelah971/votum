@@ -6,6 +6,7 @@ import { useNimiqContext } from "@/providers/NimiqProvider";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
 import { useOnboarding } from "@/providers/OnboardingProvider";
 import { truncateAddress } from "@/lib/format";
+import { profileWalletPath } from "@/lib/profiles/path";
 import { WalletIcon, CheckIcon } from "@/components/ui/icons";
 
 export function WalletButton() {
@@ -224,7 +225,7 @@ export function WalletButton() {
               <ul className="space-y-0.5">
                 <li>
                   <Link
-                    href={`/profile/${verifiedWalletAddress}`}
+                    href={`/profile/${profileWalletPath(verifiedWalletAddress)}`}
                     onClick={() => setMenuOpen(false)}
                     className="w-full text-left inline-flex items-center min-h-[44px] px-3 py-2 rounded-thumbnail text-sm text-ballot-ink hover:bg-soft-fog transition-colors"
                   >
