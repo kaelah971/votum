@@ -46,7 +46,7 @@
 | 18 | Mobile keyboard usability | PENDING | |
 | 19 | No horizontal overflow | PENDING | |
 | 20 | Disconnect behavior | PENDING | |
-| 21 | Same-wallet reconnect/session restore | PENDING | |
+| 21 | Same-wallet reconnect/session restore | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: after closing and reopening the Mini App, wallet connection was lost as expected. Reconnecting the exact same previously verified wallet resulted in "Verify this wallet" rather than restoring "Session verified". Root cause (Votum code bug): `/api/wallet-proof/session` returned the verified wallet as canonical hex (the value stored in `wallet_sessions`), while the connected `activeAccount` from the Nimiq SDK is the user-friendly NQ form (`NQ47 VGR3 …`); the provider compared them with naive string equality, which never matches hex vs NQ, so a valid session could not be restored. The `wallet_sessions` row persisted and remained unexpired. Fixed: session endpoint returns the user-friendly NQ form; all wallet/session identity comparisons use a shared canonical key (`canonicalWalletKey`: strip whitespace + uppercase) in `VotumSessionProvider`, `WalletButton`, and `deriveOnboardingState`. **NOT marked PASS — physical retest required.** |
 | 22 | Wallet-switch requires verification of the new wallet | PENDING | |
 | 23 | Cancelled/rejected signature recovery | PENDING | |
 | 24 | No red Next.js runtime issue overlay | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: poll page refresh on physical iPhone produced a React hydration mismatch in `PollHeader`/`PollVotingPanel` because server/client closing-date strings differed. Server: `Aug 22, 2026, 1:42 AM`; client: `Aug 22, 2026 at 1:42 AM`. Root cause: `formatClosingTime` passed date AND time options to a single `toLocaleDateString("en-US", …)`, whose combined date+time pattern is engine-dependent (Node ICU uses `, `; WebKit uses `at`). Fixed with a deterministic split date-part + time-part formatter joined with `, `. **NOT marked PASS — physical retest required.** |
@@ -88,6 +88,50 @@ session/onboarding truth as WalletButton:
 
 The drawer is scrollable (`max-h-[calc(100vh-3.5rem)] overflow-y-auto`) so the
 account section stays reachable on narrow Nimiq Pay screens.
+
+Status: **READY FOR PHYSICAL RETEST**.
+
+---
+
+## New physical defect — same-wallet reconnect does not restore verified session
+
+After closing and reopening the Mini App, the wallet connection is lost as
+expected (state A is ephemeral). Reconnecting the **same** previously verified
+wallet must restore the verified Votum session (state B) without a new
+signature. On the physical iPhone it instead showed "Verify this wallet".
+
+Diagnosis (evidence):
+
+1. **`wallet_sessions` row persisted** — the DB had valid, unexpired,
+   unrevoked sessions for the physical wallet
+   (`ec323ef660c913e4a3f0659bfb6b63333255b278`, canonical hex).
+2. **Session remained unexpired** (12h TTL; rows created 2026-08-21 were still
+   within validity).
+3. **Cookie attributes** (verify route / `session.ts`): name `votum_session`,
+   `httpOnly`, `sameSite=lax`, `secure=false` in dev (`NODE_ENV != production`
+   or no `NEXT_PUBLIC_APP_URL`), `path=/`, `maxAge=12h`. Secure is intentionally
+   off so the cookie works over local HTTP.
+4. **Root cause (Votum code bug, not host):** `/api/wallet-proof/session`
+   returned `walletAddress: session.address` — the **canonical hex** stored in
+   `wallet_sessions`. The connected `activeAccount` from the Nimiq SDK is the
+   **user-friendly NQ form** (`NQ47 VGR3 …`). The provider, `WalletButton`, and
+   `deriveOnboardingState` all compared them with naive string equality
+   (`trim().toLowerCase()`), which never matches hex vs NQ — so a valid session
+   could never be reconciled to the reconnected wallet. This reproduces even in
+   a normal browser refresh (cookie present), independent of Nimiq Pay's
+   WebView cookie handling.
+
+Fix:
+
+- `GET /api/wallet-proof/session` now returns the wallet in user-friendly NQ
+  form (`toUserFriendlyAddress`), matching the SDK's `activeAccount`.
+- Added a shared client-safe `canonicalWalletKey(address)` (strip whitespace +
+  uppercase) used for every wallet↔session identity comparison in
+  `VotumSessionProvider`, `WalletButton`, and `deriveOnboardingState`.
+
+Same-wallet reconnect now restores `Session verified` with no new signature;
+a different wallet reconnect still requires fresh verification. No session
+tokens are stored client-side; no cookie security weakened.
 
 Status: **READY FOR PHYSICAL RETEST**.
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatClosingTime, formatDate } from "@/lib/format";
+import { formatClosingTime, formatDate, canonicalWalletKey } from "@/lib/format";
 
 describe("formatClosingTime", () => {
   // Construct dates from local components so the wall-clock fields are
@@ -39,5 +39,19 @@ describe("formatClosingTime", () => {
 describe("formatDate", () => {
   it("is date-only and deterministic", () => {
     expect(formatDate(new Date(2026, 7, 22, 1, 42))).toBe("Aug 22, 2026");
+  });
+});
+
+describe("canonicalWalletKey", () => {
+  it("normalizes spaced NQ display form and spaceless form to the same key", () => {
+    const spaced = "NQ47 VGR3 VVK0 R49X 98YG CNDY NST3 6CR5 BCKQ";
+    const spaceless = "NQ47VGR3VVK0R49X98YGCNDYNST36CR5BCKQ";
+    expect(canonicalWalletKey(spaced)).toBe(canonicalWalletKey(spaceless));
+  });
+
+  it("is case-insensitive", () => {
+    expect(canonicalWalletKey("nq47 VGR3 VVK0")).toBe(
+      canonicalWalletKey("NQ47vgr3VVK0"),
+    );
   });
 });

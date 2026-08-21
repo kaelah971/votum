@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useNimiqContext } from "@/providers/NimiqProvider";
+import { canonicalWalletKey } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +78,10 @@ export function VotumSessionProvider({ children }: { children: ReactNode }) {
       if (data.verified) {
         const currentAccount = activeAccountRef.current;
         const verifiedAddr = (data.walletAddress as string).trim().toLowerCase();
-        if (currentAccount && currentAccount.trim().toLowerCase() === verifiedAddr) {
+        if (
+          currentAccount &&
+          canonicalWalletKey(currentAccount) === canonicalWalletKey(verifiedAddr)
+        ) {
           setState({
             status: "verified",
             verifiedWalletAddress: data.walletAddress,
@@ -117,7 +121,10 @@ export function VotumSessionProvider({ children }: { children: ReactNode }) {
         if (data.verified) {
           const currentAccount = activeAccountRef.current;
           const verifiedAddr = (data.walletAddress as string).trim().toLowerCase();
-          if (currentAccount && currentAccount.trim().toLowerCase() === verifiedAddr) {
+          if (
+            currentAccount &&
+            canonicalWalletKey(currentAccount) === canonicalWalletKey(verifiedAddr)
+          ) {
             setState({
               status: "verified",
               verifiedWalletAddress: data.walletAddress,
@@ -269,7 +276,7 @@ export function VotumSessionProvider({ children }: { children: ReactNode }) {
     // Only relevant when a verified session cookie exists.
     if (!state.verifiedWalletAddress) return;
 
-    const normalizedVerified = state.verifiedWalletAddress.trim().toLowerCase();
+    const normalizedVerified = canonicalWalletKey(state.verifiedWalletAddress);
 
     if (!activeAccount) {
       // Wallet disconnected — session persists, but no wallet is connected.
@@ -281,7 +288,7 @@ export function VotumSessionProvider({ children }: { children: ReactNode }) {
         setState((prev) => ({ ...prev, status: "verified_no_wallet" }));
       }
     } else {
-      const normalizedActive = activeAccount.trim().toLowerCase();
+      const normalizedActive = canonicalWalletKey(activeAccount);
       const matches = normalizedActive === normalizedVerified;
 
       if (state.status === "verified_no_wallet" && matches) {

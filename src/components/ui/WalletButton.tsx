@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useNimiqContext } from "@/providers/NimiqProvider";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
 import { useOnboarding } from "@/providers/OnboardingProvider";
-import { truncateAddress } from "@/lib/format";
+import { truncateAddress, canonicalWalletKey } from "@/lib/format";
 import { profileWalletPath } from "@/lib/profiles/path";
 import { WalletIcon, CheckIcon } from "@/components/ui/icons";
 
@@ -180,8 +180,8 @@ export function WalletButton() {
               (sessionStatus === "verified" &&
                 verifiedWalletAddress &&
                 activeAccount &&
-                activeAccount.trim().toLowerCase() !==
-                  verifiedWalletAddress.trim().toLowerCase())) && (
+                canonicalWalletKey(activeAccount) !==
+                  canonicalWalletKey(verifiedWalletAddress))) && (
                 <p className="text-micro text-fairness-amber mb-2">
                   Active wallet differs from verified session
                 </p>

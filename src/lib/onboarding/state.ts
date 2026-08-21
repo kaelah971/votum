@@ -1,5 +1,6 @@
 import type { OnboardingInputs, OnboardingIntent, OnboardingState } from "./types";
 import { profileWalletPath } from "@/lib/profiles/path";
+import { canonicalWalletKey } from "@/lib/format";
 
 /**
  * V2B.1 onboarding state machine (pure).
@@ -10,8 +11,10 @@ import { profileWalletPath } from "@/lib/profiles/path";
  * existing challenge → explicit signature → verify flow authoritative.
  */
 export function deriveOnboardingState(input: OnboardingInputs): OnboardingState {
-  const wallet = input.activeAccount?.trim().toLowerCase() ?? null;
-  const verified = input.verifiedWalletAddress?.trim().toLowerCase() ?? null;
+  const wallet = input.activeAccount ? canonicalWalletKey(input.activeAccount) : null;
+  const verified = input.verifiedWalletAddress
+    ? canonicalWalletKey(input.verifiedWalletAddress)
+    : null;
 
   // Explicit verification-flow statuses win over everything else.
   switch (input.sessionStatus) {

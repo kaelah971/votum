@@ -72,6 +72,20 @@ export function addressesEqual(a: string, b: string): boolean {
 }
 
 /**
+ * Convert any Nimiq address (user-friendly NQ or canonical hex) to its
+ * user-friendly display form. Returns null for invalid input.
+ */
+export function toUserFriendlyAddress(raw: string): string | null {
+  const address = parseAddress(raw);
+  if (!address) return null;
+  try {
+    return address.toUserFriendlyAddress();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Derive a Nimiq address from a public key hex string.
  * Returns the canonical `toHex()` representation or `null` if parsing fails.
  */

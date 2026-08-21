@@ -3,6 +3,18 @@ export function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+/**
+ * Canonical wallet-identity key for comparison.
+ *
+ * Strips all whitespace and uppercases, so the Nimiq SDK's user-friendly
+ * display form ("NQ47 VGR3 VVK0 …") and any canonical representation compare
+ * identically regardless of cosmetic spacing. Used wherever a connected
+ * wallet must be matched against a verified session wallet.
+ */
+export function canonicalWalletKey(address: string): string {
+  return address.replace(/\s+/g, "").toUpperCase();
+}
+
 export function truncateTxHash(hash: string): string {
   if (hash.length <= 12) return hash;
   return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
