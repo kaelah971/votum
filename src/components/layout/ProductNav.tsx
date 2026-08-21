@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { WalletButton } from "@/components/ui/WalletButton";
+import { ProductNavAccountActions } from "@/components/layout/ProductNavAccountActions";
 import { CreatorActivityNotifications } from "@/components/insights/CreatorActivityNotifications";
 
 const VotumMark = () => (
@@ -159,8 +160,8 @@ export function ProductNav() {
             aria-hidden="true"
           />
 
-          {/* Drawer */}
-          <div className="absolute top-14 left-0 right-0 bg-clear-ballot border-b border-divider shadow-card">
+          {/* Drawer — scrollable so account actions stay reachable on small screens */}
+          <div className="absolute top-14 left-0 right-0 max-h-[calc(100vh-3.5rem)] overflow-y-auto bg-clear-ballot border-b border-divider shadow-card">
             <div className="px-4 py-3 space-y-1">
               {navLinks.map((link) => (
                 <Link
@@ -176,6 +177,10 @@ export function ProductNav() {
                   {link.label}
                 </Link>
               ))}
+            </div>
+            <div className="px-4 py-3 border-t border-divider">
+              <p className="text-micro text-quiet-ink px-4 pb-1">Account</p>
+              <ProductNavAccountActions />
             </div>
             <div className="px-4 py-3 border-t border-divider">
               <WalletButton />

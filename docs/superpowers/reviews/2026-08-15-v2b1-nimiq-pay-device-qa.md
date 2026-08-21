@@ -15,7 +15,7 @@
 | Physical device model | *to be supplied by user* |
 | OS / version | *to be supplied by user* |
 | Nimiq Pay version / build | *to be supplied by user (if visible)* |
-| LAN URL | `http://192.168.1.58:3000` |
+| LAN URL | `http://192.168.0.3:3000` |
 | Tested commit | `de4a6b3f0bfe4743d016cd299ab3a5525fb09ba6` |
 | Branch | `feat/v2-participation-record` |
 | Notes / screenshots | *to be supplied by user* |
@@ -35,7 +35,7 @@
 | 7 | Vote-triggered onboarding returns to same poll | PENDING | |
 | 8 | Vote completes after verification | PENDING | |
 | 9 | Duplicate vote remains blocked | **PASS** | T12 physical observation: after refreshing the already-voted poll, the previous Vote confirmed state remained; no second vote/cast-vote action appeared; existing vote remained 1 total vote. |
-| 10 | Create-triggered onboarding returns to create flow | PENDING | |
+| 10 | Create-triggered onboarding returns to create flow | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: a connected-but-unverified wallet could enter `/create` and use the full creation form without triggering ownership verification. Root cause: `/create` gated verification only at Publish (`handlePublish`), not at entry. Fixed by gating the create form behind a verified, matched session (`CreateGate`): disconnected and connected-unverified visitors get the shared onboarding with `create_poll` intent and return to `/create`; verified creators render the form normally. Server-side publish verification retained (defense in depth). **NOT marked PASS — physical retest required.** |
 | 11 | Public canonical profile renders | PENDING | |
 | 12 | Handle profile route renders | PENDING | |
 | 13 | Selected vote option remains absent from public profile | PENDING | |
@@ -68,6 +68,28 @@ client produce byte-identical text.
 
 Status: **READY FOR PHYSICAL RETEST**. T12 #24 remains **not PASS** until a
 physical device confirms the red runtime overlay no longer appears.
+
+---
+
+## New physical UX observation — product navigation lacks profile access
+
+Landing WalletButton exposes View/Edit profile for verified users, but the
+in-app product hamburger drawer previously exposed only Explore, Create, How
+it works, My Polls, Drafts, Insights, and a wallet pill — no discoverable
+profile/account actions.
+
+Fixed by adding a session-driven **Account** section to the product drawer
+(`ProductNavAccountActions`) that reuses the same canonical profile paths and
+session/onboarding truth as WalletButton:
+
+- verified → **View profile** (route-safe `profileWalletPath`) + **Edit profile**
+- connected-but-unverified → **Verify this wallet**
+- disconnected → **Connect wallet**
+
+The drawer is scrollable (`max-h-[calc(100vh-3.5rem)] overflow-y-auto`) so the
+account section stays reachable on narrow Nimiq Pay screens.
+
+Status: **READY FOR PHYSICAL RETEST**.
 
 ---
 
