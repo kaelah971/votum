@@ -151,7 +151,7 @@ export function WalletButton() {
           aria-expanded={menuOpen}
           className="inline-flex min-h-[44px] items-center rounded-full border border-ballot-ink/18 bg-clear-ballot/45 px-3 py-2 text-sm font-medium text-nim-blue backdrop-blur transition-colors hover:bg-clear-ballot/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold focus-visible:ring-offset-2 max-w-[130px]"
         >
-          <span className="font-proof truncate">{truncated}</span>
+          <span className="font-proof truncate min-w-0">{truncated}</span>
           <svg
             width="10"
             height="6"
@@ -171,7 +171,7 @@ export function WalletButton() {
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 mt-2 w-72 bg-clear-ballot rounded-overlay border border-divider shadow-card p-3 z-50">
+          <div className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-1.25rem)] bg-clear-ballot rounded-overlay border border-divider shadow-card p-3 z-50">
             <p className="text-micro text-quiet-ink mb-2">Connected account</p>
 
             {/* Wallet mismatch warning: active wallet differs from verified session */}
@@ -207,7 +207,7 @@ export function WalletButton() {
                         <span className="w-1.5 h-1.5 rounded-full bg-signal-gold mr-2 shrink-0" />
                       )}
                       <span
-                        className={`font-proof truncate ${isActive ? "text-ballot-ink" : "text-quiet-ink"}`}
+                        className={`font-proof truncate min-w-0 ${isActive ? "text-ballot-ink" : "text-quiet-ink"}`}
                       >
                         {account}
                       </span>

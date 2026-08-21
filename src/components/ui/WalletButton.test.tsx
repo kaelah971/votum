@@ -3,6 +3,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { WalletButton } from "@/components/ui/WalletButton";
 
 const ADDRESS = "NQ07 0000 0000 0000 0000 0000 0000 0000 0000";
+const LONG_ADDRESS =
+  "NQ07 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000";
 
 const mocks = vi.hoisted(() => ({
   nimiq: {
@@ -139,5 +141,57 @@ describe("WalletButton — verified", () => {
     expect(screen.getByRole("link", { name: "Edit profile" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "My polls" })).toBeInTheDocument();
     expect(screen.getByText("Session verified")).toBeInTheDocument();
+  });
+
+  it("anchors the menu to the trigger's right edge with a viewport-safe width cap", () => {
+    mocks.nimiq.walletStatus = "connected";
+    mocks.nimiq.accounts = [ADDRESS];
+    mocks.nimiq.activeAccount = ADDRESS;
+    mocks.session.status = "verified";
+    mocks.session.verifiedWalletAddress = ADDRESS;
+    mocks.session.isSessionVerified = true;
+    mocks.session.isWalletMatched = true;
+
+    render(<WalletButton />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Wallet account menu" }));
+
+    const menu = screen.getByText("Connected account").parentElement;
+    expect(menu).toBeInTheDocument();
+    expect(menu?.className).toMatch(/(^|\s)right-0(\s|$)/);
+    // Width must be capped to the viewport so it can never overflow
+    // horizontally on a narrow Nimiq Pay screen.
+    expect(menu?.className).toMatch(/max-w-\[/);
+  });
+
+  it("keeps long wallet/address text from forcing horizontal overflow", () => {
+    mocks.nimiq.walletStatus = "connected";
+    mocks.nimiq.accounts = [LONG_ADDRESS];
+    mocks.nimiq.activeAccount = LONG_ADDRESS;
+    mocks.session.status = "verified";
+    mocks.session.verifiedWalletAddress = LONG_ADDRESS;
+    mocks.session.isSessionVerified = true;
+    mocks.session.isWalletMatched = true;
+
+    render(<WalletButton />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Wallet account menu" }));
+
+    // The trigger and every account row must truncate (ellipsis) instead of
+    // widening the layout, so a long NQ address cannot push the menu
+    // outside the viewport.
+    const menu = screen.getByText("Connected account").parentElement!;
+    const triggers = Array.from(
+      menu.querySelectorAll("button"),
+    ).filter((b) => b.textContent?.includes("NQ07"));
+    expect(triggers.length).toBeGreaterThan(0);
+    for (const t of triggers) {
+      const spans = Array.from(t.querySelectorAll("span"));
+      const truncating = spans.filter(
+        (s) =>
+          s.className.includes("truncate") && s.className.includes("min-w-0"),
+      );
+      expect(truncating.length).toBeGreaterThan(0);
+    }
   });
 });

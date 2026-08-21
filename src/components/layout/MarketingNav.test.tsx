@@ -120,4 +120,27 @@ describe("MarketingNav — landing header", () => {
     expect(screen.getByRole("button", { name: "Connect wallet" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+127" })).not.toBeInTheDocument();
   });
+
+  it("places the wallet control at the right edge so its menu stays inside the viewport", () => {
+    render(<MarketingNav />);
+
+    const nav = screen.getByRole("navigation", { name: "Marketing navigation" });
+    const wallet = screen.getByRole("button", { name: "Connect wallet" });
+
+    // The wallet control must be the last (rightmost) element in the header
+    // cluster, so the right-anchored dropdown extends toward the viewport
+    // center rather than beyond the left edge on narrow screens.
+    const rightCluster = nav.querySelector(
+      "div.justify-self-end",
+    );
+    expect(rightCluster).not.toBeNull();
+    const last = rightCluster?.lastElementChild;
+    expect(last).not.toBeNull();
+    // Either the bare button (disconnected) or its relative wrapper
+    // (connected) is the final child.
+    expect(
+      last === wallet ||
+        (last?.contains(wallet) ?? false),
+    ).toBe(true);
+  });
 });

@@ -27,10 +27,10 @@
 | # | Item | Result | Notes |
 |---|------|--------|-------|
 | 1 | Mini App launches inside Nimiq Pay | **PASS** | T12 physical observation: landing page renders inside Nimiq Pay. |
-| 2 | Landing-page Connect Wallet | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: no visible/tappable Votum wallet control in the mobile landing header (logo, `+127` stat pill, and `Create` were shown; the `+127` pill is a static NIM-signalled stat, not interactive). Fixed by rendering `WalletButton` in the marketing header. **NOT marked PASS — physical retest required.** |
-| 3 | Explicit Verify ownership step | PENDING | |
-| 4 | Successful signed-message verification | PENDING | |
-| 5 | Automatic profile bootstrap | PENDING | |
+| 2 | Landing-page Connect Wallet / wallet entry point | **PASS** | T12 physical retest: connected wallet control visible and tappable on physical iPhone (shows `NQ47 V...`). |
+| 3 | Explicit Verify ownership step | **PASS** | T12 physical retest: explicit Verify ownership step shown and completed on physical iPhone. |
+| 4 | Successful signed-message verification | **PASS** | T12 physical retest: wallet successfully verified on physical iPhone. |
+| 5 | Automatic profile bootstrap | **READY FOR RETEST** | Verified wallet menu opens but clips beyond the LEFT viewport edge on iPhone inside Nimiq Pay, blocking reliable access to profile actions. Fixed by capping the dropdown to viewport width and right-anchoring it at the header's right edge. **NOT marked PASS — physical retest required.** |
 | 6 | Generic connect returns to original page | PENDING | |
 | 7 | Vote-triggered onboarding returns to same poll | PENDING | |
 | 8 | Vote completes after verification | PENDING | |

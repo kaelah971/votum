@@ -66,7 +66,6 @@ export function MarketingNav() {
         </div>
 
         <div className="flex items-center gap-2 justify-self-end">
-          <WalletButton />
           <FrameStatPill
             value="+127"
             label="NIM signalled"
@@ -78,6 +77,7 @@ export function MarketingNav() {
           >
             Create
           </Link>
+          <WalletButton />
         </div>
       </div>
     </nav>
