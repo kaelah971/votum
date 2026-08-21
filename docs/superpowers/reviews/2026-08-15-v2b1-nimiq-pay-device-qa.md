@@ -46,10 +46,10 @@
 | 18 | Mobile keyboard usability | PENDING | |
 | 19 | No horizontal overflow | PENDING | |
 | 20 | Disconnect behavior | PENDING | |
-| 21 | Same-wallet reconnect/session restore | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: after closing and reopening the Mini App, wallet connection was lost as expected. Reconnecting the exact same previously verified wallet resulted in "Verify this wallet" rather than restoring "Session verified". Root cause (Votum code bug): `/api/wallet-proof/session` returned the verified wallet as canonical hex (the value stored in `wallet_sessions`), while the connected `activeAccount` from the Nimiq SDK is the user-friendly NQ form (`NQ47 VGR3 …`); the provider compared them with naive string equality, which never matches hex vs NQ, so a valid session could not be restored. The `wallet_sessions` row persisted and remained unexpired. Fixed: session endpoint returns the user-friendly NQ form; all wallet/session identity comparisons use a shared canonical key (`canonicalWalletKey`: strip whitespace + uppercase) in `VotumSessionProvider`, `WalletButton`, and `deriveOnboardingState`. **NOT marked PASS — physical retest required.** |
-| 22 | Wallet-switch requires verification of the new wallet | PENDING | |
-| 23 | Cancelled/rejected signature recovery | PENDING | |
-| 24 | No red Next.js runtime issue overlay | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: poll page refresh on physical iPhone produced a React hydration mismatch in `PollHeader`/`PollVotingPanel` because server/client closing-date strings differed. Server: `Aug 22, 2026, 1:42 AM`; client: `Aug 22, 2026 at 1:42 AM`. Root cause: `formatClosingTime` passed date AND time options to a single `toLocaleDateString("en-US", …)`, whose combined date+time pattern is engine-dependent (Node ICU uses `, `; WebKit uses `at`). Fixed with a deterministic split date-part + time-part formatter joined with `, `. **NOT marked PASS — physical retest required.** |
+| 21 | Same-wallet reconnect/session restore | **FAIL (2nd physical retest)** | First FAIL: after closing/reopening the Mini App, reconnecting the exact same previously verified wallet showed "Verify this wallet". First fix (commit 5b453f0): session endpoint returns user-friendly NQ form + canonical identity comparison. Second physical retest (≈20:56 local) still FAILED — same symptom. Diagnosis (dev-only instrumentation): server path is fully correct (valid cookie → `verified:true` with user-friendly NQ form matching `activeAccount`; DB `wallet_sessions` row persists and is unexpired). Root cause is **not** Votum code: the `votum_session` cookie (httpOnly, SameSite=Lax, Secure=false in dev) is **absent after Nimiq Pay iOS Mini App close/reopen over local HTTP** — the WebView does not carry the cookie back; a fresh challenge→verify was issued at 20:56 (new `wallet_sessions` row created 19:56:01Z), proving the session had to be re-established. Classified as **LOCAL HTTP HOST LIMITATION — HTTPS RETEST REQUIRED**. Not a Votum code bug; no auth weakening applied. **NOT marked PASS.** |
+| 22 | Wallet-switch requires verification of the new wallet | **PASS** | T12 physical observation: switched from verified NQ47… to unverified NQ34…; active wallet changed, old verified session was NOT transferred, Votum required verification of NQ34…, and NQ47's profile/edit actions were not exposed as if owned by NQ34. |
+| 23 | Cancelled/rejected signature recovery | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: after tapping "Verify this wallet", rejecting the Nimiq signature request on a retry produced a red Next.js runtime overlay ("Runtime Error [object Object]", stack `coerceError` / `onUnhandledRejection`). Root cause: the Nimiq Pay SDK rejects `provider.sign()` with a **plain object** — confirmed in dev-server logs as `{ code: 4001, message: "User rejected the request." }` — and `signMessage`'s catch only classified denial for `Error` instances, so a plain-object cancellation was misclassified and the raw SDK rejection promise could surface as an unhandled rejection. Fixed: `signMessage`/`requestAccounts` now (1) attach a defensive rejection handler to the raw SDK promise so it can never become an unhandled rejection, and (2) classify plain-object/nested SDK denials (`error.type`, `message`, `code` incl. 4001, "reject"/"denied"/"cancelled") via safe normalization; `WalletOnboardingSheet` wraps async button handlers so event-handler promises never reject. Cancellation now returns to the connected-but-unverified state with no session, no verify POST, no bootstrap, and no overlay. **NOT marked PASS — physical retest required.** |
+| 24 | No red Next.js runtime issue overlay | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: poll page refresh on physical iPhone produced a React hydration mismatch in `PollHeader`/`PollVotingPanel` because server/client closing-date strings differed. Server: `Aug 22, 2026, 1:42 AM`; client: `Aug 22, 2026 at 1:42 AM`. Root cause: `formatClosingTime` passed date AND time options to a single `toLocaleDateString("en-US", …)`, whose combined date+time pattern is engine-dependent (Node ICU uses `, `; WebKit uses `at`). Fixed with a deterministic split date-part + time-part formatter joined with `, `. **NOT marked PASS — physical retest required.** REOPENED by the #23 cancellation overlay; the #23 fix also removes this overlay source. |
 
 ---
 
@@ -100,40 +100,95 @@ expected (state A is ephemeral). Reconnecting the **same** previously verified
 wallet must restore the verified Votum session (state B) without a new
 signature. On the physical iPhone it instead showed "Verify this wallet".
 
+### First fix (commit `5b453f0`)
+
+`/api/wallet-proof/session` returned `walletAddress: session.address` — the
+**canonical hex** stored in `wallet_sessions` — while the connected
+`activeAccount` from the Nimiq SDK is the **user-friendly NQ form**
+(`NQ47 VGR3 …`). The provider, `WalletButton`, and `deriveOnboardingState`
+compared them with naive string equality, which never matches hex vs NQ.
+Fixed by returning the user-friendly NQ form from the session endpoint and
+adding a shared `canonicalWalletKey(address)` (strip whitespace + uppercase)
+for every wallet↔session identity comparison. This fix is correct and
+retained; it makes server + client reconciliation fully canonical.
+
+### Second physical retest (≈20:56 local) — still fails
+
+Same symptom after the canonical fix. Dev-only instrumentation + DB evidence:
+
+1. **`wallet_sessions` row persisted and remained valid** — unexpired,
+   unrevoked, canonical wallet `ec323ef660c913e4a3f0659bfb6b63333255b278`.
+2. **Server path proven correct end-to-end:** a request carrying a valid
+   `votum_session` cookie returned `{ verified: true, walletAddress: "NQ47
+   VGR3 VVK0 R49X 98YG CNDY NST3 6CR5 BCKQ" }` — the user-friendly NQ form that
+   `canonicalWalletKey(activeAccount)` matches. No server bug.
+3. **Cookie attributes:** `votum_session`, `httpOnly`, `sameSite=lax`,
+   `secure=false` in dev (`NODE_ENV != production` / no
+   `NEXT_PUBLIC_APP_URL`), `path=/`, `maxAge=12h`.
+4. **Cookie absent after Mini App close:** the physical reopen produced a
+   fresh `challenge → verify → bootstrap` sequence and a new `wallet_sessions`
+   row created at `2026-08-21T19:56:01Z` (= 20:56 local) — the session had to
+   be re-established from scratch, which only happens when the browser did not
+   carry the `votum_session` cookie back into the reopened Mini App.
+5. **Conclusion:** the cookie does not survive the Nimiq Pay iOS Mini App
+   WebView close/reopen lifecycle over **local HTTP** (`http://192.168.0.3:3000`).
+   This is a host/local-HTTP WebView storage limitation, **not** a Votum code
+   bug. Votum's server session persistence and canonical reconciliation are
+   correct.
+
+No auth architecture was weakened (no localStorage/sessionStorage tokens, no
+token exposure, Secure flag logic unchanged). HTTPS production Mini App
+behavior cannot be confirmed on this local origin.
+
+Status: **FAIL — LOCAL HTTP HOST LIMITATION. HTTPS RETEST REQUIRED** to
+determine whether the Nimiq Pay WebView persists the cookie on a secure
+production origin.
+
+---
+
+## New physical defect — rejected wallet signature causes unhandled runtime error
+
+T12 #23. Physical sequence: connected-but-unverified NQ34… → "Verify this
+wallet" → Nimiq Pay signature approval → user rejects. First rejection
+returned cleanly; a subsequent retry + rejection produced a red Next.js
+runtime overlay "Runtime Error [object Object]" (stack `coerceError` /
+`onUnhandledRejection`).
+
 Diagnosis (evidence):
 
-1. **`wallet_sessions` row persisted** — the DB had valid, unexpired,
-   unrevoked sessions for the physical wallet
-   (`ec323ef660c913e4a3f0659bfb6b63333255b278`, canonical hex).
-2. **Session remained unexpired** (12h TTL; rows created 2026-08-21 were still
-   within validity).
-3. **Cookie attributes** (verify route / `session.ts`): name `votum_session`,
-   `httpOnly`, `sameSite=lax`, `secure=false` in dev (`NODE_ENV != production`
-   or no `NEXT_PUBLIC_APP_URL`), `path=/`, `maxAge=12h`. Secure is intentionally
-   off so the cookie works over local HTTP.
-4. **Root cause (Votum code bug, not host):** `/api/wallet-proof/session`
-   returned `walletAddress: session.address` — the **canonical hex** stored in
-   `wallet_sessions`. The connected `activeAccount` from the Nimiq SDK is the
-   **user-friendly NQ form** (`NQ47 VGR3 …`). The provider, `WalletButton`, and
-   `deriveOnboardingState` all compared them with naive string equality
-   (`trim().toLowerCase()`), which never matches hex vs NQ — so a valid session
-   could never be reconciled to the reconnected wallet. This reproduces even in
-   a normal browser refresh (cookie present), independent of Nimiq Pay's
-   WebView cookie handling.
+1. **Rejecting promise/boundary:** `provider.sign(message)` in
+   `@nimiq/mini-app-sdk` rejects when the user cancels (the adapter's pending
+   promise rejects and propagates up through `provider.request()`).
+2. **Safe rejection shape (confirmed in dev-server logs):** the Nimiq Pay SDK
+   rejects with a **plain object** `{ code: 4001, message: "User rejected the
+   request." }` — not an `Error`. When stringified by Next's dev overlay this
+   appears as `[object Object]`.
+3. **Why it escaped:** `signMessage`'s catch only ran `isPermissionDenial` for
+   `err instanceof Error`; a plain-object rejection fell through to
+   `{ error: "Unknown signature error" }` and, more importantly, the raw SDK
+   promise could surface as an unhandled rejection. React does not await
+   `onClick` handler promises, so a rejecting handler promise also escapes to
+   the window.
+4. **Cancellation vs genuine failure:** now distinguished — plain-object /
+   nested SDK denials (`error.type`, `message`, `code` incl. 4001, and
+   "reject"/"denied"/"cancelled") map to `{ denied: true }`; genuine
+   SDK/network errors still map to `{ error: … }` (recoverable failure).
 
 Fix:
 
-- `GET /api/wallet-proof/session` now returns the wallet in user-friendly NQ
-  form (`toUserFriendlyAddress`), matching the SDK's `activeAccount`.
-- Added a shared client-safe `canonicalWalletKey(address)` (strip whitespace +
-  uppercase) used for every wallet↔session identity comparison in
-  `VotumSessionProvider`, `WalletButton`, and `deriveOnboardingState`.
+- `signMessage`/`requestAccounts` attach a defensive rejection handler to the
+  raw SDK promise so it can never become an unhandled rejection, and classify
+  plain-object denials via safe normalization (`isDenialFromThrown`,
+  `safeErrorSummary`) that only exposes name/code/message.
+- `WalletOnboardingSheet` wraps async button handlers (`safeClick`) so
+  event-handler promises never reject to the window.
 
-Same-wallet reconnect now restores `Session verified` with no new signature;
-a different wallet reconnect still requires fresh verification. No session
-tokens are stored client-side; no cookie security weakened.
+Result: a user-initiated cancellation returns to the connected-but-unverified
+state; no session, no verify POST, no profile bootstrap, no overlay; retry
+works; repeated cancellation is safe; genuine errors still surface as
+recoverable failures.
 
-Status: **READY FOR PHYSICAL RETEST**.
+Status: **READY FOR PHYSICAL RETEST**. T12 #23 and #24 are **not** PASS.
 
 ---
 

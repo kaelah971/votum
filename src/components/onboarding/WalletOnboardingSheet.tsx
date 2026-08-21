@@ -8,6 +8,23 @@ import { Button } from "@/components/ui/Button";
 import { WalletIconLarge, CheckIcon, CloseIcon } from "@/components/ui/icons";
 
 /**
+ * Wrap an async action for use as a DOM event handler so the returned promise
+ * can never reject and surface as an unhandled rejection (e.g. Next's dev
+ * overlay `onUnhandledRejection` showing "[object Object]" for a plain-object
+ * Nimiq Pay cancellation). React does not await event-handler promises; a
+ * rejecting handler promise would otherwise escape to the window.
+ */
+function safeClick(handler: () => void | Promise<unknown>) {
+  return () => {
+    Promise.resolve()
+      .then(handler)
+      .catch(() => {
+        /* never propagate to window */
+      });
+  };
+}
+
+/**
  * V2B.1 shared wallet onboarding surface.
  *
  * Renders the eight onboarding states as a modal (desktop) / bottom sheet
@@ -145,7 +162,7 @@ export function WalletOnboardingSheet() {
           title="Connect your wallet"
           description="Connect your Nimiq wallet to continue."
           action={
-            <Button ref={primaryRef} type="button" variant="primary" onClick={connectWallet}>
+            <Button ref={primaryRef} type="button" variant="primary" onClick={safeClick(connectWallet)}>
               Connect wallet
             </Button>
           }
@@ -171,7 +188,7 @@ export function WalletOnboardingSheet() {
           title="Verify wallet ownership"
           description="Wallet connected. Verify ownership to participate on Votum."
           action={
-            <Button ref={primaryRef} type="button" variant="primary" onClick={verifyActiveWallet}>
+            <Button ref={primaryRef} type="button" variant="primary" onClick={safeClick(verifyActiveWallet)}>
               Verify wallet ownership
             </Button>
           }
@@ -212,7 +229,7 @@ export function WalletOnboardingSheet() {
           title="Verification cancelled"
           description="Verification wasn't completed. Try again."
           action={
-            <Button ref={primaryRef} type="button" variant="primary" onClick={verifyActiveWallet}>
+            <Button ref={primaryRef} type="button" variant="primary" onClick={safeClick(verifyActiveWallet)}>
               Try again
             </Button>
           }
@@ -227,7 +244,7 @@ export function WalletOnboardingSheet() {
           title="Verification expired"
           description="Verification expired. Start again."
           action={
-            <Button ref={primaryRef} type="button" variant="primary" onClick={verifyActiveWallet}>
+            <Button ref={primaryRef} type="button" variant="primary" onClick={safeClick(verifyActiveWallet)}>
               Start again
             </Button>
           }
@@ -246,7 +263,11 @@ export function WalletOnboardingSheet() {
               ref={primaryRef}
               type="button"
               variant="primary"
-              onClick={walletStatus === "connected" ? verifyActiveWallet : connectWallet}
+              onClick={
+                walletStatus === "connected"
+                  ? safeClick(verifyActiveWallet)
+                  : safeClick(connectWallet)
+              }
             >
               Try again
             </Button>

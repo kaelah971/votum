@@ -172,6 +172,53 @@ function isPermissionDenial(type: string, message: string): boolean {
   );
 }
 
+/**
+ * Safely extract denial indicators from an arbitrary thrown/rejected value
+ * (Error, DOMException, plain object, SDK error object) without stringifying
+ * secrets. Only reads `name`, `code`, `type`, and `message` fields; never
+ * returns or logs the raw payload.
+ */
+function isDenialFromThrown(err: unknown): boolean {
+  if (err instanceof Error) {
+    return isPermissionDenial(err.name ?? "", err.message ?? "");
+  }
+  if (typeof err === "object" && err !== null) {
+    const record = err as Record<string, unknown>;
+    // Nested SDK error object: { error: { type, message } }
+    const nested = record.error as Record<string, unknown> | undefined;
+    const typeRaw = typeof nested?.type === "string" ? nested.type : "";
+    const msgRaw =
+      typeof nested?.message === "string"
+        ? nested.message
+        : typeof record.message === "string"
+          ? (record.message as string)
+          : "";
+    return isPermissionDenial(typeRaw, msgRaw);
+  }
+  return false;
+}
+
+/**
+ * Safely produce a short, non-secret error message from an arbitrary thrown
+ * value. Only name/code/message are exposed; raw payloads are never surfaced.
+ */
+function safeErrorSummary(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message || err.name || "Wallet request failed";
+  }
+  if (typeof err === "object" && err !== null) {
+    const record = err as Record<string, unknown>;
+    const nested = record.error as Record<string, unknown> | undefined;
+    const message =
+      (typeof nested?.message === "string" && nested.message) ||
+      (typeof record.message === "string" && record.message) ||
+      (typeof record.code === "string" && record.code) ||
+      (typeof record.type === "string" && record.type);
+    if (typeof message === "string" && message.length > 0) return message;
+  }
+  return "Unknown wallet error";
+}
+
 export async function initializeNimiqProvider(
   timeout = 5000,
 ): Promise<{ provider: NimiqProvider } | { error: string }> {
@@ -208,7 +255,17 @@ export async function signMessage(
   | { error: string }
 > {
   try {
-    const result = await provider.sign(message);
+    // Attach a defensive rejection handler to the raw SDK promise so it can
+    // never surface as an unhandled rejection (e.g. Next's dev overlay
+    // `onUnhandledRejection` showing "[object Object]" for a plain-object
+    // cancellation). The awaited result below is still observed normally —
+    // multiple handlers on the same promise are independent.
+    const signPromise = provider.sign(message);
+    signPromise.catch(() => {
+      /* handled defensively; the await below observes the rejection */
+    });
+
+    const result = await signPromise;
 
     // provider.sign() returns ErrorResponse | SignatureResult.
     // SignatureResult has "publicKey" and "signature" properties.
@@ -223,13 +280,10 @@ export async function signMessage(
     }
     return { error: errMsg || type || "Signature request failed" };
   } catch (err: unknown) {
-    if (err instanceof Error) {
-      if (isPermissionDenial(err.name ?? "", err.message ?? "")) {
-        return { denied: true };
-      }
-      return { error: err.message };
+    if (isDenialFromThrown(err)) {
+      return { denied: true };
     }
-    return { error: "Unknown signature error" };
+    return { error: safeErrorSummary(err) };
   }
 }
 
@@ -242,7 +296,14 @@ export async function requestAccounts(
   | { error: string }
 > {
   try {
-    const result = await provider.listAccounts();
+    // Defensive handler so a plain-object SDK rejection (e.g. cancellation)
+    // can never surface as an unhandled rejection.
+    const accountsPromise = provider.listAccounts();
+    accountsPromise.catch(() => {
+      /* handled defensively; the await below observes the rejection */
+    });
+
+    const result = await accountsPromise;
 
     if (isErrorResponse(result)) {
       const { type, message } = result.error;
@@ -263,12 +324,9 @@ export async function requestAccounts(
 
     return { error: "Unexpected response from wallet" };
   } catch (err: unknown) {
-    if (err instanceof Error) {
-      if (isPermissionDenial(err.name ?? "", err.message ?? "")) {
-        return { denied: true };
-      }
-      return { error: err.message };
+    if (isDenialFromThrown(err)) {
+      return { denied: true };
     }
-    return { error: "Unknown account access error" };
+    return { error: safeErrorSummary(err) };
   }
 }
