@@ -12,6 +12,7 @@ import { FairnessLabel } from "@/components/ui/FairnessLabel";
 import { PollOptionsEditor } from "@/components/decision/PollOptionsEditor";
 import { ContributionModeSelector } from "@/components/decision/ContributionModeSelector";
 import { PollReview } from "@/components/decision/PollReview";
+import { CreateGate } from "@/components/creator/CreateGate";
 import { formatClosingTime, truncateAddress } from "@/lib/format";
 import { useNimiqContext } from "@/providers/NimiqProvider";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
@@ -477,12 +478,23 @@ export default function CreatePollPage() {
   const durationLabel =
     DURATION_LABELS[formData.duration] ?? formData.duration;
 
+  // ---- Create gate ----
+  // The create form is usable only for a verified, matched session. A
+  // disconnected or connected-but-unverified visitor gets the shared
+  // onboarding gate instead (intent=create_poll) so they can connect/verify
+  // and return to /create. Verification remains explicit — never auto-signed.
+  const canCreate = isSessionVerified && isWalletMatched;
+
   // =========================================================================
   // RENDER
   // =========================================================================
 
   return (
     <ProductShell>
+      {!canCreate ? (
+        <CreateGate />
+      ) : (
+      <>
       {/* ================================================================= */}
       {/* STEPPER                                                           */}
       {/* ================================================================= */}
@@ -814,6 +826,8 @@ export default function CreatePollPage() {
         </>
       )}
       </Card>
+      </>
+      )}
     </ProductShell>
   );
 }
