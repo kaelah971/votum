@@ -34,7 +34,7 @@
 | 6 | Generic connect returns to original page | PENDING | |
 | 7 | Vote-triggered onboarding returns to same poll | PENDING | |
 | 8 | Vote completes after verification | PENDING | |
-| 9 | Duplicate vote remains blocked | PENDING | |
+| 9 | Duplicate vote remains blocked | **PASS** | T12 physical observation: after refreshing the already-voted poll, the previous Vote confirmed state remained; no second vote/cast-vote action appeared; existing vote remained 1 total vote. |
 | 10 | Create-triggered onboarding returns to create flow | PENDING | |
 | 11 | Public canonical profile renders | PENDING | |
 | 12 | Handle profile route renders | PENDING | |
@@ -49,7 +49,25 @@
 | 21 | Same-wallet reconnect/session restore | PENDING | |
 | 22 | Wallet-switch requires verification of the new wallet | PENDING | |
 | 23 | Cancelled/rejected signature recovery | PENDING | |
-| 24 | No red Next.js runtime issue overlay | PENDING | |
+| 24 | No red Next.js runtime issue overlay | **READY FOR RETEST** | FAIL FOUND DURING PHYSICAL QA: poll page refresh on physical iPhone produced a React hydration mismatch in `PollHeader`/`PollVotingPanel` because server/client closing-date strings differed. Server: `Aug 22, 2026, 1:42 AM`; client: `Aug 22, 2026 at 1:42 AM`. Root cause: `formatClosingTime` passed date AND time options to a single `toLocaleDateString("en-US", …)`, whose combined date+time pattern is engine-dependent (Node ICU uses `, `; WebKit uses `at`). Fixed with a deterministic split date-part + time-part formatter joined with `, `. **NOT marked PASS — physical retest required.** |
+
+---
+
+## New physical defect — Poll date hydration mismatch
+
+Poll page refresh on the physical iPhone produced a React hydration mismatch
+in `PollHeader`/`PollVotingPanel`. Server rendered `Aug 22, 2026, 1:42 AM`;
+client rendered `Aug 22, 2026 at 1:42 AM`. Root cause: `formatClosingTime`
+(`src/lib/format.ts`) passed both date and time options to a single
+`toLocaleDateString("en-US", …)`. That combined date+time pattern is
+engine-dependent — Node ICU emits `, ` between date and time, WebKit (iOS)
+emits `at`. The poll's `closingAt` instant is unchanged; timezone semantics
+preserved (user-local). Fixed by splitting into a date part and a time part
+(separate explicit `toLocale*` calls) joined with a fixed `, `, so SSR and
+client produce byte-identical text.
+
+Status: **READY FOR PHYSICAL RETEST**. T12 #24 remains **not PASS** until a
+physical device confirms the red runtime overlay no longer appears.
 
 ---
 
