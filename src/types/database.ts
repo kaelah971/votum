@@ -555,6 +555,50 @@ export type Database = {
           },
         ]
       }
+      reward_campaign_vaults: {
+        Row: {
+          authentication_tag: string
+          campaign_id: string
+          created_at: string
+          encrypted_private_key_ciphertext: string
+          encryption_algorithm: string
+          encryption_iv: string
+          envelope_version: string
+          updated_at: string
+          vault_address_hex: string
+        }
+        Insert: {
+          authentication_tag: string
+          campaign_id: string
+          created_at?: string
+          encrypted_private_key_ciphertext: string
+          encryption_algorithm: string
+          encryption_iv: string
+          envelope_version: string
+          updated_at?: string
+          vault_address_hex: string
+        }
+        Update: {
+          authentication_tag?: string
+          campaign_id?: string
+          created_at?: string
+          encrypted_private_key_ciphertext?: string
+          encryption_algorithm?: string
+          encryption_iv?: string
+          envelope_version?: string
+          updated_at?: string
+          vault_address_hex?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reward_campaign_vaults_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: true
+            referencedRelation: "reward_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -586,6 +630,11 @@ export type Database = {
       /** Public reward-campaign surface (D7 allowlist) */
       get_public_reward_campaign: {
         Args: { _poll_id: string }
+        Returns: Json
+      }
+      /** Atomic campaign-vault creation (server-only) */
+      ensure_reward_campaign_vault_atomic: {
+        Args: Record<string, unknown>
         Returns: Json
       }
     }

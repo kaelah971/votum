@@ -6,6 +6,11 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // DB-backed + WASM crypto integration tests exceed the 5s default when the
+    // full suite runs in parallel (Nimiq WASM init, local Supabase round-trips,
+    // docker psql mutation/restore). 30s is a generous safety upper bound.
+    testTimeout: 30000,
+    hookTimeout: 30000,
   },
   resolve: {
     alias: {

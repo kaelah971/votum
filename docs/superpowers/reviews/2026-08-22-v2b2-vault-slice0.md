@@ -190,6 +190,28 @@ remains a V2B.2.3 decision (as designed). No change required by this spike.
 5. **Custody risk is real and disclosed** — Votum holds per-campaign keys;
    this is custodial reward infrastructure (never marketed as non-custodial).
 
+## 21. Custody operations note (V2B.2.2B)
+
+V2B.2.2B persisted encrypted campaign vaults. Operational custody facts:
+
+- **Master key required for all campaign-vault decryption.** Every persisted
+  vault is AES-256-GCM encrypted under `REWARD_VAULT_MASTER_KEY` (32 random
+  bytes, base64). Vault retrieval/decryption fails closed when the key is
+  missing or invalid.
+- **Losing the master key makes persisted campaign vault keys unrecoverable.**
+  There is no plaintext fallback, no key-escrow, and no recovery path in MVP.
+  Losing `REWARD_VAULT_MASTER_KEY` permanently locks the affected campaign
+  vaults (and their funds, once funded).
+- **Master-key rotation is NOT implemented in MVP.** Rotating requires
+  re-encrypting every persisted vault envelope; no such operation exists yet.
+- **Production master key must live in a real secret-manager / environment
+  boundary** (e.g. an HSM-backed secret, cloud KMS, or a locked secrets store) —
+  never a committed file, never a client value.
+- **Backup / rotation / HSM migration is post-MVP work.**
+- **Campaign-vault custody is explicitly Votum-controlled.** This is custodial
+  reward infrastructure; it must never be described or marketed as
+  non-custodial. Blast radius is per-campaign (one keypair per campaign).
+
 ## 20. Recommendation
 
 **GO — V2B.2.2B (conditional).**
