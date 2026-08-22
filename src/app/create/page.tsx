@@ -23,6 +23,8 @@ import { usePollDraft } from "@/lib/drafts/usePollDraft";
 import { getDraft, ensurePublicationKey, deleteDraft } from "@/lib/drafts/storage";
 import { CATEGORY_LABELS, FORMAT_LABELS, POLL_CATEGORIES, POLL_FORMATS } from "@/lib/polls/taxonomy";
 import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
+import { validateRewardConfigInput } from "@/lib/rewards/config";
+import { formatNimAmount } from "@/lib/nimiq/units";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,6 +41,9 @@ interface PollFormData {
   destinationWallet: string;
   minimumNim: string;
   duration: string;
+  rewardEnabled: boolean;
+  rewardPerParticipant: string;
+  maxRewardedParticipants: string;
 }
 
 interface DecisionErrors {
@@ -69,6 +74,9 @@ const INITIAL_FORM_DATA: PollFormData = {
   destinationWallet: "",
   minimumNim: "",
   duration: "",
+  rewardEnabled: false,
+  rewardPerParticipant: "",
+  maxRewardedParticipants: "",
 };
 
 const QUESTION_MIN_LENGTH = 10;
@@ -180,6 +188,38 @@ function validateSupport(data: PollFormData): SupportErrors {
   return errors;
 }
 
+/**
+ * Client-side (UX-only) reward validation. The server is authoritative.
+ * Mirrors MIN_REWARD_PER_PARTICIPANT_LUNA = 1,000 Luna = 0.01 NIM.
+ */
+function validateReward(data: PollFormData): string | null {
+  if (!data.rewardEnabled) return null;
+
+  const result = validateRewardConfigInput({
+    rewardPerParticipant: data.rewardPerParticipant.trim(),
+    maxRewardedParticipants: Number(data.maxRewardedParticipants.trim()),
+  });
+  return result.ok ? null : result.errors[0] ?? "Invalid reward configuration.";
+}
+
+/** Derived display values from the shared reward domain (server remains authoritative). */
+function computeRewardDisplay(data: PollFormData) {
+  const empty = { principal: null as string | null, feeReserve: null as string | null, total: null as string | null };
+  if (!data.rewardEnabled) return empty;
+
+  const result = validateRewardConfigInput({
+    rewardPerParticipant: data.rewardPerParticipant.trim(),
+    maxRewardedParticipants: Number(data.maxRewardedParticipants.trim()),
+  });
+  if (!result.ok || !result.value) return empty;
+
+  return {
+    principal: formatNimAmount(result.value.rewardPrincipalLuna),
+    feeReserve: formatNimAmount(result.value.feeReserveLuna),
+    total: formatNimAmount(result.value.totalBudgetLuna),
+  };
+}
+
 function hasSupportErrors(errors: SupportErrors): boolean {
   return Object.values(errors).some((v) => v !== undefined);
 }
@@ -260,6 +300,9 @@ export default function CreatePollPage() {
         destinationWallet: existing.destinationWallet,
         minimumNim: existing.minimumNim,
         duration: existing.duration,
+        rewardEnabled: existing.reward?.enabled ?? false,
+        rewardPerParticipant: existing.reward?.rewardPerParticipant ?? "",
+        maxRewardedParticipants: existing.reward?.maxRewardedParticipants ?? "",
       });
       const stepIndex = ["decision", "support", "review"].indexOf(
         existing.currentStep,
@@ -272,7 +315,21 @@ export default function CreatePollPage() {
   // ---- Draft autosave ----
   const { draft, setDraftStatus, saveImmediately } = usePollDraft({
     draftId: initialDraftId,
-    formData,
+    formData: {
+      question: formData.question,
+      context: formData.context,
+      options: formData.options,
+      contributionMode: formData.contributionMode,
+      destinationWallet: formData.destinationWallet,
+      purpose: formData.purpose,
+      minimumNim: formData.minimumNim,
+      duration: formData.duration,
+      reward: {
+        enabled: formData.rewardEnabled,
+        rewardPerParticipant: formData.rewardPerParticipant,
+        maxRewardedParticipants: formData.maxRewardedParticipants,
+      },
+    },
     currentStep: (["decision", "support", "review"] as const)[step],
   });
 
@@ -299,6 +356,8 @@ export default function CreatePollPage() {
     [formData],
   );
   const supportErrors = useMemo(() => validateSupport(formData), [formData]);
+  const rewardError = useMemo(() => validateReward(formData), [formData]);
+  const rewardDisplay = useMemo(() => computeRewardDisplay(formData), [formData]);
 
   // ---- Per-option errors (only shown when showErrors is true) ----
   const optionErrors = useMemo(() => {
@@ -329,8 +388,10 @@ export default function CreatePollPage() {
     if (!draft) return false;
     // Form must be valid (question non-empty, options >= 2)
     if (!formData.question.trim() || formData.options.filter(o => o.trim()).length < 2) return false;
+    // Reward config must be valid when enabled (UX gate; server authoritative)
+    if (formData.rewardEnabled && rewardError) return false;
     return true;
-  }, [publishState, draft, formData]);
+  }, [publishState, draft, formData, rewardError]);
 
   // ---- Publish handler ----
   const handlePublish = useCallback(async () => {
@@ -355,7 +416,7 @@ export default function CreatePollPage() {
     }
 
     // Stage 2: Serialize request
-    const body = {
+    const body: Record<string, unknown> = {
       category: formData.category,
       format: formData.format,
       question: formData.question,
@@ -369,6 +430,13 @@ export default function CreatePollPage() {
       duration: formData.duration,
       idempotencyKey: idKey,
     };
+
+    if (formData.rewardEnabled) {
+      body.reward = {
+        rewardPerParticipant: formData.rewardPerParticipant,
+        maxRewardedParticipants: Number(formData.maxRewardedParticipants),
+      };
+    }
 
     let bodyJson: string;
     try {
@@ -414,7 +482,6 @@ export default function CreatePollPage() {
       }, 1000);
       return;
     }
-
     // Structured errors
     const errorCode = data.error as string;
     const message = data.message as string || "";
@@ -462,6 +529,10 @@ export default function CreatePollPage() {
   function handleContinueFromSupport() {
     const errors = validateSupport(formData);
     if (hasSupportErrors(errors)) {
+      setShowErrors(true);
+      return;
+    }
+    if (formData.rewardEnabled && validateReward(formData)) {
       setShowErrors(true);
       return;
     }
@@ -762,6 +833,105 @@ export default function CreatePollPage() {
               shown as a separate support signal. Contributing more NIM does
               not create additional votes.
             </p>
+          </div>
+
+          {/* ---- Optional Reward (V2B.2.3) ---- */}
+          <div className="flex flex-col gap-3 pt-1">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-ballot-ink">
+                  Reward participants with NIM
+                </p>
+                <p className="text-micro text-quiet-ink">
+                  Optional. Rewards are for participating — never for choosing a
+                  particular option.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={formData.rewardEnabled}
+                onClick={() => updateField("rewardEnabled", !formData.rewardEnabled)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold ${
+                  formData.rewardEnabled ? "bg-signal-gold" : "bg-border"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    formData.rewardEnabled ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {formData.rewardEnabled && (
+              <div className="flex flex-col gap-3 rounded-lg border border-border bg-soft-fog/40 p-3">
+                <p className="text-secondary text-quiet-ink">
+                  Participants earn for participating, regardless of which option
+                  they choose.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <Input
+                      label="Reward per participant"
+                      hint="Each eligible participant receives this exact amount."
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0.01"
+                      value={formData.rewardPerParticipant}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                        updateField("rewardPerParticipant", e.target.value)
+                      }
+                    />
+                    <p className="text-micro text-quiet-ink">NIM</p>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Input
+                      label="Maximum rewarded participants"
+                      hint="Rewards stop once this many participants have earned."
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="100"
+                      value={formData.maxRewardedParticipants}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                        updateField("maxRewardedParticipants", e.target.value)
+                      }
+                    />
+                  </div>
+                </div>
+
+                {rewardError && (
+                  <p
+                    className="text-micro text-reject-red"
+                    role="alert"
+                  >
+                    {rewardError}
+                  </p>
+                )}
+
+                {!rewardError && rewardDisplay.total && (
+                  <dl className="flex flex-col gap-1 text-secondary text-quiet-ink">
+                    <div className="flex items-center justify-between">
+                      <dt className="text-micro">Reward principal</dt>
+                      <dd className="text-micro font-medium">{rewardDisplay.principal}</dd>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <dt className="text-micro">Estimated fee reserve</dt>
+                      <dd className="text-micro font-medium">{rewardDisplay.feeReserve}</dd>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-divider pt-1">
+                      <dt className="text-sm font-medium">Total required funding</dt>
+                      <dd className="text-sm font-medium">{rewardDisplay.total}</dd>
+                    </div>
+                  </dl>
+                )}
+
+                <p className="text-micro text-quiet-ink">
+                  You will fund this reward budget before the poll can be
+                  advertised as rewarded.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* ---- Navigation ---- */}

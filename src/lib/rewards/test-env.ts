@@ -15,6 +15,49 @@
  */
 import { readFileSync } from "node:fs";
 
+/** Hostnames that are acceptable for local integration tests. */
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
+/** True when a URL points at a local dev Supabase instance. */
+export function isLocalSupabaseUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  const host = hostnameOf(url);
+  return (
+    LOCAL_HOSTNAMES.has(host) ||
+    /^192\.168\./.test(host) ||
+    /^10\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}
+
+/**
+ * Fail-closed guard for local integration tests.
+ *
+ * Throws if the effective Supabase URL is NOT a local dev instance. This
+ * prevents any local V2B checkpoint test from accidentally issuing DB reads
+ * or writes against a hosted Supabase project. Hostname-only check (never
+ * prints credentials or values).
+ */
+export function assertLocalSupabaseForTests(): string {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!isLocalSupabaseUrl(url)) {
+    throw new Error(
+      "integration test refused: NEXT_PUBLIC_SUPABASE_URL must point at a local " +
+        "Supabase instance (localhost / 127.0.0.1 / LAN private range); got " +
+        (url ? hostnameOf(url) || "unparseable" : "unset"),
+    );
+  }
+  return url as string;
+}
+
 export function loadLocalEnvForTests(): void {
   const raw = readFileSync(".env.local", "utf8");
   const parsed: Record<string, string> = {};
@@ -30,4 +73,6 @@ export function loadLocalEnvForTests(): void {
   if (parsed.NEXT_PUBLIC_SUPABASE_URL) {
     process.env.NEXT_PUBLIC_SUPABASE_URL = parsed.NEXT_PUBLIC_SUPABASE_URL;
   }
+  // Fail closed: local integration tests must never reach a hosted DB.
+  assertLocalSupabaseForTests();
 }

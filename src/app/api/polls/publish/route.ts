@@ -5,6 +5,8 @@ import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 import { nimDecimalToLuna } from "@/lib/nimiq/units";
 import { isPollCategory, isPollFormat } from "@/lib/polls/taxonomy";
+import { validateRewardConfigInput } from "@/lib/rewards/config";
+import { ensureCampaignVault } from "@/lib/rewards/vault-service";
 
 export const runtime = "nodejs";
 
@@ -59,6 +61,16 @@ interface ValidatedPayload {
   duration: string;
   options: string[];
   idempotencyKey: string;
+  /** Optional rewarded-participation configuration (validated, immutable terms). */
+  reward: ValidatedRewardConfigPayload | null;
+}
+
+interface ValidatedRewardConfigPayload {
+  rewardPerParticipantLuna: bigint;
+  maxRewardedParticipants: number;
+  rewardPrincipalLuna: bigint;
+  feeReserveLuna: bigint;
+  totalBudgetLuna: bigint;
 }
 
 /**
@@ -229,6 +241,36 @@ function validatePayload(
     });
   }
 
+  // ── reward (optional rewarded-participation configuration) ────────
+  let reward: ValidatedRewardConfigPayload | null = null;
+  const rewardRaw = body.reward as Record<string, unknown> | undefined;
+  if (rewardRaw !== undefined && rewardRaw !== null) {
+    const rewardValidation = validateRewardConfigInput({
+      rewardPerParticipant:
+        typeof rewardRaw.rewardPerParticipant === "string"
+          ? rewardRaw.rewardPerParticipant
+          : "",
+      maxRewardedParticipants:
+        typeof rewardRaw.maxRewardedParticipants === "number"
+          ? rewardRaw.maxRewardedParticipants
+          : Number.NaN,
+    });
+    if (!rewardValidation.ok || !rewardValidation.value) {
+      errors.push({
+        field: "reward",
+        message: "Invalid reward configuration.",
+      });
+    } else {
+      reward = {
+        rewardPerParticipantLuna: rewardValidation.value.rewardPerParticipantLuna,
+        maxRewardedParticipants: rewardValidation.value.maxRewardedParticipants,
+        rewardPrincipalLuna: rewardValidation.value.rewardPrincipalLuna,
+        feeReserveLuna: rewardValidation.value.feeReserveLuna,
+        totalBudgetLuna: rewardValidation.value.totalBudgetLuna,
+      };
+    }
+  }
+
   if (errors.length > 0) return { valid: false, errors };
 
   return {
@@ -247,6 +289,7 @@ function validatePayload(
       duration, // raw duration key for fingerprint
       options: options.map((o: unknown) => String(o).trim()),
       idempotencyKey,
+      reward,
     },
   };
 }
@@ -355,7 +398,7 @@ export async function POST(request: Request) {
   log("validation_passed", { requestId });
 
   // 6. Build request fingerprint for content-aware idempotency
-  const fingerprintPayload = {
+  const fingerprintPayload: Record<string, unknown> = {
     category: d.category,
     format: d.format,
     question: d.question,
@@ -368,6 +411,14 @@ export async function POST(request: Request) {
     fairnessMode: d.fairnessMode,
     duration: d.duration,
   };
+  // Preserve the legacy fingerprint for reward-off requests. Reward-enabled
+  // requests include their economic terms so the idempotency key is content-bound.
+  if (d.reward) {
+    fingerprintPayload.reward = {
+      rewardPerParticipantLuna: String(d.reward.rewardPerParticipantLuna),
+      maxRewardedParticipants: d.reward.maxRewardedParticipants,
+    };
+  }
   const fingerprintJson = JSON.stringify(
     fingerprintPayload,
     Object.keys(fingerprintPayload).sort(),
@@ -479,6 +530,74 @@ export async function POST(request: Request) {
     const status = isReplay ? 200 : 201;
     log("published", { requestId, status, result_kind: pollResult.result_kind });
 
+    // Optional rewarded-participation configuration → create a `configured`
+    // campaign (one per poll) + bind one vault. The reward is NOT advertised
+    // as funded — the response carries `rewardFundingRequired` so the client
+    // drives funding before the poll is presented as rewarded.
+    let rewardResult: {
+      rewardFundingRequired: boolean;
+      campaignId: string | null;
+      state: string | null;
+      vaultAddressHex: string | null;
+    } | null = null;
+
+    if (pollResult.id && d.reward) {
+      try {
+        const { data: campaign } = await admin
+          .from("reward_campaigns")
+          .select("id, status")
+          .eq("poll_id", pollResult.id)
+          .maybeSingle();
+
+        let campaignId: string;
+        let campaignState: string;
+        if (campaign) {
+          campaignId = campaign.id;
+          campaignState = campaign.status;
+        } else {
+          const { data: inserted, error: insErr } = await admin
+            .from("reward_campaigns")
+            .insert({
+              poll_id: pollResult.id,
+              creator_wallet: creatorWallet,
+              reward_per_participant_luna: Number(d.reward.rewardPerParticipantLuna),
+              max_rewarded_participants: d.reward.maxRewardedParticipants,
+              reward_principal_luna: Number(d.reward.rewardPrincipalLuna),
+              fee_reserve_luna: Number(d.reward.feeReserveLuna),
+              total_budget_luna: Number(d.reward.totalBudgetLuna),
+              status: "configured",
+            })
+            .select("id, status")
+            .single();
+          if (insErr || !inserted) {
+            throw new Error("reward_campaign_insert_failed");
+          }
+          campaignId = inserted.id;
+          campaignState = inserted.status;
+        }
+
+        let vaultAddressHex: string | null = null;
+        try {
+          const vault = await ensureCampaignVault(campaignId);
+          vaultAddressHex = vault.vaultAddressHex;
+        } catch {
+          // campaign exists; vault binding failed — surface as non-fatal flag
+        }
+
+        rewardResult = {
+          rewardFundingRequired: campaignState !== "funded",
+          campaignId,
+          state: campaignState,
+          vaultAddressHex,
+        };
+      } catch (err) {
+        log("reward_config_failed", {
+          requestId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     return NextResponse.json(
       {
         poll: {
@@ -489,6 +608,7 @@ export async function POST(request: Request) {
           endsAt,
         },
         resultKind: pollResult.result_kind,
+        ...(rewardResult ? { reward: rewardResult } : {}),
       },
       { status },
     );

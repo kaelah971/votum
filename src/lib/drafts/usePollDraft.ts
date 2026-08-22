@@ -13,6 +13,11 @@ interface DraftFormData {
   destinationWallet: string;
   minimumNim: string;
   duration: string;
+  reward?: {
+    enabled: boolean;
+    rewardPerParticipant?: string;
+    maxRewardedParticipants?: string;
+  };
 }
 
 interface UsePollDraftOptions {
@@ -64,6 +69,7 @@ export function usePollDraft({
         purpose: data.purpose,
         minimumNim: data.minimumNim,
         duration: data.duration,
+        ...(data.reward ? { reward: data.reward } : {}),
         currentStep: step,
       });
     }
@@ -109,7 +115,8 @@ export function usePollDraft({
       data.purpose.trim() ||
       data.destinationWallet.trim() ||
       data.minimumNim.trim() ||
-      data.duration;
+      data.duration ||
+      (data.reward?.enabled ?? false);
     if (!hasContent) return;
 
     const newId = generateId();
@@ -125,6 +132,7 @@ export function usePollDraft({
       purpose: data.purpose,
       minimumNim: data.minimumNim,
       duration: data.duration,
+      ...(data.reward ? { reward: data.reward } : {}),
       category: "communities",
       format: "decision",
       currentStep: stepRef.current,

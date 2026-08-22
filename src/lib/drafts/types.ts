@@ -26,4 +26,10 @@ export interface PollDraft {
   updatedAt: string;
   /** Unique key used for idempotent poll publication. Set once, used once. */
   publicationIdempotencyKey?: string;
+  /** Optional rewarded-participation configuration (V2B.2.3). */
+  reward?: {
+    enabled: boolean;
+    rewardPerParticipant?: string;
+    maxRewardedParticipants?: string;
+  };
 }
