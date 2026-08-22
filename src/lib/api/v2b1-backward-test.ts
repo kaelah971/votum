@@ -14,7 +14,7 @@
 import "./load-local-env";
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { KeyPair } from "@nimiq/core";
+import { KeyPair, Address } from "@nimiq/core";
 
 let passed = 0;
 let failed = 0;
@@ -283,9 +283,12 @@ async function testVerificationCrypto(wallets: string[]) {
   const sessionCheck = await fetch(`${NEXT_BASE}/api/wallet-proof/session`, {
     headers: { Cookie: `votum_session=${sessionA.cookie}` },
   }).then((r) => r.json());
+  // The session endpoint returns the user-friendly NQ form so the client can
+  // compare it against the SDK's activeAccount (see #21 canonical fix).
+  const sessionNqAddress = Address.fromString(walletA).toUserFriendlyAddress();
   check(sessionCheck.verified === true, "GET /api/wallet-proof/session → verified");
   check(
-    sessionCheck.walletAddress?.trim().toLowerCase() === walletA,
+    sessionCheck.walletAddress?.trim().toLowerCase() === sessionNqAddress.trim().toLowerCase(),
     "session reports the verified wallet",
   );
   const bootNoSession = await apiPost("/api/profile/bootstrap", {});
