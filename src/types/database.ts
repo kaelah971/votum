@@ -259,6 +259,302 @@ export type Database = {
         }
         Relationships: []
       }
+      reward_campaigns: {
+        Row: {
+          asset: string
+          closed_at: string | null
+          created_at: string
+          creator_wallet: string
+          fee_reserve_luna: number
+          fee_spent_luna: number
+          first_reservation_at: string | null
+          funded_amount_luna: number
+          funded_at: string | null
+          id: string
+          max_rewarded_participants: number
+          paid_amount_luna: number
+          poll_id: string
+          refundable_amount_luna: number
+          refundable_excess_luna: number
+          refunded_at: string | null
+          reward_per_participant_luna: number
+          reward_principal_luna: number
+          rewarded_participant_count: number
+          status: string
+          total_budget_luna: number
+          updated_at: string
+          vault_key_ref: string | null
+          vault_wallet: string | null
+        }
+        Insert: {
+          asset?: string
+          closed_at?: string | null
+          created_at?: string
+          creator_wallet: string
+          fee_reserve_luna?: number
+          fee_spent_luna?: number
+          first_reservation_at?: string | null
+          funded_amount_luna?: number
+          funded_at?: string | null
+          id?: string
+          max_rewarded_participants: number
+          paid_amount_luna?: number
+          poll_id: string
+          refundable_amount_luna?: number
+          refundable_excess_luna?: number
+          refunded_at?: string | null
+          reward_per_participant_luna: number
+          reward_principal_luna: number
+          rewarded_participant_count?: number
+          status?: string
+          total_budget_luna: number
+          updated_at?: string
+          vault_key_ref?: string | null
+          vault_wallet?: string | null
+        }
+        Update: {
+          asset?: string
+          closed_at?: string | null
+          created_at?: string
+          creator_wallet?: string
+          fee_reserve_luna?: number
+          fee_spent_luna?: number
+          first_reservation_at?: string | null
+          funded_amount_luna?: number
+          funded_at?: string | null
+          id?: string
+          max_rewarded_participants?: number
+          paid_amount_luna?: number
+          poll_id?: string
+          refundable_amount_luna?: number
+          refundable_excess_luna?: number
+          refunded_at?: string | null
+          reward_per_participant_luna?: number
+          reward_principal_luna?: number
+          rewarded_participant_count?: number
+          status?: string
+          total_budget_luna?: number
+          updated_at?: string
+          vault_key_ref?: string | null
+          vault_wallet?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reward_campaigns_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: true
+            referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reward_funding_transactions: {
+        Row: {
+          amount_luna: number
+          block_number: number | null
+          campaign_id: string
+          confirmed_at: string | null
+          confirmed_transaction_hash: string | null
+          confirmation_deadline: string | null
+          created_at: string
+          creator_wallet: string
+          id: string
+          reference: string
+          status: string
+          submitted_transaction_hash: string | null
+          transaction_timestamp: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount_luna: number
+          block_number?: number | null
+          campaign_id: string
+          confirmed_at?: string | null
+          confirmed_transaction_hash?: string | null
+          confirmation_deadline?: string | null
+          created_at?: string
+          creator_wallet: string
+          id?: string
+          reference: string
+          status?: string
+          submitted_transaction_hash?: string | null
+          transaction_timestamp?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount_luna?: number
+          block_number?: number | null
+          campaign_id?: string
+          confirmed_at?: string | null
+          confirmed_transaction_hash?: string | null
+          confirmation_deadline?: string | null
+          created_at?: string
+          creator_wallet?: string
+          id?: string
+          reference?: string
+          status?: string
+          submitted_transaction_hash?: string | null
+          transaction_timestamp?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reward_funding_transactions_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "reward_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reward_payout_attempts: {
+        Row: {
+          attempt_number: number
+          broadcast_at: string | null
+          confirmed_at: string | null
+          created_at: string
+          error_code: string | null
+          id: string
+          receipt_id: string
+          status: string
+          transaction_hash: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempt_number: number
+          broadcast_at?: string | null
+          confirmed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          id?: string
+          receipt_id: string
+          status?: string
+          transaction_hash?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempt_number?: number
+          broadcast_at?: string | null
+          confirmed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          id?: string
+          receipt_id?: string
+          status?: string
+          transaction_hash?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reward_payout_attempts_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: false
+            referencedRelation: "reward_receipts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reward_receipts: {
+        Row: {
+          amount_luna: number
+          campaign_id: string
+          created_at: string
+          id: string
+          paid_at: string | null
+          participant_wallet: string
+          poll_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount_luna: number
+          campaign_id: string
+          created_at?: string
+          id?: string
+          paid_at?: string | null
+          participant_wallet: string
+          poll_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount_luna?: number
+          campaign_id?: string
+          created_at?: string
+          id?: string
+          paid_at?: string | null
+          participant_wallet?: string
+          poll_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reward_receipts_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "reward_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reward_receipts_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reward_refunds: {
+        Row: {
+          amount_luna: number
+          block_number: number | null
+          campaign_id: string
+          confirmed_at: string | null
+          created_at: string
+          creator_wallet: string
+          id: string
+          status: string
+          transaction_hash: string | null
+          transaction_timestamp: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount_luna: number
+          block_number?: number | null
+          campaign_id: string
+          confirmed_at?: string | null
+          created_at?: string
+          creator_wallet: string
+          id?: string
+          status?: string
+          transaction_hash?: string | null
+          transaction_timestamp?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount_luna?: number
+          block_number?: number | null
+          campaign_id?: string
+          confirmed_at?: string | null
+          created_at?: string
+          creator_wallet?: string
+          id?: string
+          status?: string
+          transaction_hash?: string | null
+          transaction_timestamp?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reward_refunds_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "reward_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -285,6 +581,11 @@ export type Database = {
       /** Public participant profile resolved by canonical handle */
       get_participant_public_profile_by_handle: {
         Args: { _handle: string }
+        Returns: Json
+      }
+      /** Public reward-campaign surface (D7 allowlist) */
+      get_public_reward_campaign: {
+        Args: { _poll_id: string }
         Returns: Json
       }
     }

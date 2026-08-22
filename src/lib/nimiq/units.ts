@@ -1,6 +1,6 @@
-const LUNA_PER_NIM = BigInt(100000);
+export const LUNA_PER_NIM = BigInt(100000);
 
-const PG_BIGINT_MAX = BigInt("9223372036854775807");
+export const PG_BIGINT_MAX = BigInt("9223372036854775807");
 
 /**
  * Convert a NIM decimal string to Luna as BigInt.
