@@ -8,6 +8,7 @@ import {
 } from "@/lib/rewards/config";
 import { ensureCampaignVault } from "@/lib/rewards/vault-service";
 import { lunaToNim } from "@/lib/nimiq/units";
+import { toUserFriendlyAddress } from "@/lib/nimiq/server-crypto";
 
 export const runtime = "nodejs";
 
@@ -32,11 +33,28 @@ interface CampaignRow {
   vault_wallet: string | null;
 }
 
+interface FundingSummaryRow {
+  id: string;
+  campaign_id: string;
+  reference: string;
+  amount_luna: number;
+  reward_principal_luna: number | null;
+  fee_reserve_luna: number | null;
+  status: string;
+  submitted_transaction_hash: string | null;
+  confirmation_deadline: string | null;
+  created_at: string;
+}
+
 /**
  * Creator-only campaign configuration summary. Safe outward shape — no
  * ciphertext, IV, auth tag, envelope, or key material.
  */
-function toConfigSummary(campaign: CampaignRow, vaultAddressHex: string | null) {
+function toConfigSummary(
+  campaign: CampaignRow,
+  vaultAddressHex: string | null,
+  funding: FundingSummaryRow | null = null,
+) {
   return {
     campaignId: campaign.id,
     pollId: campaign.poll_id,
@@ -59,6 +77,25 @@ function toConfigSummary(campaign: CampaignRow, vaultAddressHex: string | null) 
       nim: lunaToNim(BigInt(campaign.total_budget_luna)),
     },
     vaultAddressHex,
+    vaultAddressNq: vaultAddressHex ? toUserFriendlyAddress(vaultAddressHex) : null,
+    funding: funding
+      ? {
+          fundingIntentId: funding.id,
+          campaignId: funding.campaign_id,
+          reference: funding.reference,
+          status: funding.status,
+          amountLuna: String(funding.amount_luna),
+          rewardPrincipalLuna: funding.reward_principal_luna === null
+            ? null
+            : String(funding.reward_principal_luna),
+          feeReserveLuna: funding.fee_reserve_luna === null
+            ? null
+            : String(funding.fee_reserve_luna),
+          submittedTransactionHash: funding.submitted_transaction_hash,
+          confirmationDeadline: funding.confirmation_deadline,
+          createdAt: funding.created_at,
+        }
+      : null,
     funded: false, // configuration only — never advertised as funded until chain confirmation
   };
 }
@@ -350,7 +387,21 @@ export async function GET(
     vaultAddressHex = (vault as { vault_address_hex: string }).vault_address_hex;
   }
 
+  const { data: funding } = await admin
+    .from("reward_funding_transactions")
+    .select(
+      "id, campaign_id, reference, amount_luna, reward_principal_luna, fee_reserve_luna, status, submitted_transaction_hash, confirmation_deadline, created_at",
+    )
+    .eq("campaign_id", (campaign as { id: string }).id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return NextResponse.json({
-    config: toConfigSummary(campaign as unknown as CampaignRow, vaultAddressHex),
+    config: toConfigSummary(
+      campaign as unknown as CampaignRow,
+      vaultAddressHex,
+      (funding as FundingSummaryRow | null) ?? null,
+    ),
   });
 }

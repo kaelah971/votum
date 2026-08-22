@@ -3,6 +3,7 @@ import { ProductShell } from "@/components/layout/ProductShell";
 import { Card } from "@/components/ui/Card";
 import { WalletButton } from "@/components/ui/WalletButton";
 import { WalletIconLarge } from "@/components/ui/icons";
+import { RewardFundingPanel } from "@/components/creator/RewardFundingPanel";
 
 /**
  * Creator poll detail route — truthful default state.
@@ -19,8 +20,7 @@ export default async function MyPollDetailPage({
 }: {
   params: Promise<{ pollId: string }>;
 }) {
-  // URL params are received but NOT used to fabricate data.
-  void params;
+  const { pollId } = await params;
 
   return (
     <ProductShell>
@@ -50,9 +50,11 @@ export default async function MyPollDetailPage({
           <WalletButton />
         </div>
         <p className="text-micro text-quiet-ink text-center mt-6">
-          Poll management will be enabled during data integration.
+          Reward campaign funding appears below when this poll has a configured campaign.
         </p>
       </Card>
+
+      <RewardFundingPanel pollId={pollId} />
 
       {/* Back to My Polls link */}
       <div className="flex justify-center mt-8">

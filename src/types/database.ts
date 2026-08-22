@@ -359,11 +359,15 @@ export type Database = {
           created_at: string
           creator_wallet: string
           id: string
+          fee_reserve_luna: number | null
           reference: string
+          reward_principal_luna: number | null
           status: string
           submitted_transaction_hash: string | null
+          submitted_at: string | null
           transaction_timestamp: string | null
           updated_at: string
+          vault_wallet: string | null
         }
         Insert: {
           amount_luna: number
@@ -374,12 +378,16 @@ export type Database = {
           confirmation_deadline?: string | null
           created_at?: string
           creator_wallet: string
+          fee_reserve_luna?: number | null
           id?: string
           reference: string
+          reward_principal_luna?: number | null
           status?: string
           submitted_transaction_hash?: string | null
+          submitted_at?: string | null
           transaction_timestamp?: string | null
           updated_at?: string
+          vault_wallet?: string | null
         }
         Update: {
           amount_luna?: number
@@ -390,12 +398,16 @@ export type Database = {
           confirmation_deadline?: string | null
           created_at?: string
           creator_wallet?: string
+          fee_reserve_luna?: number | null
           id?: string
           reference?: string
+          reward_principal_luna?: number | null
           status?: string
           submitted_transaction_hash?: string | null
+          submitted_at?: string | null
           transaction_timestamp?: string | null
           updated_at?: string
+          vault_wallet?: string | null
         }
         Relationships: [
           {
@@ -634,6 +646,16 @@ export type Database = {
       }
       /** Atomic campaign-vault creation (server-only) */
       ensure_reward_campaign_vault_atomic: {
+        Args: Record<string, unknown>
+        Returns: Json
+      }
+      /** Atomically create/reuse one active campaign funding intent. */
+      begin_reward_funding_atomic: {
+        Args: Record<string, unknown>
+        Returns: Json
+      }
+      /** Atomically bind a creator-submitted transaction hash to an intent. */
+      bind_reward_funding_transaction_atomic: {
         Args: Record<string, unknown>
         Returns: Json
       }

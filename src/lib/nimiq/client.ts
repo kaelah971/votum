@@ -330,3 +330,49 @@ export async function requestAccounts(
     return { error: safeErrorSummary(err) };
   }
 }
+
+export interface BasicTransactionWithData {
+  recipient: string;
+  value: number;
+  data: string;
+}
+
+/**
+ * Send a basic Nimiq Pay transaction without allowing SDK rejection objects to
+ * escape into the app. A returned hash is a broadcast callback only; callers
+ * must bind it server-side and must not treat it as chain confirmation.
+ */
+export async function sendBasicTransactionWithData(
+  provider: NimiqProvider,
+  transaction: BasicTransactionWithData,
+): Promise<
+  | { transactionHash: string }
+  | { denied: true }
+  | { error: string }
+> {
+  try {
+    const sendPromise = provider.sendBasicTransactionWithData(transaction);
+    sendPromise.catch(() => {
+      /* handled defensively; the await below observes the rejection */
+    });
+
+    const result = await sendPromise;
+    if (typeof result === "string") {
+      if (!/^[0-9a-fA-F]{64}$/.test(result)) {
+        return { error: "Invalid transaction hash returned by wallet" };
+      }
+      return { transactionHash: result.toLowerCase() };
+    }
+
+    const { type, message } = result.error;
+    if (isPermissionDenial(type ?? "", message ?? "")) {
+      return { denied: true };
+    }
+    return { error: message || type || "Wallet transaction failed" };
+  } catch (err: unknown) {
+    if (isDenialFromThrown(err)) {
+      return { denied: true };
+    }
+    return { error: safeErrorSummary(err) };
+  }
+}

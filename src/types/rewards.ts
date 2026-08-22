@@ -48,8 +48,12 @@ export interface RewardFundingTransactionRow {
   submitted_transaction_hash: string | null;
   confirmed_transaction_hash: string | null;
   amount_luna: number;
+  vault_wallet: string | null;
+  reward_principal_luna: number | null;
+  fee_reserve_luna: number | null;
   status: RewardFundingState;
   confirmation_deadline: string | null;
+  submitted_at: string | null;
   block_number: number | null;
   transaction_timestamp: string | null;
   confirmed_at: string | null;

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { signMessage } from "@/lib/nimiq/client";
+import {
+  sendBasicTransactionWithData,
+  signMessage,
+} from "@/lib/nimiq/client";
 
 // Representative safe cancellation objects matching the physical SDK shape
 // observed on Nimiq Pay. No secrets — these are just denial markers.
@@ -62,5 +65,59 @@ describe("signMessage — cancellation safety", () => {
 
     const result = await signMessage(provider, "challenge message");
     expect(result).toHaveProperty("denied", true);
+  });
+});
+
+describe("sendBasicTransactionWithData — funding safety", () => {
+  const transaction = {
+    recipient: "NQ00 0000 0000 0000 0000 0000 0000 0000 0000",
+    value: 1000,
+    data: "votum:fund:test",
+  };
+
+  it("returns a normalized hash from a mocked wallet", async () => {
+    const provider = {
+      sendBasicTransactionWithData: vi.fn(() =>
+        Promise.resolve("A".repeat(64)),
+      ),
+    } as unknown as Parameters<typeof sendBasicTransactionWithData>[0];
+
+    await expect(sendBasicTransactionWithData(provider, transaction)).resolves.toEqual({
+      transactionHash: "a".repeat(64),
+    });
+  });
+
+  for (const shape of CANCELLATION_VARIANTS) {
+    it("handles plain-object wallet cancellation without an unhandled rejection", async () => {
+      window.addEventListener("unhandledrejection", onUnhandled);
+      const provider = {
+        sendBasicTransactionWithData: vi.fn(() => Promise.reject(shape)),
+      } as unknown as Parameters<typeof sendBasicTransactionWithData>[0];
+
+      await expect(sendBasicTransactionWithData(provider, transaction)).resolves.toEqual({
+        denied: true,
+      });
+      expect(unhandled).toHaveLength(0);
+    });
+  }
+
+  it("keeps genuine wallet errors as recoverable errors", async () => {
+    const provider = {
+      sendBasicTransactionWithData: vi.fn(() => Promise.reject(GENUINE_ERROR)),
+    } as unknown as Parameters<typeof sendBasicTransactionWithData>[0];
+
+    const result = await sendBasicTransactionWithData(provider, transaction);
+    expect(result).toHaveProperty("error");
+    expect(result).not.toHaveProperty("denied");
+  });
+
+  it("rejects malformed wallet hash callbacks", async () => {
+    const provider = {
+      sendBasicTransactionWithData: vi.fn(() => Promise.resolve("not-a-hash")),
+    } as unknown as Parameters<typeof sendBasicTransactionWithData>[0];
+
+    await expect(sendBasicTransactionWithData(provider, transaction)).resolves.toEqual({
+      error: "Invalid transaction hash returned by wallet",
+    });
   });
 });
