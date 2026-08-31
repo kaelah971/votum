@@ -8,23 +8,23 @@ const tabs = ["Creator flow", "Voter flow", "Fairness"] as const;
 
 const creatorSteps = [
   { label: "Question", copy: "A creator writes a clear decision and adds two to six meaningful choices." },
-  { label: "Support", copy: "The creator defines what NIM support is for, the minimum amount, and the disclosed recipient wallet." },
+  { label: "Rewards", copy: "The creator chooses free voting or defines a fixed reward budget for eligible participants." },
   { label: "Publish", copy: "Votum publishes the poll and makes it available for verified community participation." },
-  { label: "Understand", copy: "The creator tracks votes, confirmed NIM support, option performance, and recent activity." },
+  { label: "Understand", copy: "The creator tracks votes, option performance, and the status of any reward campaign." },
 ];
 
 const voterSteps = [
   { label: "Discover", copy: "A participant opens a live poll from Explore or a shared link." },
   { label: "Verify", copy: "The participant connects and verifies a Nimiq wallet before voting." },
   { label: "Vote", copy: "One verified wallet selects one option and receives exactly one vote." },
-  { label: "Support", copy: "The participant may separately send NIM support through Nimiq Pay. Sending more NIM never creates more votes." },
+  { label: "Reward", copy: "If participation is funded, eligible participants can earn the same predefined reward regardless of their choice." },
 ];
 
 const fairnessItems = [
   { label: "One wallet · one vote", copy: "Each verified wallet can vote only once in a poll." },
-  { label: "Separate signals", copy: "Vote count shows breadth of participation. NIM support shows depth of economic support." },
-  { label: "Direct support", copy: "Confirmed NIM moves directly to the poll's disclosed recipient. Votum does not custody the funds." },
-  { label: "Verifiable results", copy: "Votes are database-enforced and NIM support is confirmed against included Nimiq transactions." },
+  { label: "Separate signals", copy: "Vote count shows verified participation. Any reward campaign remains separate from the selected option." },
+  { label: "Fixed rewards", copy: "A funded campaign uses one predefined reward per eligible participant, independent of the result." },
+  { label: "Verifiable results", copy: "Votes are database-enforced and one verified wallet can participate only once." },
 ];
 
 export function HowItWorksTabs() {
@@ -64,8 +64,8 @@ export function HowItWorksTabs() {
       <div className="mt-6 rounded-[22px] border border-fairness-amber/20 bg-fairness-amber/[0.04] p-5">
         <FairnessLabel rule="One wallet - one vote" />
         <p className="mt-3 text-body text-quiet-ink">
-          Contributing more NIM never silently creates more votes. Breadth of
-          participation and depth of support stay visible as separate signals.
+           Every verified wallet gets one vote. Rewards, when funded, never
+           depend on choosing a particular option.
         </p>
       </div>
     </Card>

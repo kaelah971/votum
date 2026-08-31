@@ -13,9 +13,9 @@ export type ExploreSortMode = "grouped" | "recent" | "closing";
 
 export type EffectiveExploreStatus = "live" | "closed";
 
-export interface EnrichedPollView extends PollView {
+export type EnrichedPollView = PollView & {
   effectiveStatus: EffectiveExploreStatus;
-}
+};
 
 export interface GroupedPolls {
   closingSoon: EnrichedPollView[];

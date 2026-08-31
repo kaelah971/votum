@@ -67,8 +67,8 @@ export function MarketingNav() {
 
         <div className="flex items-center gap-2 justify-self-end">
           <FrameStatPill
-            value="+127"
-            label="NIM signalled"
+            value="1"
+            label="vote per wallet"
             className="hidden lg:inline-flex"
           />
           <Link
@@ -83,4 +83,3 @@ export function MarketingNav() {
     </nav>
   );
 }
-

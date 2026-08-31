@@ -145,17 +145,19 @@ export type Database = {
           created_at: string
           creator_wallet: string
           description: string | null
-          destination_purpose: string
-          destination_wallet: string
+          destination_purpose: string | null
+          destination_wallet: string | null
+          economic_model: "legacy_support" | "reward_first"
           ends_at: string
           fairness_mode: string
           format: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
           id: string
           is_public: boolean
-          min_nim_luna: number
-          mode: string
+          min_nim_luna: number | null
+          mode: string | null
           published_at: string | null
           question: string
+          reward_mode: "free" | "rewarded" | null
           starts_at: string | null
           status: string
           updated_at: string
@@ -165,17 +167,19 @@ export type Database = {
           created_at?: string
           creator_wallet: string
           description?: string | null
-          destination_purpose: string
-          destination_wallet: string
+          destination_purpose?: string | null
+          destination_wallet?: string | null
+          economic_model?: "legacy_support" | "reward_first"
           ends_at: string
           fairness_mode?: string
           format?: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
           id?: string
           is_public?: boolean
-          min_nim_luna: number
-          mode: string
+          min_nim_luna?: number | null
+          mode?: string | null
           published_at?: string | null
           question: string
+          reward_mode?: "free" | "rewarded" | null
           starts_at?: string | null
           status?: string
           updated_at?: string
@@ -185,17 +189,19 @@ export type Database = {
           created_at?: string
           creator_wallet?: string
           description?: string | null
-          destination_purpose?: string
-          destination_wallet?: string
+          destination_purpose?: string | null
+          destination_wallet?: string | null
+          economic_model?: "legacy_support" | "reward_first"
           ends_at?: string
           fairness_mode?: string
           format?: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
           id?: string
           is_public?: boolean
-          min_nim_luna?: number
-          mode?: string
+          min_nim_luna?: number | null
+          mode?: string | null
           published_at?: string | null
           question?: string
+          reward_mode?: "free" | "rewarded" | null
           starts_at?: string | null
           status?: string
           updated_at?: string
@@ -268,6 +274,8 @@ export type Database = {
           fee_reserve_luna: number
           fee_spent_luna: number
           first_reservation_at: string | null
+          funding_mode: "creator" | "community"
+          funding_wallet: string
           funded_amount_luna: number
           funded_at: string | null
           id: string
@@ -294,6 +302,8 @@ export type Database = {
           fee_reserve_luna?: number
           fee_spent_luna?: number
           first_reservation_at?: string | null
+          funding_mode?: "creator" | "community"
+          funding_wallet: string
           funded_amount_luna?: number
           funded_at?: string | null
           id?: string
@@ -320,6 +330,8 @@ export type Database = {
           fee_reserve_luna?: number
           fee_spent_luna?: number
           first_reservation_at?: string | null
+          funding_mode?: "creator" | "community"
+          funding_wallet?: string
           funded_amount_luna?: number
           funded_at?: string | null
           id?: string
@@ -360,6 +372,7 @@ export type Database = {
           creator_wallet: string
           id: string
           fee_reserve_luna: number | null
+          funder_wallet: string
           reference: string
           reward_principal_luna: number | null
           status: string
@@ -379,6 +392,7 @@ export type Database = {
           created_at?: string
           creator_wallet: string
           fee_reserve_luna?: number | null
+          funder_wallet: string
           id?: string
           reference: string
           reward_principal_luna?: number | null
@@ -399,6 +413,7 @@ export type Database = {
           created_at?: string
           creator_wallet?: string
           fee_reserve_luna?: number | null
+          funder_wallet?: string
           id?: string
           reference?: string
           reward_principal_luna?: number | null

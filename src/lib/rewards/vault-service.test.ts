@@ -115,6 +115,8 @@ async function createCampaign(
   const { data, error } = await admin.from("reward_campaigns").insert({
     poll_id: pollId,
     creator_wallet: CREATOR,
+    funding_mode: "creator",
+    funding_wallet: CREATOR,
     reward_per_participant_luna: 1000,
     max_rewarded_participants: 10,
     reward_principal_luna: 10000,

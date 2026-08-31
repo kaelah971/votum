@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "My Polls",
   description:
-    "View and manage the Votum Polls created by your wallet. Track participation, NIM signal, and community results.",
+    "View and manage the Votum polls created by your wallet. Track verified participation, reward status, and community results.",
 };
 
 /**

@@ -27,7 +27,7 @@ export function SignalResult({
           {leadingOption}
         </h3>
 
-        {/* Primary measures: displayed in parallel, not as gambling odds */}
+        {/* Legacy support and wallet measures stay visibly separate. */}
         <div className="flex flex-wrap gap-6">
           <div>
             <span className="block text-body text-ballot-ink">
@@ -37,7 +37,7 @@ export function SignalResult({
           </div>
           <div>
             <span className="block text-proof text-nim-blue">
-              {nimSignalled.toLocaleString()} NIM signalled
+              {nimSignalled.toLocaleString()} legacy NIM support
             </span>
           </div>
         </div>
@@ -61,7 +61,7 @@ export function SignalResult({
             )}
             {totalWallets !== undefined && totalNim !== undefined && " · "}
             {totalNim !== undefined && (
-              <span>{totalNim.toLocaleString()} total NIM</span>
+              <span>{totalNim.toLocaleString()} total legacy NIM support</span>
             )}
           </p>
         )}

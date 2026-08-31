@@ -20,26 +20,34 @@ export function VotumReceiptView({
   className = "",
 }: VotumReceiptViewProps) {
   const hasControls = Boolean(receipt.explorerUrl) || Boolean(receipt.pollUrl);
+  const isLegacySupport = receipt.economicModel === "legacy_support";
 
   return (
     <div className={`space-y-6 ${className}`}>
       {/* Proof path breadcrumb */}
       <ProofPath
-        steps={["question", "choice", "verified NIM", "result"]}
+        steps={
+          isLegacySupport
+            ? ["question", "choice", "verified NIM", "result"]
+            : ["question", "choice", "verified vote", "result"]
+        }
         className="mb-4"
       />
 
       {/* Heading */}
       <h2 className="text-section-heading font-display text-ballot-ink">
-        Your NIM-backed signal is recorded
+        {isLegacySupport
+          ? "Your legacy support signal is recorded"
+          : "Your verified vote is recorded"}
       </h2>
 
       {/* Core receipt display */}
       <VotumReceipt
-        amount={receipt.nimContribution}
+        economicModel={receipt.economicModel}
+        amount={isLegacySupport ? receipt.nimContribution : undefined}
         option={receipt.chosenOption}
         timestamp={receipt.recordedAt}
-        txHash={receipt.transactionRef}
+        txHash={isLegacySupport ? receipt.transactionRef : undefined}
         pollQuestion={receipt.pollQuestion}
       />
 

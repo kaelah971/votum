@@ -1,16 +1,19 @@
 import { Card } from "@/components/ui/Card";
 import { truncateTxHash } from "@/lib/format";
+import type { PollView } from "@/types/poll";
 
 interface VotumReceiptProps {
-  amount: number;
+  economicModel: PollView["economicModel"];
+  amount?: number;
   option: string;
   timestamp: string;
-  txHash: string;
+  txHash?: string;
   pollQuestion: string;
   className?: string;
 }
 
 export function VotumReceipt({
+  economicModel,
   amount,
   option,
   timestamp,
@@ -18,20 +21,26 @@ export function VotumReceipt({
   pollQuestion,
   className = "",
 }: VotumReceiptProps) {
+  const isLegacySupport = economicModel === "legacy_support";
+
   return (
     <Card className={`p-6 ${className}`}>
       <div className="space-y-4">
         {/* Receipt heading */}
         <h3 className="text-card-heading font-display text-ballot-ink">
-          Your NIM-backed signal is recorded
+          {isLegacySupport
+            ? "Your legacy support signal is recorded"
+            : "Your verified vote is recorded"}
         </h3>
 
         {/* Proof data section */}
         <div className="space-y-2">
           {/* NIM amount */}
-          <p className="text-proof text-nim-blue">
-            {amount.toLocaleString()} NIM
-          </p>
+          {amount !== undefined && (
+            <p className="text-proof text-nim-blue">
+              {amount.toLocaleString()} NIM support
+            </p>
+          )}
 
           {/* Chosen option */}
           <p className="text-body text-ballot-ink">{option}</p>
@@ -40,9 +49,11 @@ export function VotumReceipt({
           <p className="text-micro text-quiet-ink">{timestamp}</p>
 
           {/* TX hash */}
-          <p className="text-proof text-nim-blue">
-            tx: {truncateTxHash(txHash)}
-          </p>
+          {txHash && (
+            <p className="text-proof text-nim-blue">
+              tx: {truncateTxHash(txHash)}
+            </p>
+          )}
         </div>
 
         {/* Divider */}

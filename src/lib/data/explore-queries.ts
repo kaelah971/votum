@@ -22,6 +22,8 @@ import type {
 } from "@/lib/explore/types";
 import type { PollSection } from "@/lib/explore/filters";
 import { CLOSING_SOON_MS } from "@/lib/explore/filters";
+import { mapPublicRewardCampaign } from "@/lib/data/public-polls";
+import { formatNimAmount } from "@/lib/nimiq/units";
 
 // ── Configuration ─────────────────────────────────────────────────────
 
@@ -39,13 +41,17 @@ function createAnonClient() {
 // ── Column select list (same as listPublicPolls) ──────────────────────
 
 const POLL_COLUMNS =
-  "id, question, description, mode, destination_wallet, destination_purpose, min_nim_luna, fairness_mode, status, starts_at, ends_at, is_public, created_at, category, format";
+  "id, question, description, mode, destination_wallet, destination_purpose, min_nim_luna, fairness_mode, status, starts_at, ends_at, is_public, created_at, category, format, economic_model, reward_mode";
 
 type PollRow = Database["public"]["Tables"]["polls"]["Row"];
 
 // ── Map to PollCardData ───────────────────────────────────────────────
 
-function mapToPollCardData(row: PollRow, optionCount: number): PollCardData {
+function mapToPollCardData(
+  row: PollRow,
+  optionCount: number,
+  rewardPerParticipantNim?: string,
+): PollCardData {
   return {
     id: row.id,
     question: row.question,
@@ -56,7 +62,36 @@ function mapToPollCardData(row: PollRow, optionCount: number): PollCardData {
     closingAt: row.ends_at ?? "",
     createdAt: row.created_at,
     optionCount,
+    rewarded:
+      row.economic_model === "reward_first" && row.reward_mode === "rewarded",
+    ...(rewardPerParticipantNim ? { rewardPerParticipantNim } : {}),
   };
+}
+
+async function fetchPublicRewardAmounts(
+  supabase: ReturnType<typeof createAnonClient>,
+  rows: PollRow[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const rewardedRows = rows.filter(
+    (row) => row.economic_model === "reward_first" && row.reward_mode === "rewarded",
+  );
+  await Promise.all(
+    rewardedRows.map(async (row) => {
+      const { data } = await supabase!.rpc("get_public_reward_campaign", {
+        _poll_id: row.id,
+      });
+      const campaign = mapPublicRewardCampaign(data);
+      if (campaign) {
+        try {
+          map.set(campaign.pollId, formatNimAmount(BigInt(campaign.rewardPerParticipantLuna)));
+        } catch {
+          // Ignore malformed or unavailable public reward data.
+        }
+      }
+    }),
+  );
+  return map;
 }
 
 /** Fetch option counts for a batch of poll IDs. */
@@ -222,7 +257,7 @@ export async function queryExploreFlat(
   const limit = Math.max(1, Math.min(params.limit || DEFAULT_LIMIT, MAX_LIMIT));
   const search = (params.search ?? "").trim().slice(0, MAX_SEARCH_LENGTH);
   const status = params.status ?? "all";
-  const sort = params.sort ?? "grouped";
+    const sort = params.sort ?? "grouped";
 
   try {
     // Base query: always include live+closed (effective-status refinement via OR filter)
@@ -231,6 +266,10 @@ export async function queryExploreFlat(
       .select(POLL_COLUMNS)
       .eq("is_public", true)
       .in("status", ["live", "closed"]);
+
+    if (params.rewarded) {
+      query = query.eq("economic_model", "reward_first").eq("reward_mode", "rewarded");
+    }
 
     // Category filter
     if (params.category) {
@@ -284,10 +323,11 @@ export async function queryExploreFlat(
     // Fetch option counts
     const pollIds = resultPolls.map((p) => p.id);
     const optionCounts = await fetchOptionCounts(supabase, pollIds);
+    const rewardAmounts = await fetchPublicRewardAmounts(supabase, resultPolls);
 
     // Map to PollCardData
     const cards: PollCardData[] = resultPolls.map((row) =>
-      mapToPollCardData(row, optionCounts.get(row.id) ?? 0),
+      mapToPollCardData(row, optionCounts.get(row.id) ?? 0, rewardAmounts.get(row.id)),
     );
 
     // Build nextCursor
@@ -455,6 +495,9 @@ async function querySection(
 
     if (params.category) query = query.eq("category", params.category);
     if (params.format) query = query.eq("format", params.format);
+    if (params.rewarded) {
+      query = query.eq("economic_model", "reward_first").eq("reward_mode", "rewarded");
+    }
 
     query = buildSectionBase(query, section, now);
     query = query.limit(limit + 1);
@@ -474,8 +517,9 @@ async function querySection(
     const pollIds = resultPolls.map((p) => p.id);
     const optionCounts = await fetchOptionCounts(supabase, pollIds);
 
+    const rewardAmounts = await fetchPublicRewardAmounts(supabase, resultPolls);
     const cards: PollCardData[] = resultPolls.map((row) =>
-      mapToPollCardData(row, optionCounts.get(row.id) ?? 0),
+      mapToPollCardData(row, optionCounts.get(row.id) ?? 0, rewardAmounts.get(row.id)),
     );
 
     let nextCursor: string | null = null;

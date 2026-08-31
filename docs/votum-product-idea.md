@@ -3,32 +3,32 @@
 **Product name:** Votum  
 **Pronunciation:** `VOH-tum`  
 **Name origin:** Latin *votum* — a vow, wish, or vote  
-**Category:** NIM-backed community decision Mini App  
+**Category:** Verified community decision and participation-reward Mini App
 **Platform:** Nimiq Pay Mini Apps Framework  
-**Core asset:** NIM
+**Core asset:** Verified wallet participation, with NIM for optional funded rewards
 
 ## 1. Product summary
 
-**Votum turns free clicks into accountable community signal.**
+**Votum turns unverified clicks into accountable community decisions.**
 
-Creators, builders, and communities create a question, define options, set a small NIM contribution threshold, and share the poll. Voters choose an option and make a lightweight NIM payment through Nimiq Pay. Votum records a verified vote only after the payment is confirmed, then shows both wallet participation and NIM-backed conviction.
+Creators, builders, and communities create a question, define options, and share a poll. Voters verify a wallet, choose an option, and receive one vote. Creators may optionally fund a fixed NIM reward for eligible participants; reward eligibility never depends on the selected option.
 
-> **Put NIM behind your say.**
+> **Verified decisions. Rewards when participation is funded.**
 
-Votum is not betting, a prediction market, or a winner-takes-pot game. It is a transparent contribution-backed decision tool.
+Votum is not betting, a prediction market, or a winner-takes-pot game. It is a transparent verified-decision tool with optional participation rewards.
 
 ## 2. Why the name changed
 
 The original name explains the mechanic but is generic, transactional, and pulls the product toward paid surveys or gambling.
 
-**Votum** is stronger because it names the act of meaningful support rather than the payment. It gives the system useful language:
+**Votum** is stronger because it names the act of making a meaningful decision rather than the payment. It gives the system useful language:
 
 - Votum Poll
 - Votum Signal
 - Votum Receipt
 - Votum Result
 - Votum Creator
-- Votum Support
+- Votum Reward
 
 Trademark, domain, social-handle, and legal availability have **not** been checked.
 
@@ -38,18 +38,18 @@ Free online polls have weak signal. They are easy to ignore, spam, brigade, or t
 
 Creators and communities need a clearer answer:
 
-> What does our community care about enough to support with a small amount of value?
+> What does our verified community choose, and is a participation reward funded?
 
 ## 4. Product thesis
 
-A tiny, explicit NIM contribution makes community feedback more deliberate without turning it into gambling.
+A verified wallet and one-wallet-one-vote rule make community feedback more accountable without turning it into gambling.
 
 The product adds **commitment**, not speculation:
 
-- a voter supports a stated decision;
-- the contribution destination is shown before payment;
-- the result shows wallet count and NIM signal separately;
-- the creator cannot claim that the NIM automatically funds a specific option unless that payment mechanism truly exists.
+- a voter verifies a wallet and casts one vote;
+- a creator may define a fixed reward budget;
+- reward eligibility is independent of the selected option;
+- funding status is shown truthfully and never presented as participant support.
 
 ## 5. Priority user
 
@@ -64,8 +64,8 @@ This is the best contest wedge because it is easy to dogfood in the Nimiq commun
 | Audience | Job |
 |---|---|
 | Indie hackers | Decide feature priorities with stronger signal than comments |
-| Creators | Ask audiences what to make while receiving transparent support |
-| Community organisers | Collect support-backed feedback for a visible community wallet |
+| Creators | Ask audiences what to make while offering a transparent reward |
+| Community organisers | Collect verified feedback with clear campaign funding |
 | Event organisers | Choose an event topic, date, or resource direction |
 | Product teams | Test names or roadmap options with real participation |
 
@@ -76,45 +76,43 @@ This is the best contest wedge because it is easy to dogfood in the Nimiq commun
 1. Open Votum inside Nimiq Pay.
 2. Choose a template or enter a question.
 3. Add 2–6 options.
-4. Set poll duration and minimum NIM contribution.
-5. Select one transparent contribution destination.
+4. Choose free verified participation or define a fixed reward budget.
+5. Set poll duration and review the one-wallet-one-vote rule.
 6. Publish and share the poll link or QR code.
 
 ### Voter flow
 
 1. Open the poll in Nimiq Pay.
-2. Read what the contribution supports and where the NIM goes.
-3. Choose one option.
-4. Confirm NIM payment.
-5. Receive a Votum Receipt.
-6. See live results after transaction verification.
+2. Read the participation and reward terms.
+3. Verify a wallet and choose one option.
+4. Receive a Votum Receipt.
+5. See live results after vote verification.
 
 ### Required result information
 
 - leading option;
 - wallet count by option;
-- NIM signalled by option;
-- total NIM contributed;
+- reward status and reward per eligible participant when funded;
 - poll deadline / closed state;
 - selected fairness mode;
 - verified transaction proof link or reference;
-- clear contribution destination.
+- one-wallet-one-vote rule.
 
 ## 7. Clean MVP modes
 
-### Creator Support Poll — build now
+### Free Verified Poll — build now
 
-Voters choose an option; NIM goes directly to the disclosed creator/project wallet. The vote expresses what the community wants, while the contribution supports the creator’s work generally.
+Voters verify a wallet and choose an option. No participant payment is required, and every verified wallet receives exactly one vote.
 
-### Community Support Poll — build now
+### Rewarded Participation Poll — build now
 
-NIM goes directly to a disclosed community/project wallet. The poll recommends a priority; the wallet destination is clear before payment.
+The creator or a designated community wallet funds a fixed reward budget. Eligible participants receive the same advertised reward regardless of which option they choose.
 
-### Fund the Winner — message carefully
+### Legacy Support Poll — compatibility path
 
-Only say that NIM “funds the winning decision” if the user can see a credible, explicit mechanism for that outcome. With direct payments to a creator wallet and no escrow, the honest MVP message is:
+Historical polls may retain direct participant support. This path is explicitly labelled legacy and never defines the normal new-poll flow.
 
-> “Your NIM supports the creator implementing the community’s chosen direction.”
+> “Legacy support is counted separately from verified votes.”
 
 ### Do not build for Cycle 1
 
@@ -131,28 +129,28 @@ Only say that NIM “funds the winning decision” if the user can see a credibl
 
 Default mode:
 
-> **One wallet, one vote. NIM is visible as a separate support signal.**
+> **One wallet, one vote. Rewards never depend on the selected option.**
 
 This prevents the UI from implying that the largest wallet has automatically won. Later, a creator may use capped or quadratic weighting—but not before the default experience is reliable and comprehensible.
 
 ## 9. Nimiq fit
 
-Votum is native to Nimiq Pay because the core action is a small, immediate NIM payment. The framework removes wallet setup friction, while NIM makes a tiny contribution practical and visible.
+Votum is native to Nimiq Pay because wallet verification and optional reward funding can happen in the same trusted environment. NIM makes fixed participation rewards practical and visible.
 
-NIM is not a cosmetic payment option. It is the product’s proof of deliberate participation.
+NIM is not a participant voting requirement. It is the funding rail for optional participation rewards.
 
 ## 10. Product language
 
 Use:
 
 - signal;
-- support;
-- contribution;
 - community decision;
-- NIM-backed vote;
 - verified vote;
+- funded reward;
 - result;
 - receipt.
+
+Use **support** and **contribution** only when describing an explicitly labelled legacy support poll.
 
 Avoid:
 
@@ -169,16 +167,16 @@ Avoid:
 ## 11. Demo moment
 
 1. A builder creates: **“Which Votum feature should we ship next?”**
-2. They set a 1 NIM minimum and a clearly displayed creator wallet.
-3. A voter chooses an option and confirms the NIM payment inside Nimiq Pay.
-4. Votum verifies the payment and updates live results.
+2. They choose a free verified poll or define a fixed reward budget.
+3. A voter verifies a wallet and chooses an option inside Nimiq Pay.
+4. Votum verifies the vote and updates live results.
 5. The screen shows:
 
 > **Result Cards leads**  
-> `51 wallets · 284 NIM signalled · 43% of voters`
+> `51 verified wallets · Reward available when funded`
 
 6. The voter receives a clean, shareable receipt.
 
 ## 12. Final positioning
 
-> **Votum is a Nimiq Pay Mini App for community decisions backed by NIM. It helps creators and builders see not only what people clicked, but what they cared enough to support.**
+> **Votum is a Nimiq Pay Mini App for verified community decisions. It helps creators and builders see what their community chose, with optional fixed rewards for eligible participation.**

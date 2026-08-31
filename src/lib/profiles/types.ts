@@ -29,7 +29,7 @@ export interface ProfileStats {
   pollsCreated: number;
   /** Votes the wallet cast in public polls. */
   participations: number;
-  /** Confirmed NIM support (luna, bigint as text) — confirmed contributions only. */
+  /** Confirmed legacy NIM support (luna, bigint as text) — contributions only. */
   nimSupportedLuna: string;
   /** Truthful 0 until the V2B reward settlement ledger exists. */
   nimEarnedLuna: string;

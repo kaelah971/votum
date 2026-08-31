@@ -116,6 +116,29 @@ async function publishPublicPoll(
   return res;
 }
 
+async function publishRewardFirstPoll(
+  creator: string,
+  cookie: string,
+  idKey: string,
+  question: string,
+  rewardMode: "free" | "rewarded",
+  reward?: { fundingMode: "creator" | "community"; fundingWallet?: string; rewardPerParticipant: string; maxRewardedParticipants: number },
+): Promise<{ status: number; data: any }> {
+  return apiPost("/api/polls/publish", {
+    category: "communities",
+    format: "decision",
+    question,
+    description: null,
+    options: ["A", "B"],
+    economicModel: "reward_first",
+    rewardMode,
+    fairnessMode: "one_wallet_one_vote",
+    duration: "1day",
+    idempotencyKey: idKey,
+    ...(reward ? { reward } : {}),
+  }, cookie);
+}
+
 async function insertPrivatePoll(creator: string): Promise<string> {
   const { data, error } = await admin.from("polls").insert({
     creator_wallet: creator,
@@ -178,6 +201,48 @@ async function run() {
       .select("id")
       .eq("poll_id", publicPollId);
     check((offCampaigns.data ?? []).length === 0, "reward OFF → no campaign row");
+
+    const rewardFirstFree = await publishRewardFirstPoll(
+      CREATOR,
+      creatorCookie,
+      uuid(),
+      "V2B2 free reward-first poll?",
+      "free",
+    );
+    check(rewardFirstFree.status === 201, "free reward-first poll publishes");
+    const freePollId = rewardFirstFree.data?.poll?.id as string;
+    const freePoll = await admin
+      .from("polls")
+      .select("economic_model, reward_mode, mode, destination_wallet, destination_purpose, min_nim_luna")
+      .eq("id", freePollId)
+      .maybeSingle();
+    check(freePoll.data?.economic_model === "reward_first", "free poll stores reward_first discriminator");
+    check(freePoll.data?.reward_mode === "free", "free poll stores free reward mode");
+    check(
+      freePoll.data?.mode === null &&
+        freePoll.data?.destination_wallet === null &&
+        freePoll.data?.destination_purpose === null &&
+        freePoll.data?.min_nim_luna === null,
+      "free reward-first poll stores no support configuration",
+    );
+
+    const mixedRewardFirst = await apiPost("/api/polls/publish", {
+      category: "communities",
+      format: "decision",
+      question: "V2B2 mixed economic model rejection?",
+      description: null,
+      options: ["A", "B"],
+      economicModel: "reward_first",
+      rewardMode: "free",
+      mode: "creator",
+      destinationWallet: CREATOR,
+      destinationPurpose: "must be rejected",
+      minimumNim: "1",
+      fairnessMode: "one_wallet_one_vote",
+      duration: "1day",
+      idempotencyKey: uuid(),
+    }, creatorCookie);
+    check(mixedRewardFirst.status === 400, "reward-first support fields are rejected");
 
     // -----------------------------------------------------------------
     // Non-owner → 403; unknown poll → 404
@@ -322,6 +387,32 @@ async function run() {
     const pubCampaigns = await admin.from("reward_campaigns").select("id,status").eq("poll_id", pubRewardPollId);
     check((pubCampaigns.data ?? []).length === 1, "publish created one campaign");
     check(pubCampaigns.data?.[0]?.status === "configured", "publish campaign state = configured");
+
+    const pubRewardFirst = await publishRewardFirstPoll(
+      CREATOR,
+      creatorCookie,
+      uuid(),
+      "V2B2 reward-first publish?",
+      "rewarded",
+      { fundingMode: "creator", rewardPerParticipant: "0.25", maxRewardedParticipants: 40 },
+    );
+    check(pubRewardFirst.status === 201, "reward-first rewarded poll publishes");
+    const pubRewardFirstPollId = pubRewardFirst.data?.poll?.id as string;
+    const rewardFirstRow = await admin
+      .from("polls")
+      .select("economic_model, reward_mode, mode, destination_wallet, destination_purpose, min_nim_luna")
+      .eq("id", pubRewardFirstPollId)
+      .maybeSingle();
+    check(rewardFirstRow.data?.economic_model === "reward_first", "rewarded poll stores reward_first discriminator");
+    check(rewardFirstRow.data?.reward_mode === "rewarded", "rewarded poll stores rewarded mode");
+    check(
+      rewardFirstRow.data?.mode === null &&
+        rewardFirstRow.data?.destination_wallet === null &&
+        rewardFirstRow.data?.destination_purpose === null &&
+        rewardFirstRow.data?.min_nim_luna === null,
+      "rewarded poll stores no support configuration",
+    );
+    check(pubRewardFirst.data?.reward?.rewardFundingRequired === true, "reward-first publish requires funding");
 
     // -----------------------------------------------------------------
     // No funding / payout / refund rows

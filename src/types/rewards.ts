@@ -17,6 +17,8 @@ export interface RewardCampaignRow {
   id: string;
   poll_id: string;
   creator_wallet: string;
+  funding_mode: "creator" | "community";
+  funding_wallet: string;
   reward_per_participant_luna: number;
   max_rewarded_participants: number;
   reward_principal_luna: number;
@@ -44,6 +46,7 @@ export interface RewardFundingTransactionRow {
   id: string;
   campaign_id: string;
   creator_wallet: string;
+  funder_wallet: string;
   reference: string;
   submitted_transaction_hash: string | null;
   confirmed_transaction_hash: string | null;

@@ -9,7 +9,7 @@ import { HowItWorksTabs } from "@/components/marketing/HowItWorksTabs";
 export const metadata: Metadata = {
   title: "How Votum works",
   description:
-    "From question to verified community signal. Learn how Votum helps communities make decisions using verified NIM-backed participation.",
+    "From question to verified result. Learn how Votum helps communities make decisions with free voting and funded participation rewards.",
 };
 
 const linkPillPrimary =
@@ -28,9 +28,9 @@ export default function HowItWorks() {
             From question to verified community signal.
           </h1>
           <p className="mt-6 max-w-[520px] text-body-lg text-quiet-ink">
-            Votum keeps the flow simple: ask, choose, back the choice with NIM,
-            and show a verified result without turning the contribution into a
-            wager.
+            Votum keeps the flow simple: ask, choose, verify your wallet, and
+            show a trusted result. Creators can optionally fund a fixed reward
+            for eligible participation.
           </p>
           <div className="mt-8">
             <ProofPath />
@@ -53,7 +53,7 @@ export default function HowItWorks() {
           },
           {
             title: "Verified participation",
-            meta: "Recorded after payment proof",
+             meta: "Recorded after wallet verification",
             visual: <span className="text-lg">OK</span>,
           },
           {

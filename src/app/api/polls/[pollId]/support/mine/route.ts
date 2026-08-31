@@ -26,6 +26,16 @@ export async function GET(
     return NextResponse.json({ contributions: [] });
   }
 
+  const { data: poll, error: pollError } = await admin
+    .from("polls")
+    .select("economic_model")
+    .eq("id", pollId)
+    .maybeSingle();
+  if (pollError || !poll) return NextResponse.json({ contributions: [] });
+  if (poll.economic_model === "reward_first") {
+    return NextResponse.json({ error: "support_not_available", contributions: [] }, { status: 422 });
+  }
+
   try {
     // Query confirmed intents initiated by this wallet, then fetch
     // contribution details by confirmed_contribution_id. This ensures

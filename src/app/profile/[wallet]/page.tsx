@@ -16,7 +16,7 @@ export async function generateMetadata({
   const name = result?.profile?.displayName ?? "Votum participant";
   return {
     title: `${name} | Votum`,
-    description: "A verified NIM-backed community participant on Votum.",
+    description: "A verified Votum participant and their public activity.",
   };
 }
 

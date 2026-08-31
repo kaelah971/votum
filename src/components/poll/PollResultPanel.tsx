@@ -1,4 +1,4 @@
-import type { PollResultView } from "@/types/poll";
+import type { PollResultView, PollView } from "@/types/poll";
 import { Card } from "@/components/ui/Card";
 
 // ---------------------------------------------------------------------------
@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 
 interface PollResultPanelProps {
   results: PollResultView;
+  economicModel: PollView["economicModel"];
   className?: string;
 }
 
@@ -16,16 +17,18 @@ interface PollResultPanelProps {
 
 export function PollResultPanel({
   results,
+  economicModel,
   className = "",
 }: PollResultPanelProps) {
   const { options, totalWallets, totalNim, isFinal } = results;
+  const isLegacySupport = economicModel === "legacy_support";
 
   // Edge case: no results data yet
   if (options.length === 0) {
     return (
       <Card className={`p-6 ${className}`}>
         <p className="text-body text-quiet-ink text-center">
-          No verified signals yet. Be the first to back a choice.
+          No verified votes yet. Be the first to participate.
         </p>
       </Card>
     );
@@ -56,7 +59,7 @@ export function PollResultPanel({
               )}
             </div>
 
-            {/* Stats: wallet count (bold) + NIM signalled (proof/nim-blue) */}
+            {/* Legacy support is a separate metric, never part of vote weight. */}
             <div className="flex items-center gap-3">
               {option.walletCount !== undefined && (
                 <span className="text-body font-semibold text-ballot-ink">
@@ -64,7 +67,7 @@ export function PollResultPanel({
                   {option.walletCount !== 1 ? "s" : ""}
                 </span>
               )}
-              {option.nimSignalled !== undefined && (
+              {isLegacySupport && option.nimSignalled !== undefined && (
                 <span className="text-proof text-nim-blue">
                   {option.nimSignalled.toLocaleString()} NIM
                 </span>
@@ -98,7 +101,7 @@ export function PollResultPanel({
               {totalWallets !== 1 ? "s" : ""}
             </span>
           )}
-          {totalNim !== undefined && (
+          {isLegacySupport && totalNim !== undefined && (
             <span className="text-proof text-nim-blue">
               {totalNim.toLocaleString()} NIM contributed
             </span>

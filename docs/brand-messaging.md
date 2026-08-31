@@ -7,12 +7,12 @@
 **Votum** — Latin for a vow, wish, or vote.  
 Pronounced: **VOH-tum**.
 
-The name turns the product’s central act—placing meaningful support behind a choice—into an ownable verbal system.
+The name turns the product’s central act—making a verified community decision—into an ownable verbal system.
 
 | Product term | Meaning |
 |---|---|
 | Votum Poll | A public community decision |
-| Votum Signal | A verified NIM-backed expression of support |
+| Votum Signal | A verified participation signal |
 | Votum Receipt | The proof that a vote was recorded |
 | Votum Result | The final, transparent outcome |
 
@@ -28,44 +28,44 @@ Trademark, domain, social-handle, and legal clearance are not included here.
 
 ### Core promise
 
-> **Put NIM behind your say.**
+> **Verified decisions. Rewards when participation is funded.**
 
 ## 2. Positioning
 
 ### Category
 
-**NIM-backed community decision Mini App.**
+**Verified community decision and participation-reward Mini App.**
 
 ### One-line description
 
-> Votum helps communities make decisions with NIM-backed votes, so results show more than clicks—they show real support.
+> Votum helps communities make decisions with verified one-wallet-one-vote participation, with optional fixed rewards when a campaign is funded.
 
 ### Positioning statement
 
-> For builders, creators, and communities who need more useful feedback than a free poll can provide, Votum is a Nimiq Pay Mini App that records verified NIM-backed votes and displays both wallet participation and NIM signal. Unlike free polling tools or prediction markets, Votum makes community support visible without turning decisions into betting.
+> For builders, creators, and communities who need accountable feedback, Votum is a Nimiq Pay Mini App that records one verified vote per wallet and can reward eligible participation with a fixed funded campaign. Unlike betting or prediction-market products, Votum never links rewards to choosing a particular option.
 
 ### Strategic enemy
 
-> A free click treated as if it represents meaningful commitment.
+> An unverified click treated as accountable participation.
 
 ## 3. Message hierarchy
 
 | Layer | Message |
 |---|---|
-| Hero | **Put NIM behind your say.** |
-| Descriptor | NIM-backed community decisions for Nimiq Pay. |
-| Explanation | Create a poll, show what a contribution supports, and collect verified NIM-backed votes. |
-| Benefit | See what your community cares enough to support—not only what it clicked. |
-| Proof | Verified payment, clear destination wallet, wallet count, NIM signal and receipt. |
+| Hero | **Verified decisions. Rewards when participation is funded.** |
+| Descriptor | Verified community decisions for Nimiq Pay. |
+| Explanation | Create a free verified poll or fund a fixed reward for eligible participants. |
+| Benefit | See what your verified community chose, not only what it clicked. |
+| Proof | Verified wallet, one vote, reward status, and receipt. |
 | Action | Create a Votum Poll. |
 
 ## 4. Messaging pillars
 
 | Pillar | What it means | Proof |
 |---|---|---|
-| More than clicks | A small NIM contribution makes participation more deliberate. | Vote is recorded only after payment verification. |
-| Support stays visible | Voters see what their NIM supports before confirming. | Clear destination wallet and purpose. |
-| Fairness is explicit | Participation and financial signal are not silently conflated. | One-wallet-one-vote default; wallet count and NIM displayed separately. |
+| More than clicks | Wallet verification makes participation accountable. | One verified vote per wallet. |
+| Rewards stay truthful | Participants see a reward only when the campaign is funded. | Funded/rewarding status from the public allowlist. |
+| Fairness is explicit | Rewards never depend on the selected option. | One-wallet-one-vote and choice-agnostic reward terms. |
 | Results can be trusted | Every completed vote has a traceable proof reference. | Transaction-backed Votum Receipt and live/final result state. |
 | Built to spread | Each question becomes a simple invitation to community action. | Public URLs, QR links and shareable result cards. |
 
@@ -73,15 +73,15 @@ Trademark, domain, social-handle, and legal clearance are not included here.
 
 | Principle | Behaviour | Example |
 |---|---|---|
-| Clear before clever | Name the decision and contribution directly. | “Back this choice with 1 NIM.” |
-| Transparent | State destination, deadline and rule before payment. | “Your NIM supports the Nimiq Builders wallet.” |
+| Clear before clever | Name the decision and participation mode directly. | “Free verified poll.” |
+| Transparent | State reward status, deadline, and rule before voting. | “Reward eligibility is independent of your choice.” |
 | Calmly decisive | Give a single next action without hype. | “Choose an option to continue.” |
 | Community-first | The user/community is the actor; Votum is the guide. | “Your community has chosen.” |
-| Precise about money | Do not overclaim where NIM goes or what results guarantee. | “Supports the creator implementing this direction.” |
+| Precise about money | Do not overclaim funding or reward availability. | “Rewards are available after campaign funding.” |
 
 ### Vocabulary
 
-Use: **signal, support, contribution, community decision, verified, result, receipt, choose, back, recorded.**
+Use: **verified, participation, reward, funded, community decision, result, receipt, choose, recorded.** Keep **support** and **contribution** for explicitly labelled legacy polls.
 
 Avoid: **bet, wager, odds, jackpot, pot, winner payout, prediction, investment, profit, moon, alpha.**
 
@@ -89,49 +89,49 @@ Avoid: **bet, wager, odds, jackpot, pot, winner payout, prediction, investment, 
 
 | Moment | Recommended copy |
 |---|---|
-| Hero | “Put NIM behind your say.” |
-| Supporting line | “Create community decisions where every vote carries verified NIM-backed signal.” |
+| Hero | “Verified decisions. Rewards when participation is funded.” |
+| Supporting line | “Create a free verified poll or fund a reward for eligible participants.” |
 | Create CTA | “Create a Votum Poll” |
 | Demo CTA | “Try a demo poll” |
-| Poll destination | “Your NIM supports the creator’s work and this community decision.” |
-| Vote CTA | “Back this choice with NIM” |
+| Poll destination | “This poll uses verified voting. Legacy support polls show their destination before payment.” |
+| Vote CTA | “Cast vote” |
 | Fairness label | “One wallet · one vote” |
-| Payment success | “Your signal is verified.” |
-| Receipt title | “Your NIM-backed signal is recorded.” |
-| Closed result | “The community has spoken—with support behind it.” |
-| No-result state | “No verified signals yet. Be the first to back a choice.” |
-| Failed payment | “No vote was recorded. Your payment was not confirmed.” |
+| Payment success | “Your vote is verified.” |
+| Receipt title | “Your verified vote is recorded.” |
+| Closed result | “The community has spoken.” |
+| No-result state | “No verified votes yet. Be the first to participate.” |
+| Failed payment | “No vote was recorded. Try again.” |
 
 ## 7. Product narrative
 
-Free polls are easy to click, ignore, spam, or brigade. Community decisions become more useful when people make a visible, lightweight contribution toward the direction they support.
+Unverified polls are easy to click, ignore, spam, or brigade. Community decisions become more useful when each participant verifies a wallet and receives one vote.
 
-Votum does not ask people to gamble on a winner. It asks them to put a little NIM behind what they want to happen. The result is a more accountable record of community signal: the question, the choices, the verified support, and the final outcome.
+Votum does not ask people to gamble on a winner. It lets creators run free verified polls or fund a fixed reward for eligible participation. Reward eligibility is independent of the selected option.
 
 ## 8. Nimiq contest story
 
-> Votum makes NIM the proof of meaningful participation. It is a Mini App that users can create and use immediately inside Nimiq Pay: publish a question, collect NIM-backed votes, and let the community see the decision take shape in real time.
+> Votum makes wallet verification the proof of participation and uses NIM for optional funded rewards. It is a Mini App that users can create and use immediately inside Nimiq Pay: publish a question, collect verified votes, and let the community see the decision take shape in real time.
 
 ### Demonstrable strengths
 
-- NIM is the required core action, not an optional payment rail.
+- Wallet verification is the required core action; NIM funds optional reward campaigns.
 - Wallet-native participation reduces friction and makes verification possible.
 - Every shared poll creates an acquisition loop.
 - The product can be dogfooded immediately with Nimiq builders and community decisions.
-- The four-week MVP is focused: create, pay, verify, result, receipt.
+- The four-week MVP is focused: create, verify, vote, reward status, result, receipt.
 
 ## 9. Claim boundaries
 
 - Votum does not custody funds.
 - Votum does not promise that a direct payment to a creator wallet automatically funds a specific winning option.
 - Votum does not offer betting, prediction, odds or winner-payout mechanics.
-- Votum does not claim that NIM amount makes a vote more legitimate than wallet participation; it is a separate, visible support signal.
-- Votum must show the contribution destination and stated purpose before payment.
+- Votum does not claim that a reward makes one vote more legitimate than another; reward eligibility is separate from vote choice.
+- Votum must show reward status and terms before voting. Legacy support polls must show their contribution destination and stated purpose before payment.
 
 ## 10. Final recommendation
 
 Lead all marketing and product entry points with the human outcome:
 
-> **See what your community will stand behind.**
+> **See what your verified community chooses.**
 
-Then prove it through a simple, visible NIM-backed action.
+Then prove it through a simple, visible verified vote and truthful reward status.

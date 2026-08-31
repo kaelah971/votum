@@ -45,6 +45,7 @@ export function PollPageView({
   const isLive = status === "live";
   const isClosed = status === "closed";
   const isCancelled = status === "cancelled";
+  const isLegacySupport = poll.economicModel === "legacy_support";
 
   // PollClosedState already includes PollResultPanel, so only render
   // PollResultPanel standalone when the poll is live and results exist.
@@ -66,7 +67,7 @@ export function PollPageView({
       />
 
       {/* 2. PollSupportDetails — only when the poll is live and user hasn't voted yet */}
-      {isLive && !hasVoted && (
+      {isLegacySupport && isLive && !hasVoted && (
         <PollSupportDetails
           destinationPurpose={poll.destinationPurpose}
           destinationWallet={poll.destinationWallet}
@@ -90,6 +91,7 @@ export function PollPageView({
       {/* 4. PollVotePanel — only render for live polls, covers all vote states */}
       {isLive && (
         <PollVotePanel
+          economicModel={poll.economicModel}
           voteStatus={voteState.status}
           hasVoted={hasVoted}
           selectedOptionId={
@@ -100,13 +102,17 @@ export function PollPageView({
 
       {/* 5. PollResultPanel — standalone when live with results (closed polls get it via PollClosedState) */}
       {hasStandaloneResults && (
-        <PollResultPanel results={poll.results!} />
+        <PollResultPanel
+          results={poll.results!}
+          economicModel={poll.economicModel}
+        />
       )}
 
       {/* 6. PollClosedState — only when poll is closed */}
       {isClosed && (
         <PollClosedState
           results={poll.results}
+          economicModel={poll.economicModel}
           closingAt={poll.closingAt}
         />
       )}
@@ -114,7 +120,7 @@ export function PollPageView({
       {/* Cancelled state edge case: show a brief message */}
       {isCancelled && (
         <p className="text-body text-reject-red text-center italic">
-          This poll has been cancelled. No signals were recorded.
+           This poll has been cancelled. No verified votes were recorded.
         </p>
       )}
     </div>

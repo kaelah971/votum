@@ -7,6 +7,16 @@ import { nimDecimalToLuna } from "@/lib/nimiq/units";
 import { isPollCategory, isPollFormat } from "@/lib/polls/taxonomy";
 import { validateRewardConfigInput } from "@/lib/rewards/config";
 import { ensureCampaignVault } from "@/lib/rewards/vault-service";
+import {
+  LEGACY_SUPPORT_ENABLED,
+  NEW_REWARD_FIRST_POLL,
+  isPollEconomicModel,
+  isRewardFirstMode,
+  isRewardFundingMode,
+  type PollEconomicModel,
+  type RewardFirstMode,
+  type RewardFundingMode,
+} from "@/lib/polls/economic-model";
 
 export const runtime = "nodejs";
 
@@ -52,10 +62,12 @@ interface ValidatedPayload {
   format: string;
   question: string;
   description: string | null;
-  dbMode: string;
-  canonicalWallet: string;
-  destinationPurpose: string;
-  minNimLuna: bigint;
+  economicModel: PollEconomicModel;
+  rewardMode: RewardFirstMode | null;
+  dbMode: string | null;
+  canonicalWallet: string | null;
+  destinationPurpose: string | null;
+  minNimLuna: bigint | null;
   fairnessMode: string;
   days: number;
   duration: string;
@@ -66,6 +78,8 @@ interface ValidatedPayload {
 }
 
 interface ValidatedRewardConfigPayload {
+  fundingMode?: RewardFundingMode;
+  fundingWallet?: string;
   rewardPerParticipantLuna: bigint;
   maxRewardedParticipants: number;
   rewardPrincipalLuna: bigint;
@@ -82,6 +96,7 @@ interface ValidatedRewardConfigPayload {
  */
 function validatePayload(
   body: Record<string, unknown>,
+  creatorWallet: string,
 ): { valid: true; data: ValidatedPayload } | { valid: false; errors: FieldError[] } {
   const errors: FieldError[] = [];
 
@@ -131,50 +146,92 @@ function validatePayload(
     errors.push({ field: "format", message: "Invalid participation format." });
   }
 
-  // ── mode (creator / community → creator_support / community_support)
-  const rawMode = typeof body.mode === "string" ? body.mode : "";
-  const dbMode =
-    rawMode === "creator"
-      ? "creator_support"
-      : rawMode === "community"
-        ? "community_support"
-        : rawMode;
-  if (!VALID_MODES.includes(dbMode)) {
-    errors.push({ field: "mode", message: "Invalid contribution mode." });
+  const rawEconomicModel = body.economicModel;
+  const economicModel: PollEconomicModel =
+    rawEconomicModel === undefined || rawEconomicModel === null
+      ? LEGACY_SUPPORT_ENABLED
+      : isPollEconomicModel(rawEconomicModel)
+        ? rawEconomicModel
+        : LEGACY_SUPPORT_ENABLED;
+  if (
+    rawEconomicModel !== undefined &&
+    rawEconomicModel !== null &&
+    !isPollEconomicModel(rawEconomicModel)
+  ) {
+    errors.push({ field: "economicModel", message: "Invalid poll economic model." });
   }
 
-  // ── destinationWallet (Nimiq address, normalised to canonical hex)
-  const destinationWallet =
-    typeof body.destinationWallet === "string" ? body.destinationWallet : "";
-  const canonicalWallet = normalizeAddress(destinationWallet);
-  if (!canonicalWallet) {
-    errors.push({
-      field: "destinationWallet",
-      message: "Invalid Nimiq wallet address.",
-    });
-  }
-
-  // ── destinationPurpose ─────────────────────────────────────────────
-  const purpose =
-    typeof body.destinationPurpose === "string"
-      ? body.destinationPurpose.trim()
-      : "";
-  if (!purpose) {
-    errors.push({ field: "destinationPurpose", message: "Contribution purpose is required." });
-  } else if (purpose.length > MAX_PURPOSE_LENGTH) {
-    errors.push({
-      field: "destinationPurpose",
-      message: `Purpose must be at most ${MAX_PURPOSE_LENGTH} characters.`,
-    });
-  }
-
-  // ── minimumNim (decimal string → bigint luna via nimDecimalToLuna) ─
-  const minimumNim = typeof body.minimumNim === "string" ? body.minimumNim : "";
+  let rewardMode: RewardFirstMode | null = null;
+  let dbMode: string | null = null;
+  let canonicalWallet: string | null = null;
+  let purpose: string | null = null;
   let luna: bigint | null = null;
-  try {
-    luna = nimDecimalToLuna(minimumNim);
-  } catch {
-    errors.push({ field: "minimumNim", message: "Invalid minimum NIM amount." });
+
+  if (economicModel === LEGACY_SUPPORT_ENABLED) {
+    // ── mode (creator / community → creator_support / community_support)
+    const rawMode = typeof body.mode === "string" ? body.mode : "";
+    dbMode =
+      rawMode === "creator"
+        ? "creator_support"
+        : rawMode === "community"
+          ? "community_support"
+          : rawMode;
+    if (dbMode === null || !VALID_MODES.includes(dbMode)) {
+      errors.push({ field: "mode", message: "Invalid contribution mode." });
+    }
+
+    // ── destinationWallet (Nimiq address, normalised to canonical hex)
+    const destinationWallet =
+      typeof body.destinationWallet === "string" ? body.destinationWallet : "";
+    canonicalWallet = normalizeAddress(destinationWallet);
+    if (!canonicalWallet) {
+      errors.push({
+        field: "destinationWallet",
+        message: "Invalid Nimiq wallet address.",
+      });
+    }
+
+    // ── destinationPurpose ───────────────────────────────────────────
+    purpose =
+      typeof body.destinationPurpose === "string"
+        ? body.destinationPurpose.trim()
+        : "";
+    if (!purpose) {
+      errors.push({ field: "destinationPurpose", message: "Contribution purpose is required." });
+    } else if (purpose.length > MAX_PURPOSE_LENGTH) {
+      errors.push({
+        field: "destinationPurpose",
+        message: `Purpose must be at most ${MAX_PURPOSE_LENGTH} characters.`,
+      });
+    }
+
+    // ── minimumNim (decimal string → bigint luna via nimDecimalToLuna) ─
+    const minimumNim = typeof body.minimumNim === "string" ? body.minimumNim : "";
+    try {
+      luna = nimDecimalToLuna(minimumNim);
+    } catch {
+      errors.push({ field: "minimumNim", message: "Invalid minimum NIM amount." });
+    }
+    if (body.rewardMode !== undefined && body.rewardMode !== null) {
+      errors.push({ field: "rewardMode", message: "Legacy support polls cannot set a reward mode." });
+    }
+  } else {
+    rewardMode = isRewardFirstMode(body.rewardMode) ? body.rewardMode : null;
+    if (!rewardMode) {
+      errors.push({ field: "rewardMode", message: "Reward-first polls require free or rewarded mode." });
+    }
+
+    const supportFields = [
+      "mode",
+      "destinationWallet",
+      "destinationPurpose",
+      "minimumNim",
+    ];
+    for (const field of supportFields) {
+      if (Object.prototype.hasOwnProperty.call(body, field)) {
+        errors.push({ field, message: "Participant support fields are not allowed on reward-first polls." });
+      }
+    }
   }
 
   // ── fairnessMode (only one_wallet_one_vote for now) ───────────────
@@ -241,10 +298,45 @@ function validatePayload(
     });
   }
 
-  // ── reward (optional rewarded-participation configuration) ────────
+  // ── reward configuration ──────────────────────────────────────────
   let reward: ValidatedRewardConfigPayload | null = null;
-  const rewardRaw = body.reward as Record<string, unknown> | undefined;
-  if (rewardRaw !== undefined && rewardRaw !== null) {
+  const hasRewardKey = Object.prototype.hasOwnProperty.call(body, "reward");
+  const rewardRaw = isRecord(body.reward) ? body.reward : undefined;
+  if (hasRewardKey && body.reward !== null && rewardRaw === undefined) {
+    errors.push({ field: "reward", message: "Reward configuration must be an object." });
+  }
+  if (economicModel === NEW_REWARD_FIRST_POLL && rewardMode === "free" && rewardRaw) {
+    errors.push({ field: "reward", message: "Free polls cannot include reward configuration." });
+  }
+  if (economicModel === NEW_REWARD_FIRST_POLL && rewardMode === "rewarded" && !rewardRaw) {
+    errors.push({ field: "reward", message: "Rewarded polls require reward configuration." });
+  }
+  if (rewardRaw !== undefined && (economicModel === LEGACY_SUPPORT_ENABLED || rewardMode === "rewarded")) {
+    const fundingMode =
+      economicModel === LEGACY_SUPPORT_ENABLED
+        ? "creator"
+        : isRewardFundingMode(rewardRaw.fundingMode)
+          ? rewardRaw.fundingMode
+          : undefined;
+    if (!fundingMode) {
+      errors.push({ field: "rewardFundingMode", message: "Select who will fund the reward budget." });
+    }
+
+    let fundingWallet: string | undefined;
+    const rawFundingWallet =
+      typeof rewardRaw.fundingWallet === "string" ? rewardRaw.fundingWallet.trim() : "";
+    if (fundingMode === "community") {
+      fundingWallet = normalizeAddress(rawFundingWallet) ?? undefined;
+      if (!fundingWallet) {
+        errors.push({ field: "fundingWallet", message: "A valid designated funding wallet is required." });
+      }
+    } else if (rawFundingWallet) {
+      fundingWallet = normalizeAddress(rawFundingWallet) ?? undefined;
+      if (!fundingWallet || fundingWallet.toLowerCase() !== creatorWallet.toLowerCase()) {
+        errors.push({ field: "fundingWallet", message: "Creator funding must use the verified creator wallet." });
+      }
+    }
+
     const rewardValidation = validateRewardConfigInput({
       rewardPerParticipant:
         typeof rewardRaw.rewardPerParticipant === "string"
@@ -262,6 +354,8 @@ function validatePayload(
       });
     } else {
       reward = {
+        ...(fundingMode ? { fundingMode } : {}),
+        ...(fundingWallet ? { fundingWallet } : {}),
         rewardPerParticipantLuna: rewardValidation.value.rewardPerParticipantLuna,
         maxRewardedParticipants: rewardValidation.value.maxRewardedParticipants,
         rewardPrincipalLuna: rewardValidation.value.rewardPrincipalLuna,
@@ -290,8 +384,14 @@ function validatePayload(
       options: options.map((o: unknown) => String(o).trim()),
       idempotencyKey,
       reward,
+      economicModel,
+      rewardMode,
     },
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // ── Route handler ─────────────────────────────────────────────────────
@@ -315,7 +415,18 @@ export async function POST(request: Request) {
       { status: 401 },
     );
   }
-  const creatorWallet = session.address;
+  const creatorWallet = normalizeAddress(session.address);
+  if (!creatorWallet) {
+    return NextResponse.json(
+      {
+        error: "session_invalid",
+        stage: "session",
+        requestId,
+        message: "Session wallet address is invalid.",
+      },
+      { status: 401 },
+    );
+  }
   log("session_valid", { requestId });
 
   // 2. Content-Type must be application/json
@@ -376,7 +487,7 @@ export async function POST(request: Request) {
   }
 
   // 5. Validate all fields
-  const validation = validatePayload(body as Record<string, unknown>);
+  const validation = validatePayload(body as Record<string, unknown>, creatorWallet);
   if (!validation.valid) {
     log("validation_failed", {
       requestId,
@@ -407,16 +518,26 @@ export async function POST(request: Request) {
     mode: d.dbMode,
     destinationWallet: d.canonicalWallet,
     destinationPurpose: d.destinationPurpose,
-    minimumNimLuna: String(d.minNimLuna),
+    minimumNimLuna: d.minNimLuna === null ? null : String(d.minNimLuna),
     fairnessMode: d.fairnessMode,
     duration: d.duration,
   };
+  if (d.economicModel === NEW_REWARD_FIRST_POLL) {
+    fingerprintPayload.economicModel = d.economicModel;
+    fingerprintPayload.rewardMode = d.rewardMode;
+  }
   // Preserve the legacy fingerprint for reward-off requests. Reward-enabled
   // requests include their economic terms so the idempotency key is content-bound.
   if (d.reward) {
     fingerprintPayload.reward = {
       rewardPerParticipantLuna: String(d.reward.rewardPerParticipantLuna),
       maxRewardedParticipants: d.reward.maxRewardedParticipants,
+      ...(d.economicModel === NEW_REWARD_FIRST_POLL
+        ? {
+            fundingMode: d.reward.fundingMode,
+            fundingWallet: d.reward.fundingWallet ?? creatorWallet,
+          }
+        : {}),
     };
   }
   const fingerprintJson = JSON.stringify(
@@ -472,7 +593,7 @@ export async function POST(request: Request) {
         _mode: d.dbMode,
         _destination_wallet: d.canonicalWallet,
         _destination_purpose: d.destinationPurpose,
-        _min_nim_luna: Number(d.minNimLuna),
+        _min_nim_luna: d.minNimLuna === null ? null : Number(d.minNimLuna),
         _fairness_mode: d.fairnessMode,
         _ends_at: endsAt,
         _options: d.options,
@@ -480,6 +601,8 @@ export async function POST(request: Request) {
         _request_fingerprint: requestFingerprint,
         _category: d.category,
         _format: d.format,
+        _economic_model: d.economicModel,
+        _reward_mode: d.rewardMode,
       },
     );
 
@@ -560,6 +683,8 @@ export async function POST(request: Request) {
             .insert({
               poll_id: pollResult.id,
               creator_wallet: creatorWallet,
+              funding_mode: d.reward.fundingMode ?? "creator",
+              funding_wallet: d.reward.fundingWallet ?? creatorWallet,
               reward_per_participant_luna: Number(d.reward.rewardPerParticipantLuna),
               max_rewarded_participants: d.reward.maxRewardedParticipants,
               reward_principal_luna: Number(d.reward.rewardPrincipalLuna),

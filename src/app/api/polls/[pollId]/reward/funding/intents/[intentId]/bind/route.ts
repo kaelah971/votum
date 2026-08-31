@@ -27,8 +27,8 @@ export async function POST(
       { status: 401 },
     );
   }
-  const creatorWallet = normalizeAddress(session.address);
-  if (!creatorWallet) {
+  const funderWallet = normalizeAddress(session.address);
+  if (!funderWallet) {
     return NextResponse.json(
       { error: "session_invalid", stage: "session", requestId, message: "Session wallet address is invalid." },
       { status: 401 },
@@ -81,12 +81,6 @@ export async function POST(
       { status: 404 },
     );
   }
-  if (poll.creator_wallet.toLowerCase() !== creatorWallet.toLowerCase()) {
-    return NextResponse.json(
-      { error: "forbidden", stage: "ownership", requestId, message: "Only the poll creator can bind funding." },
-      { status: 403 },
-    );
-  }
   if (!poll.is_public) {
     return NextResponse.json(
       { error: "private_poll_not_rewardable", stage: "public_only", requestId, message: "Reward campaigns are public polls only." },
@@ -96,7 +90,7 @@ export async function POST(
 
   const { data: campaign, error: campaignErr } = await admin
     .from("reward_campaigns")
-    .select("id")
+    .select("id, funding_wallet")
     .eq("poll_id", pollId)
     .maybeSingle();
   if (campaignErr || !campaign) {
@@ -105,13 +99,19 @@ export async function POST(
       { status: 404 },
     );
   }
+  if (campaign.funding_wallet.toLowerCase() !== funderWallet.toLowerCase()) {
+    return NextResponse.json(
+      { error: "forbidden", stage: "funding_wallet", requestId, message: "Only the designated funding wallet can bind funding." },
+      { status: 403 },
+    );
+  }
 
   // This endpoint only binds the client callback. It intentionally does not
   // call getTransactionByHash or alter confirmed funding fields.
   const { data: rawResult, error: rpcErr } = await admin.rpc("bind_reward_funding_transaction_atomic", {
     _campaign_id: campaign.id,
     _intent_id: intentId,
-    _creator_wallet: creatorWallet,
+    _funder_wallet: funderWallet,
     _transaction_hash: transactionHash,
   });
   if (rpcErr) {

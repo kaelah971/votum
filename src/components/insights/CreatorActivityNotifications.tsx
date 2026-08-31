@@ -144,7 +144,7 @@ export function CreatorActivityNotifications() {
       {!loading && !error && items && items.length === 0 && (
         <div className="text-center py-8 px-4">
           <p className="text-body text-ballot-ink font-medium">No recent creator activity</p>
-          <p className="text-micro text-quiet-ink mt-1">New votes and confirmed NIM support will appear here.</p>
+           <p className="text-micro text-quiet-ink mt-1">New votes and confirmed legacy NIM support will appear here.</p>
         </div>
       )}
 

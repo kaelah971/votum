@@ -198,7 +198,7 @@ export function MyPollsView({
                   </p>
                 )}
 
-                {/* Wallet count + NIM signalled */}
+                {/* Wallet participation + any legacy support total */}
                 {(poll.totalWallets !== undefined ||
                   poll.totalNim !== undefined) && (
                   <div className="flex flex-wrap items-center gap-3">
@@ -210,7 +210,7 @@ export function MyPollsView({
                     )}
                     {poll.totalNim !== undefined && (
                       <span className="text-proof text-nim-blue">
-                        {poll.totalNim.toLocaleString()} NIM
+                        {poll.totalNim.toLocaleString()} legacy NIM support
                       </span>
                     )}
                   </div>

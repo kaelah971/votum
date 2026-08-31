@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Select } from "@/components/ui/Select";
+import { Radio } from "@/components/ui/Radio";
 import { ProofPath } from "@/components/ui/ProofPath";
 import { FairnessLabel } from "@/components/ui/FairnessLabel";
 import { PollOptionsEditor } from "@/components/decision/PollOptionsEditor";
@@ -22,29 +23,23 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { usePollDraft } from "@/lib/drafts/usePollDraft";
 import { getDraft, ensurePublicationKey, deleteDraft } from "@/lib/drafts/storage";
 import { CATEGORY_LABELS, FORMAT_LABELS, POLL_CATEGORIES, POLL_FORMATS } from "@/lib/polls/taxonomy";
-import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
+import type { PollFormat } from "@/lib/polls/taxonomy";
 import { validateRewardConfigInput } from "@/lib/rewards/config";
 import { formatNimAmount } from "@/lib/nimiq/units";
+import {
+  normalizePollDraft,
+  POLL_ECONOMIC_MODEL,
+  type DraftFormData,
+  type LegacyDraftFormData,
+  type RewardFirstDraftFormData,
+  type RewardFirstMode,
+} from "@/lib/drafts/types";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface PollFormData {
-  category: PollCategory;
-  format: PollFormat;
-  question: string;
-  context: string;
-  options: string[];
-  contributionMode: "creator" | "community" | null;
-  purpose: string;
-  destinationWallet: string;
-  minimumNim: string;
-  duration: string;
-  rewardEnabled: boolean;
-  rewardPerParticipant: string;
-  maxRewardedParticipants: string;
-}
+type PollFormData = DraftFormData;
 
 interface DecisionErrors {
   question?: string;
@@ -59,24 +54,28 @@ interface SupportErrors {
   duration?: string;
 }
 
+interface RewardsErrors {
+  rewardMode?: string;
+  rewardFundingMode?: string;
+  fundingWallet?: string;
+  rewardPerParticipant?: string;
+  maxRewardedParticipants?: string;
+  duration?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const INITIAL_FORM_DATA: PollFormData = {
+const INITIAL_FORM_DATA: RewardFirstDraftFormData = {
   category: "communities",
   format: "decision",
   question: "",
   context: "",
   options: ["", ""],
-  contributionMode: null,
-  purpose: "",
-  destinationWallet: "",
-  minimumNim: "",
   duration: "",
-  rewardEnabled: false,
-  rewardPerParticipant: "",
-  maxRewardedParticipants: "",
+  economicModel: POLL_ECONOMIC_MODEL.NEW_REWARD_FIRST_POLL,
+  rewardMode: "free",
 };
 
 const QUESTION_MIN_LENGTH = 10;
@@ -113,7 +112,8 @@ const FORMAT_PLACEHOLDER: Record<PollFormat, string> = {
   audience_choice: "E.g. What should happen next?",
 };
 
-const STEP_LABELS = ["decision", "support", "review"];
+const NEW_STEP_LABELS = ["decision", "rewards", "review"];
+const LEGACY_STEP_LABELS = ["decision", "support", "review"];
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -159,7 +159,7 @@ function validateDecision(data: PollFormData): DecisionErrors {
   return errors;
 }
 
-function validateSupport(data: PollFormData): SupportErrors {
+function validateSupport(data: LegacyDraftFormData): SupportErrors {
   const errors: SupportErrors = {};
 
   if (!data.contributionMode) {
@@ -192,24 +192,72 @@ function validateSupport(data: PollFormData): SupportErrors {
  * Client-side (UX-only) reward validation. The server is authoritative.
  * Mirrors MIN_REWARD_PER_PARTICIPANT_LUNA = 1,000 Luna = 0.01 NIM.
  */
-function validateReward(data: PollFormData): string | null {
-  if (!data.rewardEnabled) return null;
-
+function validateRewardConfig(
+  rewardPerParticipant: string,
+  maxRewardedParticipants: string,
+): string | null {
   const result = validateRewardConfigInput({
-    rewardPerParticipant: data.rewardPerParticipant.trim(),
-    maxRewardedParticipants: Number(data.maxRewardedParticipants.trim()),
+    rewardPerParticipant: rewardPerParticipant.trim(),
+    maxRewardedParticipants: Number(maxRewardedParticipants.trim()),
   });
   return result.ok ? null : result.errors[0] ?? "Invalid reward configuration.";
 }
 
+function validateRewards(data: RewardFirstDraftFormData): RewardsErrors {
+  const errors: RewardsErrors = {};
+
+  if (!data.duration) {
+    errors.duration = "Select a poll duration.";
+  }
+
+  if (data.rewardMode === "rewarded") {
+    if (!data.rewardFundingMode) {
+      errors.rewardFundingMode = "Select who will fund the reward budget.";
+    }
+
+    if (data.rewardFundingMode === "community" && !data.fundingWallet?.trim()) {
+      errors.fundingWallet = "Enter the designated community funding wallet.";
+    }
+
+    const rewardError = validateRewardConfig(
+      data.rewardPerParticipant ?? "",
+      data.maxRewardedParticipants ?? "",
+    );
+    if (rewardError) {
+      const result = validateRewardConfigInput({
+        rewardPerParticipant: (data.rewardPerParticipant ?? "").trim(),
+        maxRewardedParticipants: Number(
+          (data.maxRewardedParticipants ?? "").trim(),
+        ),
+      });
+      for (const error of result.errors) {
+        if (error.startsWith("rewardPerParticipant")) {
+          errors.rewardPerParticipant ??= error;
+        } else if (error.startsWith("maxRewardedParticipants")) {
+          errors.maxRewardedParticipants ??= error;
+        }
+      }
+      // Keep an actionable field error even if the shared validator changes
+      // its wording in the future.
+      if (!errors.rewardPerParticipant && !errors.maxRewardedParticipants) {
+        errors.rewardPerParticipant = rewardError;
+      }
+    }
+  }
+
+  return errors;
+}
+
 /** Derived display values from the shared reward domain (server remains authoritative). */
-function computeRewardDisplay(data: PollFormData) {
+function computeRewardDisplayForConfig(
+  rewardPerParticipant: string,
+  maxRewardedParticipants: string,
+) {
   const empty = { principal: null as string | null, feeReserve: null as string | null, total: null as string | null };
-  if (!data.rewardEnabled) return empty;
 
   const result = validateRewardConfigInput({
-    rewardPerParticipant: data.rewardPerParticipant.trim(),
-    maxRewardedParticipants: Number(data.maxRewardedParticipants.trim()),
+    rewardPerParticipant: rewardPerParticipant.trim(),
+    maxRewardedParticipants: Number(maxRewardedParticipants.trim()),
   });
   if (!result.ok || !result.value) return empty;
 
@@ -220,7 +268,21 @@ function computeRewardDisplay(data: PollFormData) {
   };
 }
 
+function computeRewardDisplay(data: RewardFirstDraftFormData) {
+  if (data.rewardMode !== "rewarded") {
+    return { principal: null, feeReserve: null, total: null };
+  }
+  return computeRewardDisplayForConfig(
+    data.rewardPerParticipant ?? "",
+    data.maxRewardedParticipants ?? "",
+  );
+}
+
 function hasSupportErrors(errors: SupportErrors): boolean {
+  return Object.values(errors).some((v) => v !== undefined);
+}
+
+function hasRewardsErrors(errors: RewardsErrors): boolean {
   return Object.values(errors).some((v) => v !== undefined);
 }
 
@@ -266,6 +328,14 @@ export default function CreatePollPage() {
   } = useVotumSession();
   const { openOnboarding } = useOnboarding();
   const pathname = usePathname();
+  const isLegacyDraft =
+    formData.economicModel === POLL_ECONOMIC_MODEL.LEGACY_SUPPORT_ENABLED;
+  const legacyFormData = isLegacyDraft
+    ? (formData as LegacyDraftFormData)
+    : null;
+  const rewardFirstFormData = !isLegacyDraft
+    ? (formData as RewardFirstDraftFormData)
+    : null;
 
   // ---- Publication state ----
   type PublishState = "idle" | "preparing" | "publishing" | "success" | "error";
@@ -284,29 +354,64 @@ export default function CreatePollPage() {
   useEffect(() => {
     if (!initialDraftId || draftLoaded) return;
     const existing = getDraft(initialDraftId);
-    if (existing) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring draft on mount
-      setFormData({
-        category: existing.category,
-        format: existing.format,
-        question: existing.question,
-        context: existing.context,
-        options:
-          existing.options.length >= 2
-            ? existing.options
-            : [...existing.options, ""],
-        contributionMode: existing.contributionMode,
-        purpose: existing.purpose,
-        destinationWallet: existing.destinationWallet,
-        minimumNim: existing.minimumNim,
-        duration: existing.duration,
-        rewardEnabled: existing.reward?.enabled ?? false,
-        rewardPerParticipant: existing.reward?.rewardPerParticipant ?? "",
-        maxRewardedParticipants: existing.reward?.maxRewardedParticipants ?? "",
-      });
-      const stepIndex = ["decision", "support", "review"].indexOf(
-        existing.currentStep,
-      );
+    const normalized = normalizePollDraft(existing);
+    if (normalized) {
+      if (normalized.economicModel === POLL_ECONOMIC_MODEL.LEGACY_SUPPORT_ENABLED) {
+        // Restoring persisted draft data is the purpose of this mount effect.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setFormData({
+          category: normalized.category,
+          format: normalized.format,
+          question: normalized.question,
+          context: normalized.context,
+          options:
+            normalized.options.length >= 2
+              ? normalized.options
+              : [...normalized.options, ""],
+          duration: normalized.duration,
+          economicModel: "legacy_support",
+          rewardMode: null,
+          contributionMode: normalized.contributionMode,
+          purpose: normalized.purpose,
+          destinationWallet: normalized.destinationWallet,
+          minimumNim: normalized.minimumNim,
+          rewardEnabled: normalized.reward?.enabled ?? false,
+          rewardPerParticipant: normalized.reward?.rewardPerParticipant ?? "",
+          maxRewardedParticipants:
+            normalized.reward?.maxRewardedParticipants ?? "",
+        });
+      } else {
+        setFormData({
+          category: normalized.category,
+          format: normalized.format,
+          question: normalized.question,
+          context: normalized.context,
+          options:
+            normalized.options.length >= 2
+              ? normalized.options
+              : [...normalized.options, ""],
+          duration: normalized.duration,
+          economicModel: "reward_first",
+          rewardMode: normalized.rewardMode,
+          ...(normalized.rewardFundingMode
+            ? { rewardFundingMode: normalized.rewardFundingMode }
+            : {}),
+          ...(normalized.fundingWallet
+            ? { fundingWallet: normalized.fundingWallet }
+            : {}),
+          ...(normalized.rewardPerParticipant !== undefined
+            ? { rewardPerParticipant: normalized.rewardPerParticipant }
+            : {}),
+          ...(normalized.maxRewardedParticipants !== undefined
+            ? { maxRewardedParticipants: normalized.maxRewardedParticipants }
+            : {}),
+        });
+      }
+      const stepIndex = (normalized.economicModel ===
+      POLL_ECONOMIC_MODEL.LEGACY_SUPPORT_ENABLED
+        ? LEGACY_STEP_LABELS
+        : NEW_STEP_LABELS
+      ).indexOf(normalized.currentStep);
       if (stepIndex >= 0) setStep(stepIndex);
     }
     setDraftLoaded(true);
@@ -315,22 +420,12 @@ export default function CreatePollPage() {
   // ---- Draft autosave ----
   const { draft, setDraftStatus, saveImmediately } = usePollDraft({
     draftId: initialDraftId,
-    formData: {
-      question: formData.question,
-      context: formData.context,
-      options: formData.options,
-      contributionMode: formData.contributionMode,
-      destinationWallet: formData.destinationWallet,
-      purpose: formData.purpose,
-      minimumNim: formData.minimumNim,
-      duration: formData.duration,
-      reward: {
-        enabled: formData.rewardEnabled,
-        rewardPerParticipant: formData.rewardPerParticipant,
-        maxRewardedParticipants: formData.maxRewardedParticipants,
-      },
-    },
-    currentStep: (["decision", "support", "review"] as const)[step],
+    formData,
+    currentStep: (isLegacyDraft ? LEGACY_STEP_LABELS : NEW_STEP_LABELS)[step] as
+      | "decision"
+      | "support"
+      | "rewards"
+      | "review",
   });
 
   // Update draft status based on wallet / session state during review
@@ -355,9 +450,49 @@ export default function CreatePollPage() {
     () => validateDecision(formData),
     [formData],
   );
-  const supportErrors = useMemo(() => validateSupport(formData), [formData]);
-  const rewardError = useMemo(() => validateReward(formData), [formData]);
-  const rewardDisplay = useMemo(() => computeRewardDisplay(formData), [formData]);
+  const supportErrors = useMemo<SupportErrors>(
+    () =>
+      isLegacyDraft
+        ? validateSupport(formData as LegacyDraftFormData)
+        : {},
+    [formData, isLegacyDraft],
+  );
+  const rewardsErrors = useMemo<RewardsErrors>(
+    () =>
+      !isLegacyDraft
+        ? validateRewards(formData as RewardFirstDraftFormData)
+        : {},
+    [formData, isLegacyDraft],
+  );
+  const legacyRewardError = useMemo(() => {
+    if (!isLegacyDraft) return null;
+    const legacyData = formData as LegacyDraftFormData;
+    return legacyData.rewardEnabled
+      ? validateRewardConfig(
+          legacyData.rewardPerParticipant,
+          legacyData.maxRewardedParticipants,
+        )
+      : null;
+  }, [formData, isLegacyDraft]);
+  const legacyRewardDisplay = useMemo(() => {
+    if (!isLegacyDraft) {
+      return { principal: null, feeReserve: null, total: null };
+    }
+    const legacyData = formData as LegacyDraftFormData;
+    return legacyData.rewardEnabled
+      ? computeRewardDisplayForConfig(
+          legacyData.rewardPerParticipant,
+          legacyData.maxRewardedParticipants,
+        )
+      : { principal: null, feeReserve: null, total: null };
+  }, [formData, isLegacyDraft]);
+  const rewardDisplay = useMemo(
+    () =>
+      !isLegacyDraft
+        ? computeRewardDisplay(formData as RewardFirstDraftFormData)
+        : { principal: null, feeReserve: null, total: null },
+    [formData, isLegacyDraft],
+  );
 
   // ---- Per-option errors (only shown when showErrors is true) ----
   const optionErrors = useMemo(() => {
@@ -388,10 +523,21 @@ export default function CreatePollPage() {
     if (!draft) return false;
     // Form must be valid (question non-empty, options >= 2)
     if (!formData.question.trim() || formData.options.filter(o => o.trim()).length < 2) return false;
-    // Reward config must be valid when enabled (UX gate; server authoritative)
-    if (formData.rewardEnabled && rewardError) return false;
+    if (isLegacyDraft) {
+      if (hasSupportErrors(supportErrors) || legacyRewardError) return false;
+    } else if (hasRewardsErrors(rewardsErrors)) {
+      return false;
+    }
     return true;
-  }, [publishState, draft, formData, rewardError]);
+  }, [
+    publishState,
+    draft,
+    formData,
+    isLegacyDraft,
+    supportErrors,
+    legacyRewardError,
+    rewardsErrors,
+  ]);
 
   // ---- Publish handler ----
   const handlePublish = useCallback(async () => {
@@ -422,20 +568,40 @@ export default function CreatePollPage() {
       question: formData.question,
       description: formData.context || null,
       options: formData.options.filter(o => o.trim()),
-      mode: formData.contributionMode,
-      destinationWallet: formData.destinationWallet,
-      destinationPurpose: formData.purpose,
-      minimumNim: formData.minimumNim,
       fairnessMode: "one_wallet_one_vote",
       duration: formData.duration,
       idempotencyKey: idKey,
     };
 
-    if (formData.rewardEnabled) {
-      body.reward = {
-        rewardPerParticipant: formData.rewardPerParticipant,
-        maxRewardedParticipants: Number(formData.maxRewardedParticipants),
-      };
+    if (isLegacyDraft) {
+      const legacyData = formData as LegacyDraftFormData;
+      body.mode = legacyData.contributionMode;
+      body.destinationWallet = legacyData.destinationWallet;
+      body.destinationPurpose = legacyData.purpose;
+      body.minimumNim = legacyData.minimumNim;
+      if (legacyData.rewardEnabled) {
+        body.reward = {
+          rewardPerParticipant: legacyData.rewardPerParticipant,
+          maxRewardedParticipants: Number(legacyData.maxRewardedParticipants),
+        };
+      }
+    } else {
+      const rewardFirstData = formData as RewardFirstDraftFormData;
+      body.economicModel = POLL_ECONOMIC_MODEL.NEW_REWARD_FIRST_POLL;
+      body.rewardMode = rewardFirstData.rewardMode;
+      if (rewardFirstData.rewardMode === "rewarded") {
+        body.reward = {
+          fundingMode: rewardFirstData.rewardFundingMode,
+          ...(rewardFirstData.rewardFundingMode === "community" &&
+          rewardFirstData.fundingWallet?.trim()
+            ? { fundingWallet: rewardFirstData.fundingWallet.trim() }
+            : {}),
+          rewardPerParticipant: rewardFirstData.rewardPerParticipant,
+          maxRewardedParticipants: Number(
+            rewardFirstData.maxRewardedParticipants,
+          ),
+        };
+      }
     }
 
     let bodyJson: string;
@@ -496,14 +662,39 @@ export default function CreatePollPage() {
       setPublishError(message || "Votum could not publish this poll. Your draft is still safe.");
     }
     setPublishState("error");
-  }, [draft, formData, router, isSessionVerified, isWalletMatched, openOnboarding, pathname]);
+  }, [
+    draft,
+    formData,
+    router,
+    isSessionVerified,
+    isWalletMatched,
+    openOnboarding,
+    pathname,
+    isLegacyDraft,
+  ]);
 
   // ---- Field updaters ----
-  function updateField<K extends keyof PollFormData>(
-    key: K,
-    value: PollFormData[K],
+  function updateField(
+    key: keyof LegacyDraftFormData | keyof RewardFirstDraftFormData,
+    value: unknown,
   ) {
-    setFormData((prev) => ({ ...prev, [key]: value }));
+    setFormData((prev) => ({ ...prev, [key]: value }) as PollFormData);
+  }
+
+  function selectRewardMode(mode: RewardFirstMode) {
+    setFormData((prev) => {
+      if (prev.economicModel !== POLL_ECONOMIC_MODEL.NEW_REWARD_FIRST_POLL) {
+        return prev;
+      }
+      const next: RewardFirstDraftFormData = {
+        ...prev,
+        rewardMode: mode,
+        ...(mode === "rewarded" && !prev.rewardFundingMode
+          ? { rewardFundingMode: "creator" as const }
+          : {}),
+      };
+      return next;
+    });
   }
 
   function handleOptionsChange(newOptions: string[]) {
@@ -527,12 +718,23 @@ export default function CreatePollPage() {
   }
 
   function handleContinueFromSupport() {
-    const errors = validateSupport(formData);
+    if (!isLegacyDraft) return;
+    const legacyData = formData as LegacyDraftFormData;
+    const errors = validateSupport(legacyData);
     if (hasSupportErrors(errors)) {
       setShowErrors(true);
       return;
     }
-    if (formData.rewardEnabled && validateReward(formData)) {
+    if (legacyRewardError) {
+      setShowErrors(true);
+      return;
+    }
+    goToStep(2);
+  }
+
+  function handleContinueFromRewards() {
+    if (isLegacyDraft) return;
+    if (hasRewardsErrors(rewardsErrors)) {
       setShowErrors(true);
       return;
     }
@@ -571,7 +773,7 @@ export default function CreatePollPage() {
       {/* ================================================================= */}
       <Card glass className="mb-6 p-5">
         <ProofPath
-          steps={STEP_LABELS}
+          steps={isLegacyDraft ? LEGACY_STEP_LABELS : NEW_STEP_LABELS}
           activeStep={step}
           className="mb-1"
         />
@@ -599,9 +801,23 @@ export default function CreatePollPage() {
           Build a Votum Poll.
         </h1>
         <p className="mt-2 text-body text-quiet-ink">
-          Choose the category, define the participation, disclose the NIM
-          support destination, then review before publishing.
+          {isLegacyDraft
+            ? "Legacy support poll. Existing participant-support terms are preserved while you edit this draft."
+            : "Choose the decision, define verified participation rewards, then review before publishing."}
         </p>
+        {isLegacyDraft && (
+          <div
+            className="mt-4 rounded-overlay border border-fairness-amber/30 bg-fairness-amber/10 px-4 py-3"
+            role="status"
+          >
+            <p className="text-sm font-medium text-ballot-ink">
+              Legacy support poll
+            </p>
+            <p className="text-micro text-quiet-ink mt-1">
+              New polls use free verified participation or creator/community-funded rewards.
+            </p>
+          </div>
+        )}
       </Card>
 
       <Card glass className="p-5 sm:p-7">
@@ -720,7 +936,7 @@ export default function CreatePollPage() {
               variant="primary"
               onClick={handleContinueFromDecision}
             >
-              Continue to support details
+              {isLegacyDraft ? "Continue to support details" : "Continue to rewards"}
             </Button>
           </div>
         </div>
@@ -729,11 +945,11 @@ export default function CreatePollPage() {
       {/* ================================================================= */}
       {/* STEP 1 — SUPPORT                                                  */}
       {/* ================================================================= */}
-      {step === 1 && (
+      {step === 1 && legacyFormData && (
         <div className={sectionSpacing}>
           {/* ---- Contribution Mode ---- */}
           <ContributionModeSelector
-            value={formData.contributionMode}
+            value={legacyFormData.contributionMode}
             onChange={(mode) => updateField("contributionMode", mode)}
             error={
               showErrors ? supportErrors.contributionMode : undefined
@@ -745,7 +961,7 @@ export default function CreatePollPage() {
             label="What will the NIM support?"
             hint="This statement will be shown before someone confirms their contribution. Describe how the contribution supports this creator, project or community."
             placeholder="E.g. Funds go toward materials and artist stipends for the Main Street mural project."
-            value={formData.purpose}
+            value={legacyFormData.purpose}
             onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
               updateField("purpose", e.target.value)
             }
@@ -758,7 +974,7 @@ export default function CreatePollPage() {
               label="Contribution destination"
               hint="Participants will see this wallet before confirming their NIM contribution."
               placeholder="NQ... or 0x..."
-              value={formData.destinationWallet}
+              value={legacyFormData.destinationWallet}
               onChange={(e: ChangeEvent<HTMLInputElement>) =>
                 updateField("destinationWallet", e.target.value)
               }
@@ -797,7 +1013,7 @@ export default function CreatePollPage() {
               min="0.001"
               step="0.001"
               placeholder="0.001"
-              value={formData.minimumNim}
+              value={legacyFormData.minimumNim}
               onChange={(e: ChangeEvent<HTMLInputElement>) =>
                 updateField("minimumNim", e.target.value)
               }
@@ -812,7 +1028,7 @@ export default function CreatePollPage() {
               label="Poll duration"
               options={DURATION_OPTIONS}
               placeholder="Select duration"
-              value={formData.duration}
+              value={legacyFormData.duration}
               onChange={(e: ChangeEvent<HTMLSelectElement>) =>
                 updateField("duration", e.target.value)
               }
@@ -850,21 +1066,21 @@ export default function CreatePollPage() {
               <button
                 type="button"
                 role="switch"
-                aria-checked={formData.rewardEnabled}
-                onClick={() => updateField("rewardEnabled", !formData.rewardEnabled)}
+                aria-checked={legacyFormData.rewardEnabled}
+                onClick={() => updateField("rewardEnabled", !legacyFormData.rewardEnabled)}
                 className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold ${
-                  formData.rewardEnabled ? "bg-signal-gold" : "bg-border"
+                  legacyFormData.rewardEnabled ? "bg-signal-gold" : "bg-border"
                 }`}
               >
                 <span
                   className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    formData.rewardEnabled ? "translate-x-6" : "translate-x-1"
+                  legacyFormData.rewardEnabled ? "translate-x-6" : "translate-x-1"
                   }`}
                 />
               </button>
             </div>
 
-            {formData.rewardEnabled && (
+            {legacyFormData.rewardEnabled && (
               <div className="flex flex-col gap-3 rounded-lg border border-border bg-soft-fog/40 p-3">
                 <p className="text-secondary text-quiet-ink">
                   Participants earn for participating, regardless of which option
@@ -878,7 +1094,7 @@ export default function CreatePollPage() {
                       type="text"
                       inputMode="decimal"
                       placeholder="0.01"
-                      value={formData.rewardPerParticipant}
+                      value={legacyFormData.rewardPerParticipant}
                       onChange={(e: ChangeEvent<HTMLInputElement>) =>
                         updateField("rewardPerParticipant", e.target.value)
                       }
@@ -892,7 +1108,7 @@ export default function CreatePollPage() {
                       type="text"
                       inputMode="numeric"
                       placeholder="100"
-                      value={formData.maxRewardedParticipants}
+                      value={legacyFormData.maxRewardedParticipants}
                       onChange={(e: ChangeEvent<HTMLInputElement>) =>
                         updateField("maxRewardedParticipants", e.target.value)
                       }
@@ -900,28 +1116,28 @@ export default function CreatePollPage() {
                   </div>
                 </div>
 
-                {rewardError && (
+                {legacyRewardError && (
                   <p
                     className="text-micro text-reject-red"
                     role="alert"
                   >
-                    {rewardError}
+                    {legacyRewardError}
                   </p>
                 )}
 
-                {!rewardError && rewardDisplay.total && (
+                {!legacyRewardError && legacyRewardDisplay.total && (
                   <dl className="flex flex-col gap-1 text-secondary text-quiet-ink">
                     <div className="flex items-center justify-between">
                       <dt className="text-micro">Reward principal</dt>
-                      <dd className="text-micro font-medium">{rewardDisplay.principal}</dd>
+                      <dd className="text-micro font-medium">{legacyRewardDisplay.principal}</dd>
                     </div>
                     <div className="flex items-center justify-between">
                       <dt className="text-micro">Estimated fee reserve</dt>
-                      <dd className="text-micro font-medium">{rewardDisplay.feeReserve}</dd>
+                      <dd className="text-micro font-medium">{legacyRewardDisplay.feeReserve}</dd>
                     </div>
                     <div className="flex items-center justify-between border-t border-divider pt-1">
                       <dt className="text-sm font-medium">Total required funding</dt>
-                      <dd className="text-sm font-medium">{rewardDisplay.total}</dd>
+                      <dd className="text-sm font-medium">{legacyRewardDisplay.total}</dd>
                     </div>
                   </dl>
                 )}
@@ -955,25 +1171,285 @@ export default function CreatePollPage() {
       )}
 
       {/* ================================================================= */}
+      {/* STEP 1 — REWARDS                                                  */}
+      {/* ================================================================= */}
+      {step === 1 && rewardFirstFormData && (
+        <div className={sectionSpacing}>
+          <fieldset
+            className="flex flex-col gap-2"
+            aria-describedby={
+              showErrors && rewardsErrors.rewardMode
+                ? "reward-mode-help reward-mode-error"
+                : "reward-mode-help"
+            }
+          >
+            <legend className="text-sm font-medium text-ballot-ink">
+              How should participants take part?
+            </legend>
+            <p id="reward-mode-help" className="text-micro text-quiet-ink">
+              Every verified wallet gets one vote. Choose whether this poll is
+              free or offers a reward for eligible participation.
+            </p>
+            {showErrors && rewardsErrors.rewardMode && (
+              <p
+                id="reward-mode-error"
+                className="text-micro text-reject-red"
+                role="alert"
+              >
+                {rewardsErrors.rewardMode}
+              </p>
+            )}
+            <div className="flex flex-col gap-3">
+              <Radio
+                name="rewardMode"
+                value="free"
+                label="Free verified poll"
+                description="One verified wallet, one vote, and no participant payment."
+                checked={rewardFirstFormData.rewardMode === "free"}
+                onChange={() => selectRewardMode("free")}
+              />
+              <Radio
+                name="rewardMode"
+                value="rewarded"
+                label="Reward verified participants"
+                description="Define a fixed reward and a maximum number of eligible participants."
+                checked={rewardFirstFormData.rewardMode === "rewarded"}
+                onChange={() => selectRewardMode("rewarded")}
+              />
+            </div>
+          </fieldset>
+
+          {rewardFirstFormData.rewardMode === "rewarded" && (
+            <div className="flex flex-col gap-4 rounded-overlay border border-border bg-soft-fog/40 p-4 sm:p-5">
+              <div>
+                <h2 className="text-sm font-medium text-ballot-ink">
+                  Reward budget
+                </h2>
+                <p className="text-micro text-quiet-ink mt-1">
+                  Rewards are for verified participation, never for choosing a
+                  particular option. The campaign must be funded before the
+                  reward is advertised.
+                </p>
+              </div>
+
+              <fieldset
+                className="flex flex-col gap-2"
+                aria-describedby={
+                  showErrors && rewardsErrors.rewardFundingMode
+                    ? "funding-mode-help funding-mode-error"
+                    : "funding-mode-help"
+                }
+              >
+                <legend className="text-sm font-medium text-ballot-ink">
+                  Who funds the reward budget?
+                </legend>
+                <p id="funding-mode-help" className="text-micro text-quiet-ink">
+                  Choose one authoritative wallet for campaign funding.
+                </p>
+                {showErrors && rewardsErrors.rewardFundingMode && (
+                  <p
+                    id="funding-mode-error"
+                    className="text-micro text-reject-red"
+                    role="alert"
+                  >
+                    {rewardsErrors.rewardFundingMode}
+                  </p>
+                )}
+                <div className="flex flex-col gap-3">
+                  <Radio
+                    name="rewardFundingMode"
+                    value="creator"
+                    label="Creator-funded"
+                    description="You fund the reward budget."
+                    checked={rewardFirstFormData.rewardFundingMode === "creator"}
+                    onChange={() => updateField("rewardFundingMode", "creator")}
+                  />
+                  <Radio
+                    name="rewardFundingMode"
+                    value="community"
+                    label="Community-funded"
+                    description="A designated community wallet funds the reward budget."
+                    checked={rewardFirstFormData.rewardFundingMode === "community"}
+                    onChange={() => updateField("rewardFundingMode", "community")}
+                  />
+                </div>
+              </fieldset>
+
+              {rewardFirstFormData.rewardFundingMode === "creator" && (
+                <div
+                  className="rounded-card border border-nim-blue/25 bg-nim-blue/5 px-4 py-3"
+                  role="status"
+                >
+                  <p className="text-sm font-medium text-ballot-ink">
+                    Creator wallet
+                  </p>
+                  <p className="font-proof text-proof text-nim-blue break-all mt-1">
+                    {activeAccount ?? "Connect your creator wallet to continue."}
+                  </p>
+                  <p className="text-micro text-quiet-ink mt-1">
+                    Your verified session identifies the creator and the reward
+                    funder. The server derives this identity at publication.
+                  </p>
+                </div>
+              )}
+
+              {rewardFirstFormData.rewardFundingMode === "community" && (
+                <Input
+                  label="Designated community funding wallet"
+                  hint="This verified community wallet will fund the reward budget."
+                  placeholder="NQ... or 0x..."
+                  value={rewardFirstFormData.fundingWallet ?? ""}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                    updateField("fundingWallet", e.target.value)
+                  }
+                  error={showErrors ? rewardsErrors.fundingWallet : undefined}
+                  required
+                />
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Input
+                    label="Reward per participant"
+                    hint="Each eligible participant receives this exact amount."
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0.01"
+                    value={rewardFirstFormData.rewardPerParticipant ?? ""}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                      updateField("rewardPerParticipant", e.target.value)
+                    }
+                    error={
+                      showErrors
+                        ? rewardsErrors.rewardPerParticipant
+                        : undefined
+                    }
+                    required
+                  />
+                  <p className="text-micro text-quiet-ink">NIM</p>
+                </div>
+                <Input
+                  label="Maximum rewarded participants"
+                  hint="Rewards stop once this many participants have earned."
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="100"
+                  value={rewardFirstFormData.maxRewardedParticipants ?? ""}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                    updateField("maxRewardedParticipants", e.target.value)
+                  }
+                  error={
+                    showErrors
+                      ? rewardsErrors.maxRewardedParticipants
+                      : undefined
+                  }
+                  required
+                />
+              </div>
+
+              {showErrors && hasRewardsErrors(rewardsErrors) && (
+                <p className="text-micro text-reject-red" role="alert" aria-live="polite">
+                  Review the highlighted reward settings before continuing.
+                </p>
+              )}
+
+              {!hasRewardsErrors(rewardsErrors) && rewardDisplay.total && (
+                <dl className="flex flex-col gap-1 text-secondary text-quiet-ink">
+                  <div className="flex items-center justify-between">
+                    <dt className="text-micro">Reward principal</dt>
+                    <dd className="text-micro font-medium">{rewardDisplay.principal}</dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-micro">Estimated fee reserve</dt>
+                    <dd className="text-micro font-medium">{rewardDisplay.feeReserve}</dd>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-divider pt-1">
+                    <dt className="text-sm font-medium">Total required funding</dt>
+                    <dd className="text-sm font-medium">{rewardDisplay.total}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2">
+            <Select
+              label="Poll duration"
+              options={DURATION_OPTIONS}
+              placeholder="Select duration"
+              value={rewardFirstFormData.duration}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                updateField("duration", e.target.value)
+              }
+              error={showErrors ? rewardsErrors.duration : undefined}
+              required
+            />
+            {closingTime && (
+              <p className="text-secondary text-quiet-ink">
+                Planned closing time: {formatClosingTime(closingTime)}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 pt-1">
+            <FairnessLabel />
+            <p className="text-secondary text-quiet-ink">
+              One verified wallet gets one vote. Reward eligibility is
+              independent of the selected option.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => goToStep(0)}
+            >
+              Back to decision
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={handleContinueFromRewards}
+            >
+              Review Votum Poll
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
       {/* STEP 2 — REVIEW                                                   */}
       {/* ================================================================= */}
       {step === 2 && (
         <>
           <PollReview
+            economicModel={formData.economicModel}
             category={formData.category}
             format={formData.format}
             question={formData.question}
             context={formData.context}
             options={formData.options}
-            contributionMode={formData.contributionMode}
-            purpose={formData.purpose}
-            destinationWallet={formData.destinationWallet}
-            minimumNim={formData.minimumNim}
+            rewardMode={rewardFirstFormData?.rewardMode}
+            rewardFundingMode={rewardFirstFormData?.rewardFundingMode}
+            fundingWallet={rewardFirstFormData?.fundingWallet}
+            rewardPerParticipant={rewardFirstFormData?.rewardPerParticipant}
+            maxRewardedParticipants={
+              rewardFirstFormData?.maxRewardedParticipants
+            }
+            rewardPrincipal={rewardDisplay.principal}
+            rewardFeeReserve={rewardDisplay.feeReserve}
+            rewardTotalFunding={rewardDisplay.total}
+            contributionMode={legacyFormData?.contributionMode}
+            purpose={legacyFormData?.purpose}
+            destinationWallet={legacyFormData?.destinationWallet}
+            minimumNim={legacyFormData?.minimumNim}
             duration={formData.duration}
             durationLabel={durationLabel}
             closingTime={closingTimeStr}
             onEditDecision={() => goToStep(0)}
             onEditSupport={() => goToStep(1)}
+            onEditRewards={() => goToStep(1)}
             activeAccount={activeAccount}
             walletStatus={walletStatus}
             sessionStatus={sessionStatus}

@@ -17,6 +17,8 @@ interface PollCardProps {
   category?: PollCategory;
   format?: PollFormat;
   closingAt?: string;
+  rewarded?: boolean;
+  rewardPerParticipantNim?: string;
   className?: string;
 }
 
@@ -45,6 +47,8 @@ export function PollCard({
   category,
   format,
   closingAt,
+  rewarded = false,
+  rewardPerParticipantNim,
   className = "",
 }: PollCardProps) {
   return (
@@ -79,7 +83,7 @@ export function PollCard({
           );
         })()}
 
-        {/* Stats row: wallets + NIM */}
+        {/* Stats row: wallets + any legacy support total */}
         {(totalWallets !== undefined || totalNim !== undefined) && (
           <div className="flex items-center gap-4">
             {totalWallets !== undefined && (
@@ -90,7 +94,7 @@ export function PollCard({
             )}
             {totalNim !== undefined && (
               <span className="text-proof text-nim-blue">
-                {totalNim.toLocaleString()} NIM
+                 {totalNim.toLocaleString()} legacy NIM support
               </span>
             )}
           </div>
@@ -103,9 +107,18 @@ export function PollCard({
               {optionCount} option{optionCount !== 1 ? "s" : ""}
             </span>
           )}
-          <Badge variant={statusBadgeVariant[status]}>
-            {statusLabel[status]}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {rewarded && (
+              <Badge variant="signal">
+                {rewardPerParticipantNim
+                  ? `Earn ${rewardPerParticipantNim}`
+                  : "Rewarded"}
+              </Badge>
+            )}
+            <Badge variant={statusBadgeVariant[status]}>
+              {statusLabel[status]}
+            </Badge>
+          </div>
         </div>
       </Card>
     </Link>

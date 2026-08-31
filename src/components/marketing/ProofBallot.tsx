@@ -143,7 +143,7 @@ export function ProofBallot({ className = "" }: { className?: string }) {
                 strokeLinecap="round"
               />
             </svg>
-            NIM contribution
+            Reward available
           </p>
         </div>
       </div>

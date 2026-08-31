@@ -1,4 +1,4 @@
-import type { VoteStatus } from "@/types/poll";
+import type { PollView, VoteStatus } from "@/types/poll";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { FairnessLabel } from "@/components/ui/FairnessLabel";
@@ -38,6 +38,7 @@ function VerifyingSpinner() {
 // ---------------------------------------------------------------------------
 
 interface PollVotePanelProps {
+  economicModel: PollView["economicModel"];
   voteStatus: VoteStatus;
   hasVoted?: boolean;
   selectedOptionId?: string;
@@ -49,10 +50,12 @@ interface PollVotePanelProps {
 // ---------------------------------------------------------------------------
 
 export function PollVotePanel({
+  economicModel,
   voteStatus,
   selectedOptionId,
   className = "",
 }: PollVotePanelProps) {
+  const isLegacySupport = economicModel === "legacy_support";
 
   return (
     <Card className={`p-6 space-y-5 ${className}`}>
@@ -61,8 +64,9 @@ export function PollVotePanel({
 
       {/* Contextual message below the fairness label */}
       <p className="text-micro text-quiet-ink">
-        NIM contribution is displayed as a separate support signal. Contributing
-        more NIM does not create additional votes.
+        {isLegacySupport
+          ? "NIM contribution is displayed as a separate support signal. Contributing more NIM does not create additional votes."
+          : "Every verified wallet gets one vote. Voting is free and independent of the selected option."}
       </p>
 
       {/* ================================================================ */}
@@ -78,10 +82,12 @@ export function PollVotePanel({
       {voteStatus === "option_selected" && (
         <div className="space-y-3">
           <Button variant="primary" size="md" disabled>
-            Back this choice with NIM
+            {isLegacySupport ? "Back this choice with NIM" : "Cast vote"}
           </Button>
           <p className="text-micro text-quiet-ink">
-            NIM payment confirmation will be enabled during product integration.
+            {isLegacySupport
+              ? "NIM payment confirmation will be enabled during product integration."
+              : "Wallet verification will be enabled during product integration."}
           </p>
         </div>
       )}
@@ -90,7 +96,9 @@ export function PollVotePanel({
         <div className="space-y-3">
           <WalletButton />
           <p className="text-body text-quiet-ink">
-            Connect your Nimiq wallet to back a choice with NIM.
+            {isLegacySupport
+              ? "Connect your Nimiq wallet to back a choice with NIM."
+              : "Connect your Nimiq wallet to vote."}
           </p>
         </div>
       )}
@@ -99,7 +107,9 @@ export function PollVotePanel({
         <div className="flex items-center gap-2">
           <VerifyingSpinner />
           <p className="text-body text-nim-blue">
-            Confirm your NIM contribution in Nimiq Pay.
+            {isLegacySupport
+              ? "Confirm your NIM contribution in Nimiq Pay."
+              : "Verify your wallet ownership to continue."}
           </p>
         </div>
       )}
@@ -108,7 +118,9 @@ export function PollVotePanel({
         <div className="flex items-center gap-2">
           <VerifyingSpinner />
           <p className="text-body text-quiet-ink">
-            Confirming your contribution and recording your signal.
+            {isLegacySupport
+              ? "Confirming your contribution and recording your signal."
+              : "Confirming your vote."}
           </p>
         </div>
       )}
@@ -117,8 +129,8 @@ export function PollVotePanel({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <CheckIcon className="text-verified-green flex-shrink-0" />
-            <span className="text-body text-verified-green font-medium">
-              Your signal is verified.
+          <span className="text-body text-verified-green font-medium">
+              {isLegacySupport ? "Your signal is verified." : "Your vote is verified."}
             </span>
           </div>
           {selectedOptionId && (
@@ -131,7 +143,9 @@ export function PollVotePanel({
 
       {voteStatus === "cancelled" && (
         <p className="text-body text-reject-red">
-          No vote was recorded. Your payment was not confirmed.
+          {isLegacySupport
+            ? "No vote was recorded. Your payment was not confirmed."
+            : "No vote was recorded."}
         </p>
       )}
 
@@ -144,15 +158,19 @@ export function PollVotePanel({
       {voteStatus === "already_voted" && (
         <div className="flex items-center gap-2">
           <CheckIcon className="text-verified-green flex-shrink-0" />
-          <span className="text-body text-verified-green font-medium">
-            Your NIM-backed signal is recorded.
+            <span className="text-body text-verified-green font-medium">
+              {isLegacySupport
+                ? "Your NIM-backed signal is recorded."
+                : "Your verified vote is recorded."}
           </span>
         </div>
       )}
 
       {voteStatus === "poll_closed" && (
         <p className="text-body text-quiet-ink italic">
-          The community has spoken—with support behind it.
+          {isLegacySupport
+            ? "The community has spoken—with support behind it."
+            : "This poll is closed."}
         </p>
       )}
     </Card>

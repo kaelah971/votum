@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: Votum
-description: "The Proof Ballot — a calm, premium Nimiq Pay Mini App where community choices become verified NIM-backed signal."
+description: "The Proof Ballot — a calm, premium Nimiq Pay Mini App where community choices become verified decisions with optional funded participation rewards."
 colors:
   primary: "#18201D"
   background: "#EDEDED"
@@ -88,19 +88,19 @@ components:
 
 ## Overview
 
-Votum is a Nimiq Pay Mini App for community decisions backed by NIM. It gives creators and communities a more honest answer than a free poll: not just what people clicked, but what they cared enough to support.
+Votum is a Nimiq Pay Mini App for verified community decisions. New polls are free to vote in, with an optional fixed reward campaign for eligible participants. Historical participant-support polls remain visibly scoped to the legacy path.
 
 The supplied reference contributes the **interface discipline** to retain: Soft Fog background, restrained neutral field, light premium surfaces, Neue Montreal / General Sans headline direction, Inter functional type, soft-radius components, pill actions, high-fidelity 3D visual language, and a calm two-column hierarchy. Do not copy its EV-charger/greenhouse narrative.
 
 Votum’s own visual territory is **The Proof Ballot**:
 
-> **Question → Choice → Verified NIM → Community Result**
+> **Question → Choice → Verified Vote → Community Result**
 
 The app should feel composed and decisive, not playful, casino-like, DAO-generic, or dark-speculative.
 
 ## Colors
 
-Keep the reference background exactly: **Soft Fog `#EDEDED`**. It provides the quiet premium field requested. Replace its green-energy colour meaning with Votum’s contribution and proof states.
+Keep the reference background exactly: **Soft Fog `#EDEDED`**. It provides the quiet premium field requested. Use the existing state colors for reward status, verification, and the explicitly scoped legacy support path.
 
 | Token | HEX | Role |
 |---|---:|---|
@@ -119,7 +119,7 @@ Keep the reference background exactly: **Soft Fog `#EDEDED`**. It provides the q
 ### Colour rules
 
 - Signal Gold replaces the reference lime as the **single high-emphasis CTA colour**. It appears on the Votum mark, primary CTA and selected-choice state—nowhere else as a large block.
-- NIM Blue is informational, not a primary CTA. It signals payment and proof context.
+- NIM Blue is informational, not a primary CTA. It signals proof context and legacy payment context.
 - Green means an action is verified. Amber means review; red means failure. Each must be paired with text and icon.
 - No full-page gradient, neon, glow, casino green, odds colours, token-logo wallpaper, or multicolour poll options.
 - Soft Fog, Clear Ballot and Ballot Ink should occupy the overwhelming majority of every view.
@@ -151,20 +151,20 @@ Keep the pill-shaped/borderless top bar:
 
 - left: small circular Signal Gold Votum mark + wordmark;
 - center: `Explore · Create` or `Polls · Create`;
-- right: a compact `NIM signalled` stat pill and a circular utility icon.
+- right: a compact reward-status pill and a circular utility icon.
 
 ### Hero
 
 Keep the 45/55 asymmetric layout. Change the content:
 
-- **left:** a `↗ NIM-BACKED COMMUNITY DECISIONS` eyebrow, headline, concise explanation, Create / Demo Poll pill CTAs, and a horizontal proof strip;
+  - **left:** a `↗ VERIFIED COMMUNITY DECISIONS` eyebrow, headline, concise explanation, Create / Explore pill CTAs, and a horizontal proof strip;
 - **right:** a high-fidelity 3D **Proof Ballot** render with floating glass cards.
 
 ### Product visual direction
 
 Retain the reference’s high-production 3D, frosted/glass material visual quality and photographic light—not its charging-station/moss subject.
 
-The hero image is a sculptural, tactile ballot object: a matte Ballot Ink voting slab or paper-like card entering a clear chamber, with one Signal Gold NIM marker, subtle transparent layers and a restrained NIM Blue proof trace. A floating card can read `Vote verified` and another can show `84 wallets · 127 NIM`.
+The hero image is a sculptural, tactile ballot object: a matte Ballot Ink voting slab or paper-like card entering a clear chamber, with one Signal Gold NIM marker, subtle transparent layers and a restrained NIM Blue proof trace. A floating card can read `Vote verified` and another can show `84 verified wallets · reward available`.
 
 Do not use generic ballot-box stock photos, cartoon polls, floating coin piles, a crypto city, neon chains, or a literal “community people” illustration. The product outcome—not token decoration—is the visual subject.
 
@@ -172,22 +172,27 @@ Do not use generic ballot-box stock photos, cartoon polls, floating coin piles, 
 
 Use a minimal diagonal path, derived from the reference’s `↗` mark:
 
-> **question ↗ choice ↗ verified NIM ↗ result**
+  > **question ↗ choice ↗ verified vote ↗ result**
 
 It can appear as a label sequence, a small proof line, or as the structure inside a receipt. Never turn it into an orbit, network mesh, candlestick chart or decorative arrow field.
 
 ### Main product surface: Signal Poll
 
-A poll screen follows this hierarchy:
+A new reward-first poll screen follows this hierarchy:
 
 1. Question.
-2. What the contribution supports.
-3. Visible destination wallet/purpose.
-4. Minimum NIM amount.
-5. Option selection.
-6. Fairness rule: `ONE WALLET · ONE VOTE`.
-7. Primary `Back this choice with NIM` CTA.
-8. Live result after verified payment: wallet count and NIM signal shown separately.
+2. Participation model: free verified poll or rewarded participation.
+3. Option selection.
+4. Fairness rule: `ONE WALLET · ONE VOTE`.
+5. Primary `Cast vote` CTA.
+6. Live verified result and, only when funded, the safe reward offer.
+
+Historical `legacy_support` polls may additionally render the support hierarchy:
+
+1. What the contribution supports.
+2. Visible destination wallet/purpose.
+3. Minimum NIM amount.
+4. Option selection and the legacy support CTA.
 
 ## Components
 
@@ -210,10 +215,10 @@ Keep the reference mechanics—pills, generous radii, barely-there elevation, an
 
 ### Result display
 
-Show both measures in clear, parallel format:
+Show verified participation and reward status in clear, separate formats. Legacy support results may additionally show the support measure:
 
 > **Result cards leads**  
-> `51 wallets chose this · 284 NIM signalled`
+> `51 verified wallets · Reward: 0.01 NIM when funded`
 
 Do not call the NIM total “winning money.” Do not show odds, payout or pot terminology.
 
@@ -221,9 +226,10 @@ Do not call the NIM total “winning money.” Do not show odds, payout or pot t
 
 A shareable, data-minimised proof surface:
 
-> **Your NIM-backed signal is recorded**  
-> `1 NIM · Result cards · 14:26 UTC`  
-> `tx: NQ…9F4A`
+> **Your verified vote is recorded**
+> `Result cards · 14:26 UTC`
+
+Legacy support receipts may retain their NIM amount and transaction reference.
 
 It must never reveal full wallet data in a public share image.
 
@@ -235,7 +241,7 @@ Retain the reference’s calm depth system:
 |---|---|
 | Flat | Background, nav labels, microcopy and dividers |
 | Soft elevation `0 4px 16px rgba(0,0,0,0.04)` | Standard cards and feature strips |
-| Glass overlay | Floating `Vote verified` and NIM-signal cards over hero/product render |
+| Glass overlay | Floating `Vote verified` and, only for legacy context, NIM-support cards over hero/product render |
 
 No blur-heavy cards, deep shadows, neumorphism, hard sticker shadows or animated elevation.
 
@@ -247,8 +253,8 @@ No blur-heavy cards, deep shadows, neumorphism, hard sticker shadows or animated
 - Make the question and the explicit NIM destination more prominent than the total NIM raised.
 - Use Gold for a decision/action; Blue for proof; Green only for verified completion.
 - Use the diagonal `↗` and Proof Path as a quiet recognisable asset.
-- Show wallet count and NIM signal separately in every result.
-- State the support destination before payment.
+- Show wallet count and reward status separately in every reward-first result; legacy results may additionally show NIM support.
+- State reward terms before voting; legacy support destinations before payment.
 
 ### Don't
 

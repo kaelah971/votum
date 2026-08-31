@@ -131,7 +131,7 @@ export async function POST(
   // 6. Validate poll (must exist, be live, not expired, not in the future)
   const { data: poll, error: pollErr } = await admin
     .from("polls")
-    .select("id, status, is_public, starts_at, ends_at, min_nim_luna, destination_wallet")
+     .select("id, status, is_public, starts_at, ends_at, min_nim_luna, destination_wallet, economic_model")
     .eq("id", pollId)
     .single();
 
@@ -144,6 +144,28 @@ export async function POST(
         message: "Poll not found.",
       },
       { status: 404 },
+    );
+  }
+  if (poll.economic_model === "reward_first") {
+    return NextResponse.json(
+      {
+        error: "support_not_available",
+        stage: "economic_model",
+        requestId,
+        message: "New polls use free voting or funded participation rewards. They do not accept participant support.",
+      },
+      { status: 422 },
+    );
+  }
+  if (poll.min_nim_luna === null || poll.destination_wallet === null) {
+    return NextResponse.json(
+      {
+        error: "legacy_poll_invalid",
+        stage: "economic_model",
+        requestId,
+        message: "This legacy poll is missing its support configuration.",
+      },
+      { status: 500 },
     );
   }
   if (poll.status !== "live") {

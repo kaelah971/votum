@@ -11,7 +11,10 @@ export function ProfileStats({ stats }: { stats: ProfileStats }) {
     { label: "Participations", value: String(stats.participations) },
     { label: "Polls created", value: String(stats.pollsCreated) },
     { label: "NIM earned", value: formatNimAmount(BigInt(stats.nimEarnedLuna)) },
-    { label: "NIM supported", value: formatNimAmount(BigInt(stats.nimSupportedLuna)) },
+    {
+      label: "Legacy NIM support",
+      value: formatNimAmount(BigInt(stats.nimSupportedLuna)),
+    },
   ];
 
   return (

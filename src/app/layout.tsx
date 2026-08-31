@@ -25,23 +25,23 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_APP_URL ?? "https://votum-five.vercel.app",
   ),
   title: {
-    default: "Votum — NIM-backed community decisions",
+    default: "Votum — Verified community decisions",
     template: "%s | Votum",
   },
   description:
-    "Put NIM behind your say. Votum helps communities make decisions with verified NIM-backed votes inside Nimiq Pay. One wallet · one vote. NIM support is counted separately.",
+    "Create a free verified poll or fund a reward for eligible participants. Every verified wallet gets one vote.",
   openGraph: {
-    title: "Votum — NIM-backed community decisions",
+    title: "Votum — Verified community decisions",
     description:
-      "Put NIM behind your say. Create community decisions where every vote carries verified NIM-backed signal.",
+      "Verified decisions. Rewards when participation is funded.",
     siteName: "Votum",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "Votum — NIM-backed community decisions",
+    title: "Votum — Verified community decisions",
     description:
-      "Put NIM behind your say. NIM-backed community decisions inside Nimiq Pay.",
+      "Create free verified polls and discover funded participation rewards.",
   },
   icons: {
     icon: "/favicon.ico",

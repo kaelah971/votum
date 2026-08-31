@@ -551,6 +551,9 @@ export function PollNimSupportPanel({
 
   return (
     <div className={`space-y-6 ${className}`}>
+      <p className="text-micro text-quiet-ink tracking-wider uppercase">
+        Legacy support
+      </p>
       <h3 className="text-card-heading font-display text-ballot-ink">
         NIM Support
       </h3>

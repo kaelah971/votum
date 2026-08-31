@@ -20,6 +20,8 @@ interface CreatorPoll {
   isPublic: boolean;
   createdAt: string;
   optionCount: number;
+  economicModel: "legacy_support" | "reward_first";
+  rewardMode: "free" | "rewarded" | null;
 }
 
 export default function MyPollsPage() {
@@ -229,6 +231,14 @@ export default function MyPollsPage() {
                   <span>·</span>
                   <span className={poll.isPublic ? "text-nim-blue" : ""}>
                     {poll.isPublic ? "Public" : "Private"}
+                  </span>
+                  <span>·</span>
+                  <span>
+                    {poll.economicModel === "legacy_support"
+                      ? "Legacy support"
+                      : poll.rewardMode === "rewarded"
+                        ? "Rewarded participation"
+                        : "Free verified"}
                   </span>
                 </div>
               </div>

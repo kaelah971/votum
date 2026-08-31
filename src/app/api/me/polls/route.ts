@@ -45,7 +45,7 @@ export async function GET() {
     const { data: polls, error } = await supabase
       .from("polls")
       .select(
-        "id, question, description, mode, destination_wallet, destination_purpose, min_nim_luna, fairness_mode, status, starts_at, ends_at, is_public, created_at, category, format",
+        "id, question, description, mode, destination_wallet, destination_purpose, min_nim_luna, fairness_mode, status, starts_at, ends_at, is_public, created_at, category, format, economic_model, reward_mode",
       )
       .eq("creator_wallet", creatorWallet)
       .order("created_at", { ascending: false })
@@ -90,6 +90,13 @@ export async function GET() {
       isPublic: p.is_public,
       createdAt: p.created_at,
       closingAt: p.ends_at,
+      economicModel:
+        p.economic_model === "reward_first" ? "reward_first" : "legacy_support",
+      rewardMode:
+        p.economic_model === "reward_first" &&
+        (p.reward_mode === "free" || p.reward_mode === "rewarded")
+          ? p.reward_mode
+          : null,
     }));
 
     log("polls_listed", { requestId, poll_count: mapped.length, status: 200 });

@@ -40,7 +40,7 @@ export default async function ExplorePage({ searchParams }: PageProps) {
   if (filters.sort === "grouped") {
     initialResult = await queryExploreGrouped({
       search: filters.search, category: filters.category,
-      format: filters.format, status: filters.status,
+      format: filters.format, status: filters.status, rewarded: filters.rewarded,
       sort: "grouped", limit: 4,
     }).catch((err: unknown) => {
       errorMsg = err instanceof Error ? err.message : "Could not load Explore";
@@ -49,7 +49,7 @@ export default async function ExplorePage({ searchParams }: PageProps) {
   } else {
     initialResult = await queryExploreFlat({
       search: filters.search, category: filters.category,
-      format: filters.format, status: filters.status,
+      format: filters.format, status: filters.status, rewarded: filters.rewarded,
       sort: filters.sort, limit: 12,
     }).catch((err: unknown) => {
       errorMsg = err instanceof Error ? err.message : "Could not load Explore";

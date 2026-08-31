@@ -1,6 +1,11 @@
 "use client";
 
 import type { ContributionMode } from "@/types/poll";
+import type {
+  PollEconomicModel,
+  RewardFirstMode,
+  RewardFundingMode,
+} from "@/lib/drafts/types";
 import type { PollCategory, PollFormat } from "@/lib/polls/taxonomy";
 import { CATEGORY_LABELS, FORMAT_LABELS } from "@/lib/polls/taxonomy";
 import { Card } from "@/components/ui/Card";
@@ -42,20 +47,31 @@ function InfoCircleIcon({ className = "" }: { className?: string }) {
 // ---------------------------------------------------------------------------
 
 interface PollReviewProps {
+  /** Missing means legacy for callers that predate the reward-first contract. */
+  economicModel?: PollEconomicModel;
   category: PollCategory;
   format: PollFormat;
   question: string;
   context: string;
   options: string[];
-  contributionMode: ContributionMode | null;
-  purpose: string;
-  destinationWallet: string;
-  minimumNim: string;
+  contributionMode?: ContributionMode | null;
+  purpose?: string;
+  destinationWallet?: string;
+  minimumNim?: string;
+  rewardMode?: RewardFirstMode;
+  rewardFundingMode?: RewardFundingMode;
+  fundingWallet?: string;
+  rewardPerParticipant?: string;
+  maxRewardedParticipants?: string;
+  rewardPrincipal?: string | null;
+  rewardFeeReserve?: string | null;
+  rewardTotalFunding?: string | null;
   duration: string;
   durationLabel: string;
   closingTime: string | null;
   onEditDecision: () => void;
-  onEditSupport: () => void;
+  onEditSupport?: () => void;
+  onEditRewards?: () => void;
   /** The currently connected Nimiq wallet address, if any. */
   activeAccount?: string | null;
   /** Current wallet connection status from NimiqProvider. */
@@ -82,15 +98,24 @@ export function PollReview({
   question,
   context,
   options,
-  contributionMode: _contributionMode,
+  economicModel,
   purpose,
   destinationWallet,
   minimumNim,
+  rewardMode,
+  rewardFundingMode,
+  fundingWallet,
+  rewardPerParticipant,
+  maxRewardedParticipants,
+  rewardPrincipal,
+  rewardFeeReserve,
+  rewardTotalFunding,
   duration,
   durationLabel,
   closingTime,
   onEditDecision,
   onEditSupport,
+  onEditRewards,
   activeAccount,
   walletStatus,
   sessionStatus,
@@ -101,7 +126,8 @@ export function PollReview({
   publishError = null,
   onPublish,
 }: PollReviewProps) {
-  void _contributionMode;
+  const isRewardFirst = economicModel === "reward_first";
+  const isRewarded = isRewardFirst && rewardMode === "rewarded";
   void duration;
 
   return (
@@ -172,57 +198,158 @@ export function PollReview({
 
           <Divider />
 
-          {/* ---- Section: What the NIM supports ---- */}
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-micro text-quiet-ink tracking-wider uppercase">
-                What the NIM supports
-              </h2>
-              <button
-                type="button"
-                onClick={onEditSupport}
-                className="text-sm text-signal-gold hover:text-deep-gold transition-colors font-medium focus-visible:outline-none focus-visible:underline"
-              >
-                Edit support details
-              </button>
-            </div>
-            <p className="text-body text-ballot-ink">
-              {purpose}
-            </p>
-          </section>
-
-          <Divider />
-
-          {/* ---- Section: Contribution destination ---- */}
-          <section>
-            <h2 className="text-micro text-quiet-ink tracking-wider uppercase mb-2">
-              Contribution destination
-            </h2>
-            <p className="font-proof text-proof text-nim-blue break-all">
-              {destinationWallet}
-            </p>
-            {activeAccount &&
-              destinationWallet.trim().toLowerCase() ===
-                activeAccount.toLowerCase() && (
-                <p className="text-micro text-nim-blue mt-1">
-                  Connected wallet
+          {isRewardFirst ? (
+            <>
+              {/* ---- Section: Reward-first participation ---- */}
+              <section>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-micro text-quiet-ink tracking-wider uppercase">
+                    Participation model
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={onEditRewards}
+                    className="text-sm text-signal-gold hover:text-deep-gold transition-colors font-medium focus-visible:outline-none focus-visible:underline"
+                  >
+                    Edit rewards
+                  </button>
+                </div>
+                <p className="text-body text-ballot-ink">
+                  {rewardMode === "rewarded"
+                    ? "Rewarded participation"
+                    : "Free verified poll"}
                 </p>
+                <p className="text-micro text-quiet-ink mt-1">
+                  One verified wallet gets one vote. Reward eligibility is
+                  independent of the selected option.
+                </p>
+              </section>
+
+              {isRewarded && (
+                <>
+                  <Divider />
+                  <section>
+                    <h2 className="text-micro text-quiet-ink tracking-wider uppercase mb-2">
+                      Reward funding
+                    </h2>
+                    <p className="text-body text-ballot-ink">
+                      {rewardFundingMode === "community"
+                        ? "Community-funded"
+                        : "Creator-funded"}
+                    </p>
+                    <p className="text-micro text-quiet-ink mt-1">
+                      {rewardFundingMode === "community"
+                        ? "A designated community wallet funds the reward budget."
+                        : "You fund the reward budget."}
+                    </p>
+                    {rewardFundingMode === "community" && fundingWallet && (
+                      <p className="font-proof text-proof text-nim-blue break-all mt-2">
+                        {fundingWallet}
+                      </p>
+                    )}
+                    {rewardFundingMode === "creator" && activeAccount && (
+                      <p className="font-proof text-proof text-nim-blue break-all mt-2">
+                        {activeAccount}
+                      </p>
+                    )}
+                  </section>
+
+                  <Divider />
+                  <section>
+                    <h2 className="text-micro text-quiet-ink tracking-wider uppercase mb-2">
+                      Reward terms
+                    </h2>
+                    <dl className="flex flex-col gap-1.5 text-body text-ballot-ink">
+                      <div className="flex items-center justify-between gap-4">
+                        <dt>Per eligible participant</dt>
+                        <dd className="font-proof text-proof text-nim-blue">
+                          {rewardPerParticipant || "—"} NIM
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <dt>Maximum participants</dt>
+                        <dd>{maxRewardedParticipants || "—"}</dd>
+                      </div>
+                      {rewardPrincipal && (
+                        <div className="flex items-center justify-between gap-4">
+                          <dt>Reward principal</dt>
+                          <dd>{rewardPrincipal}</dd>
+                        </div>
+                      )}
+                      {rewardFeeReserve && (
+                        <div className="flex items-center justify-between gap-4">
+                          <dt>Estimated fee reserve</dt>
+                          <dd>{rewardFeeReserve}</dd>
+                        </div>
+                      )}
+                      {rewardTotalFunding && (
+                        <div className="flex items-center justify-between gap-4 border-t border-divider pt-1">
+                          <dt className="font-medium">Total required funding</dt>
+                          <dd className="font-medium">{rewardTotalFunding}</dd>
+                        </div>
+                      )}
+                    </dl>
+                    <p className="text-micro text-fairness-amber mt-3" role="status">
+                      Reward campaign configured. Funding is still required
+                      before rewards are advertised.
+                    </p>
+                  </section>
+                </>
               )}
-          </section>
+            </>
+          ) : (
+            <>
+              {/* ---- Section: What the NIM supports ---- */}
+              <section>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-micro text-quiet-ink tracking-wider uppercase">
+                    What the NIM supports
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={onEditSupport}
+                    className="text-sm text-signal-gold hover:text-deep-gold transition-colors font-medium focus-visible:outline-none focus-visible:underline"
+                  >
+                    Edit support details
+                  </button>
+                </div>
+                <p className="text-body text-ballot-ink">{purpose}</p>
+              </section>
 
-          <Divider />
+              <Divider />
 
-          {/* ---- Section: Minimum NIM contribution ---- */}
-          <section>
-            <h2 className="text-micro text-quiet-ink tracking-wider uppercase mb-2">
-              Minimum NIM contribution
-            </h2>
-            <p className="text-body text-ballot-ink">
-              {minimumNim} NIM
-            </p>
-          </section>
+              {/* ---- Section: Contribution destination ---- */}
+              <section>
+                <h2 className="text-micro text-quiet-ink tracking-wider uppercase mb-2">
+                  Contribution destination
+                </h2>
+                <p className="font-proof text-proof text-nim-blue break-all">
+                  {destinationWallet}
+                </p>
+                {activeAccount &&
+                  destinationWallet?.trim().toLowerCase() ===
+                    activeAccount.toLowerCase() && (
+                    <p className="text-micro text-nim-blue mt-1">
+                      Connected wallet
+                    </p>
+                  )}
+              </section>
 
-          <Divider />
+              <Divider />
+
+              {/* ---- Section: Minimum NIM contribution ---- */}
+              <section>
+                <h2 className="text-micro text-quiet-ink tracking-wider uppercase mb-2">
+                  Minimum NIM contribution
+                </h2>
+                <p className="text-body text-ballot-ink">
+                  {minimumNim} NIM
+                </p>
+              </section>
+
+              <Divider />
+            </>
+          )}
 
           {/* ---- Section: Poll options ---- */}
           <section>

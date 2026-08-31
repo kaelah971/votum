@@ -14,7 +14,7 @@ export function MarketingShell({ children }: MarketingShellProps) {
         <div className="mx-auto w-full max-w-[1180px]">{children}</div>
       </main>
       <footer className="px-5 pb-8 pt-4 text-center text-micro text-quiet-ink">
-        Votum &middot; NIM-backed community decisions
+        Votum &middot; Verified community decisions
       </footer>
     </AppFrame>
   );

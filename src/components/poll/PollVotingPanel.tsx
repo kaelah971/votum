@@ -13,6 +13,7 @@ import { FairnessLabel } from "@/components/ui/FairnessLabel";
 import { useNimiqContext } from "@/providers/NimiqProvider";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
 import { useOnboarding } from "@/providers/OnboardingProvider";
+import { formatNimAmount } from "@/lib/nimiq/units";
 
 // ---------------------------------------------------------------------------
 // API response shapes (matching the real API contracts)
@@ -95,6 +96,13 @@ export default function PollVotingPanel({
   // ----- Derived flags -----
   const isLive = poll.status === "live";
   const isClosed = poll.status === "closed";
+  const isLegacySupport = poll.economicModel === "legacy_support";
+  const publicReward =
+    poll.economicModel === "reward_first" &&
+    poll.rewardMode === "rewarded" &&
+    poll.rewardCampaign?.funded
+      ? poll.rewardCampaign
+      : null;
   const hasVoted = userVote?.voted === true || confirmedVote !== null;
 
   // ----- Data fetching -----
@@ -251,7 +259,7 @@ export default function PollVotingPanel({
       />
 
       {/* 2. Support details — only for live polls where the user hasn't voted */}
-      {isLive && !hasVoted && (
+      {isLegacySupport && isLive && !hasVoted && (
         <PollSupportDetails
           destinationPurpose={poll.destinationPurpose}
           destinationWallet={poll.destinationWallet}
@@ -278,8 +286,9 @@ export default function PollVotingPanel({
             <FairnessLabel />
 
             <p className="text-secondary text-quiet-ink">
-              NIM contribution is displayed as a separate support signal.
-              Contributing more NIM does not create additional votes.
+              {isLegacySupport
+                ? "NIM contribution is displayed as a separate support signal. Contributing more NIM does not create additional votes."
+                : "Verify your wallet to cast one vote. Participation is free and independent of the option you choose."}
             </p>
 
             {/* Confirmed vote acknowledgement */}
@@ -350,7 +359,7 @@ export default function PollVotingPanel({
           <Card className="p-5 space-y-3">
             {results.totalVotes === 0 ? (
               <p className="text-body text-quiet-ink text-center py-4">
-                No votes yet. Be the first to back a choice.
+                No votes yet. Be the first to participate.
               </p>
             ) : (
               <>
@@ -390,20 +399,41 @@ export default function PollVotingPanel({
               </>
             )}
           </Card>
-          {/* NIM support placeholder — communicates future integration */}
-          <p className="text-micro text-quiet-ink text-center">
-            NIM support will be confirmed separately from your vote.
-          </p>
+          {isLegacySupport && (
+            <p className="text-micro text-quiet-ink text-center">
+              NIM support will be confirmed separately from your vote.
+            </p>
+          )}
         </div>
+      )}
+
+      {publicReward && (
+        <Card className="border border-verified-green/20 bg-verified-green/[0.06] p-5 space-y-2">
+          <p className="text-body font-medium text-verified-green">
+            Participants can earn {formatRewardNim(publicReward.rewardPerParticipantLuna)} for verified participation.
+          </p>
+          <p className="text-secondary text-quiet-ink">
+            Reward eligibility is independent of your selected option. {publicReward.rewardsRemaining} reward{publicReward.rewardsRemaining === 1 ? "" : "s"} remaining.
+          </p>
+        </Card>
       )}
 
       {/* 6. Closed state — only when the poll is closed */}
       {isClosed && (
         <PollClosedState
           results={poll.results ?? undefined}
+          economicModel={poll.economicModel}
           closingAt={poll.closingAt}
         />
       )}
     </div>
   );
+}
+
+function formatRewardNim(luna: string): string {
+  try {
+    return formatNimAmount(BigInt(luna));
+  } catch {
+    return "the advertised reward";
+  }
 }

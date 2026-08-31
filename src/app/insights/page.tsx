@@ -463,7 +463,7 @@ export default function CreatorInsightsPage() {
                         );
                       })}
                       <p className="text-micro text-quiet-ink pt-1">
-                        Blue = votes · Gold = NIM support
+                         Blue = votes · Gold = legacy NIM support
                       </p>
                     </div>
                   </Card>
@@ -501,7 +501,7 @@ export default function CreatorInsightsPage() {
                             {item.type === "vote_received" &&
                               `A vote was received for "${item.optionLabel}"`}
                             {item.type === "nim_support_confirmed" &&
-                              `${formatLunaToNimShort(item.amountLuna ?? "0")} NIM support was confirmed for "${item.optionLabel}"`}
+                               `${formatLunaToNimShort(item.amountLuna ?? "0")} legacy NIM support was confirmed for "${item.optionLabel}"`}
                             {item.type === "poll_closed" &&
                               `"${item.pollQuestion}" closed`}
                           </p>

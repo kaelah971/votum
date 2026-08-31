@@ -57,6 +57,18 @@ export async function POST(
     return NextResponse.json({ error: "service_unavailable", stage: "admin", requestId, message: "Admin client unavailable." }, { status: 503 });
   }
 
+  const { data: poll, error: pollErr } = await admin
+    .from("polls")
+    .select("economic_model")
+    .eq("id", pollId)
+    .maybeSingle();
+  if (pollErr || !poll) {
+    return NextResponse.json({ error: "poll_not_found", stage: "poll", requestId, message: "Poll not found." }, { status: 404 });
+  }
+  if (poll.economic_model === "reward_first") {
+    return NextResponse.json({ error: "support_not_available", stage: "economic_model", requestId, message: "New polls do not accept participant support." }, { status: 422 });
+  }
+
   // 5. Load intent (nim_support_intents not in generated Database types — cast to any)
   const intentQuery = admin.from("nim_support_intents" as any) as any;
   const { data: rawIntent, error: intentErr } = await intentQuery

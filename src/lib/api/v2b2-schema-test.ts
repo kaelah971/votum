@@ -191,6 +191,8 @@ async function run() {
   const campInsert = await admin.from("reward_campaigns" as any).insert({
     poll_id: pollId,
     creator_wallet: CREATOR,
+    funding_mode: "creator",
+    funding_wallet: CREATOR,
     reward_per_participant_luna: perLuna,
     max_rewarded_participants: maxP,
     reward_principal_luna: principalN,
@@ -308,6 +310,7 @@ async function run() {
   const f1 = await admin.from("reward_funding_transactions" as any).insert({
     campaign_id: campaignId,
     creator_wallet: CREATOR,
+    funder_wallet: CREATOR,
     reference: refA,
     submitted_transaction_hash: hashA,
     amount_luna: totalN,
@@ -318,6 +321,7 @@ async function run() {
   const dupRef = await admin.from("reward_funding_transactions" as any).insert({
     campaign_id: campaignId,
     creator_wallet: CREATOR,
+    funder_wallet: CREATOR,
     reference: refA,
     amount_luna: totalN,
   }).select("id");
@@ -326,6 +330,7 @@ async function run() {
   const dupHash = await admin.from("reward_funding_transactions" as any).insert({
     campaign_id: campaignId,
     creator_wallet: CREATOR,
+    funder_wallet: CREATOR,
     reference: uuid(),
     submitted_transaction_hash: hashA,
     amount_luna: totalN,
@@ -335,6 +340,7 @@ async function run() {
   const badFundingState = await admin.from("reward_funding_transactions" as any).insert({
     campaign_id: campaignId,
     creator_wallet: CREATOR,
+    funder_wallet: CREATOR,
     reference: uuid(),
     amount_luna: totalN,
     status: "bogus",

@@ -44,7 +44,7 @@ const goldPillLinkClasses =
   "inline-flex items-center justify-center rounded-full bg-signal-gold text-ballot-ink hover:bg-deep-gold font-medium transition-colors px-6 py-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold focus-visible:ring-offset-2";
 
 const DEFAULT_FILTERS: ExploreFilterState = {
-  search: "", category: null, format: null, status: "all", sort: "grouped",
+  search: "", category: null, format: null, status: "all", sort: "grouped", rewarded: false,
 };
 
 const DEBOUNCE_MS = 300;
@@ -166,7 +166,8 @@ export function ExploreClient({
       if (filterState.search) params.set("q", filterState.search);
       if (filterState.category) params.set("category", filterState.category);
       if (filterState.format) params.set("format", filterState.format);
-      if (filterState.status !== "all") params.set("status", filterState.status);
+       if (filterState.status !== "all") params.set("status", filterState.status);
+       if (filterState.rewarded) params.set("rewarded", "1");
       if (filterState.sort !== "grouped") params.set("sort", filterState.sort);
       if (section) params.set("section", section);
       if (cursor) params.set("cursor", cursor);
@@ -323,6 +324,7 @@ export function ExploreClient({
       if (filters.category) params.set("category", filters.category);
       if (filters.format) params.set("format", filters.format);
       if (filters.status !== "all") params.set("status", filters.status);
+      if (filters.rewarded) params.set("rewarded", "1");
       if (filters.sort !== "grouped") params.set("sort", filters.sort);
       params.set("cursor", cursor);
 
@@ -438,6 +440,8 @@ export function ExploreClient({
         category={p.category as PollCategory}
         format={p.format as PollFormat}
         closingAt={p.closingAt || undefined}
+        rewarded={p.rewarded}
+        rewardPerParticipantNim={p.rewardPerParticipantNim}
       />
     ));
   }
@@ -491,7 +495,7 @@ export function ExploreClient({
         </h1>
         <p className="text-body text-quiet-ink mt-3 max-w-prose">
           Browse verified polls across sports, entertainment, brands and communities.
-          One wallet gets one vote, while optional NIM support is counted separately.
+          Create a free verified poll or discover funded rewards. One wallet gets one vote.
         </p>
         <div className="mt-6">
           <Link href="/create" className={goldPillLinkClasses}>
@@ -593,6 +597,21 @@ export function ExploreClient({
                   </button>
                 );
               })}
+            </div>
+
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Reward filter">
+              <button
+                type="button"
+                onClick={() => applyFilterChange((prev) => ({ ...prev, rewarded: !prev.rewarded }))}
+                aria-pressed={filters.rewarded === true}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold ${
+                  filters.rewarded
+                    ? "bg-ballot-ink text-clear-ballot"
+                    : "border border-border bg-clear-ballot/60 text-quiet-ink hover:bg-clear-ballot"
+                }`}
+              >
+                Rewarded polls
+              </button>
             </div>
 
             <div className="flex items-center gap-2">

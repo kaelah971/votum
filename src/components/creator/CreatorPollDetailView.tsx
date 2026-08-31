@@ -6,6 +6,7 @@ import { Divider } from "@/components/ui/Divider";
 import { FairnessLabel } from "@/components/ui/FairnessLabel";
 import { CopyIcon } from "@/components/ui/icons";
 import { truncateAddress, formatClosingTime } from "@/lib/format";
+import { formatNimAmount } from "@/lib/nimiq/units";
 import Link from "next/link";
 
 interface CreatorPollDetailViewProps {
@@ -37,6 +38,14 @@ const modeLabel: Record<string, string> = {
   community: "Community-funded",
 };
 
+function formatRewardNim(luna: string): string {
+  try {
+    return formatNimAmount(BigInt(luna));
+  } catch {
+    return "Unavailable";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -45,6 +54,8 @@ export function CreatorPollDetailView({
   poll,
   className = "",
 }: CreatorPollDetailViewProps) {
+  const isLegacySupport = poll.economicModel === "legacy_support";
+
   return (
     <div className={`space-y-8 ${className}`}>
       {/* ================================================================= */}
@@ -77,43 +88,69 @@ export function CreatorPollDetailView({
           Poll summary
         </h2>
         <Card className="p-5 space-y-4">
-          {/* Contribution mode */}
-          <div className="flex items-center justify-between">
-            <span className="text-secondary text-quiet-ink">
-              Contribution mode
-            </span>
-            <Badge variant="default">
-              {modeLabel[poll.contributionMode] ?? poll.contributionMode}
-            </Badge>
-          </div>
+          {isLegacySupport ? (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-secondary text-quiet-ink">
+                  Contribution mode
+                </span>
+                <Badge variant="default">
+                  {modeLabel[poll.contributionMode] ?? poll.contributionMode}
+                </Badge>
+              </div>
 
-          {/* Destination purpose */}
-          <div className="flex items-center justify-between">
-            <span className="text-secondary text-quiet-ink">Purpose</span>
-            <span className="text-body text-ballot-ink text-right max-w-[60%]">
-              {poll.destinationPurpose}
-            </span>
-          </div>
+              <div className="flex items-center justify-between">
+                <span className="text-secondary text-quiet-ink">Purpose</span>
+                <span className="text-body text-ballot-ink text-right max-w-[60%]">
+                  {poll.destinationPurpose}
+                </span>
+              </div>
 
-          {/* Destination wallet (truncated) */}
-          <div className="flex items-center justify-between">
-            <span className="text-secondary text-quiet-ink">
-              Destination wallet
-            </span>
-            <span className="text-proof text-nim-blue">
-              {truncateAddress(poll.destinationWallet)}
-            </span>
-          </div>
+              <div className="flex items-center justify-between">
+                <span className="text-secondary text-quiet-ink">
+                  Destination wallet
+                </span>
+                <span className="text-proof text-nim-blue">
+                  {truncateAddress(poll.destinationWallet)}
+                </span>
+              </div>
 
-          {/* Minimum NIM contribution */}
-          <div className="flex items-center justify-between">
-            <span className="text-secondary text-quiet-ink">
-              Minimum contribution
-            </span>
-            <span className="text-proof text-nim-blue">
-              {poll.minimumNim.toLocaleString()} NIM
-            </span>
-          </div>
+              <div className="flex items-center justify-between">
+                <span className="text-secondary text-quiet-ink">
+                  Minimum contribution
+                </span>
+                <span className="text-proof text-nim-blue">
+                  {poll.minimumNim.toLocaleString()} NIM
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-secondary text-quiet-ink">
+                  Participation model
+                </span>
+                <Badge variant="default">
+                  {poll.rewardMode === "rewarded"
+                    ? "Rewarded participation"
+                    : "Free verified poll"}
+                </Badge>
+              </div>
+              {poll.rewardCampaign && (
+                <div className="flex items-center justify-between">
+                  <span className="text-secondary text-quiet-ink">
+                    Reward status
+                  </span>
+                  <span className="text-body text-quiet-ink">
+                    {poll.rewardCampaign.status}
+                    {poll.rewardCampaign.funded
+                      ? ` · ${formatRewardNim(poll.rewardCampaign.rewardPerParticipantLuna)} per participant`
+                      : " · funding required"}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
 
           {/* Fairness rule */}
           <div className="flex items-center justify-between">
@@ -149,13 +186,13 @@ export function CreatorPollDetailView({
                     </span>
                   </div>
                 )}
-                {poll.results.totalNim !== undefined && (
+                {isLegacySupport && poll.results.totalNim !== undefined && (
                   <div>
                     <span className="block text-proof text-nim-blue">
                       {poll.results.totalNim.toLocaleString()}
                     </span>
                     <span className="block text-micro text-quiet-ink">
-                      total NIM
+                       total legacy NIM support
                     </span>
                   </div>
                 )}
@@ -186,12 +223,12 @@ export function CreatorPollDetailView({
                           {option.walletCount !== 1 ? "s" : ""}
                         </span>
                       )}
-                      {/* NIM signalled — separate from wallet count */}
-                      {option.nimSignalled !== undefined && (
-                        <span className="text-proof text-nim-blue">
-                          {option.nimSignalled.toLocaleString()} NIM
-                        </span>
-                      )}
+                {/* Legacy support is separate from verified participation. */}
+                {isLegacySupport && option.nimSignalled !== undefined && (
+                  <span className="text-proof text-nim-blue">
+                    {option.nimSignalled.toLocaleString()} NIM support
+                  </span>
+                )}
                     </div>
                   </div>
                 ))}

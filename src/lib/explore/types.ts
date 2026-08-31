@@ -21,6 +21,7 @@ export interface ExploreFilterState {
   format: PollFormat | null;          // null = all (default)
   status: "all" | "live" | "closed";  // "all" = default
   sort: ExploreSortMode;              // "grouped" = default
+  rewarded?: boolean;                 // true = reward-first rewarded polls only
 }
 
 // ── Poll Card Data ────────────────────────────────────────────────────
@@ -37,6 +38,8 @@ export interface PollCardData {
   closingAt: string;             // raw ISO from ends_at; may be empty for no deadline
   createdAt: string;             // raw ISO
   optionCount: number;
+  rewarded?: boolean;
+  rewardPerParticipantNim?: string;
 }
 
 // ── Server Query Contracts ────────────────────────────────────────────
@@ -51,6 +54,7 @@ export interface ExploreQueryParams {
   section?: PollSection;   // only for grouped Load more
   cursor?: string;         // opaque base64url-encoded JSON
   limit: number;           // clamped [1, 24]; default 12 (4 for grouped first)
+  rewarded?: boolean;
 }
 
 export interface ExploreQueryResult {

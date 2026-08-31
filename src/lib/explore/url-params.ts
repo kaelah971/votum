@@ -31,6 +31,7 @@ const DEFAULTS: ExploreFilterState = {
   format: null,
   status: "all",
   sort: "grouped",
+  rewarded: false,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -101,6 +102,12 @@ export function parseExploreParams(
     }
   }
 
+  // rewarded
+  const rawRewarded = searchParams.get("rewarded");
+  if (rawRewarded === "1" || rawRewarded === "true") {
+    state.rewarded = true;
+  }
+
   return state;
 }
 
@@ -108,7 +115,7 @@ export function parseExploreParams(
 //
 // Serialises an ExploreFilterState to a canonical query string.
 // Default values are omitted.
-// Parameter order is deterministic: q, category, format, status, sort.
+  // Parameter order is deterministic: q, category, format, status, sort, rewarded.
 
 export function buildExploreUrl(state: ExploreFilterState): string {
   const params = new URLSearchParams();
@@ -133,6 +140,10 @@ export function buildExploreUrl(state: ExploreFilterState): string {
     params.set("sort", state.sort);
   }
 
+  if (state.rewarded) {
+    params.set("rewarded", "1");
+  }
+
   const qs = params.toString();
   return qs ? `/explore?${qs}` : "/explore";
 }
@@ -146,5 +157,6 @@ export function hasNonDefaultFilters(state: ExploreFilterState): boolean {
     state.format !== DEFAULTS.format ||
     state.status !== DEFAULTS.status ||
     state.sort !== DEFAULTS.sort
+    || state.rewarded === true
   );
 }

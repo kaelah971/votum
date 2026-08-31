@@ -49,7 +49,7 @@ export function ContributionDestination({
       <div className="space-y-4">
         {/* Heading */}
         <h3 className="text-card-heading font-display text-ballot-ink">
-          Your NIM supports...
+          Legacy support: what the NIM supports
         </h3>
 
         {/* Destination type badge */}

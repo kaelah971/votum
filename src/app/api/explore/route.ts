@@ -36,8 +36,9 @@ export async function GET(request: Request) {
       const result = await queryExploreGrouped({
         search: filters.search,
         category: filters.category,
-        format: filters.format,
-        status: filters.status,
+         format: filters.format,
+         status: filters.status,
+         rewarded: filters.rewarded,
         sort: "grouped",
         section: section as PollSection | undefined,
         cursor,
@@ -51,8 +52,9 @@ export async function GET(request: Request) {
     const result = await queryExploreFlat({
       search: filters.search,
       category: filters.category,
-      format: filters.format,
-      status: filters.status,
+       format: filters.format,
+       status: filters.status,
+       rewarded: filters.rewarded,
       sort,
       cursor,
       limit: 12,

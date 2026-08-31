@@ -24,14 +24,14 @@ export async function generateMetadata({
     return {
       title: result.poll.question,
       description:
-        result.poll.context ?? "View a NIM-backed community decision on Votum.",
+        result.poll.context ?? "View a verified community decision on Votum.",
     };
   }
 
   return {
     title: "Votum Poll",
     description:
-      "View a NIM-backed community decision. Poll data is fetched from the Votum data layer.",
+      "View a verified community decision. Poll data is fetched from the Votum data layer.",
   };
 }
 
@@ -87,12 +87,14 @@ export default async function PollPage({
         </div>
       )}
       <PollVotingPanel poll={result.poll} />
-      <PollNimSupportPanel
-        pollId={result.poll.id}
-        options={result.poll.options}
-        isLive={result.poll.status === "live"}
-        minimumNim={result.poll.minimumNim}
-      />
+      {result.poll.economicModel === "legacy_support" && (
+        <PollNimSupportPanel
+          pollId={result.poll.id}
+          options={result.poll.options}
+          isLive={result.poll.status === "live"}
+          minimumNim={result.poll.minimumNim}
+        />
+      )}
     </ProductShell>
   );
 }

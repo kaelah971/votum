@@ -7,9 +7,9 @@ import { ProofPath } from "@/components/ui/ProofPath";
 import { ArrowUpRightIcon } from "@/components/ui/icons";
 
 export const metadata: Metadata = {
-  title: "Put NIM behind your say",
+  title: "Verified decisions. Rewards when participation is funded.",
   description:
-    "Create community decisions where every vote carries verified NIM-backed signal. See what your community cares enough to support, not only what it clicked.",
+    "Create a free verified poll or fund a reward for eligible participants. Every verified wallet gets one vote.",
 };
 
 const linkPillPrimary =
@@ -41,17 +41,16 @@ export default function Home() {
         <div className="flex max-w-[560px] flex-col justify-center">
           <div className="mb-5 flex items-center gap-3 text-micro uppercase tracking-[0.03em] text-ballot-ink">
             <ArrowUpRightIcon />
-            NIM-backed community decisions
+            Verified community decisions
           </div>
 
           <h1 className="font-display text-[3.25rem] font-medium leading-[0.98] text-ballot-ink sm:text-[4.6rem] lg:text-[5.4rem]">
-            Put <span className="hero-living-word">NIM</span> behind your say.
+            Decide together. <span className="hero-living-word">Reward</span> participation.
           </h1>
 
           <p className="mt-6 max-w-[460px] text-body-lg text-quiet-ink">
-            Create calm community polls where each choice carries a verified
-            NIM-backed signal. See what people support, not only what they
-            clicked.
+            Create a free verified poll or fund a reward for eligible participants.
+            Every verified wallet gets one vote.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -91,8 +90,8 @@ export default function Home() {
           className="lg:col-span-2"
           items={[
             {
-              title: "Back a choice with NIM",
-              meta: "Minimum support, visible before payment",
+               title: "Create a free verified poll",
+               meta: "One verified wallet, one vote",
               visual: <CapsuleIcon tone="gold" />,
               action: (
                 <Link
@@ -104,8 +103,8 @@ export default function Home() {
               ),
             },
             {
-              title: "Verify every recorded vote",
-              meta: "Wallet count and NIM signal stay separate",
+               title: "Fund participation rewards",
+               meta: "Rewards never depend on the selected option",
               visual: <CapsuleIcon tone="blue" />,
               action: (
                 <Link

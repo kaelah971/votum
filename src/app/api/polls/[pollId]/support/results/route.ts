@@ -35,6 +35,22 @@ export async function GET(
     );
   }
 
+  const { data: poll, error: pollError } = await supabase
+    .from("polls")
+    .select("economic_model")
+    .eq("id", pollId)
+    .eq("is_public", true)
+    .maybeSingle();
+  if (pollError || !poll) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
+  if (poll.economic_model === "reward_first") {
+    return NextResponse.json(
+      { error: "support_not_available", message: "New polls do not have participant support results." },
+      { status: 422 },
+    );
+  }
+
   // get_public_support_results not in generated Database types — cast to `any`
   const { data, error } = await (supabase.rpc as any)(
     "get_public_support_results",

@@ -82,20 +82,30 @@ async function publishPoll(
   question: string,
   reward?: { rewardPerParticipant: string; maxRewardedParticipants: number },
 ) {
+  const legacyFields = {
+    mode: "creator",
+    destinationWallet: creator,
+    destinationPurpose: "V2B.2.4 funding test",
+    minimumNim: "1",
+  };
+  const rewardFirstFields = reward
+    ? {
+        economicModel: "reward_first",
+        rewardMode: "rewarded",
+      }
+    : legacyFields;
+
   return apiPost("/api/polls/publish", {
     category: "communities",
     format: "decision",
     question,
     description: null,
     options: ["A", "B"],
-    mode: "creator",
-    destinationWallet: creator,
-    destinationPurpose: "V2B.2.4 funding test",
-    minimumNim: "1",
+    ...rewardFirstFields,
     fairnessMode: "one_wallet_one_vote",
     duration: "1day",
     idempotencyKey: uuid(),
-    ...(reward ? { reward } : {}),
+    ...(reward ? { reward: { fundingMode: "creator", ...reward } } : {}),
   }, cookie);
 }
 

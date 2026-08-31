@@ -105,12 +105,12 @@ describe("MarketingNav — landing header", () => {
     expect(connect.className).not.toMatch(/(^|\s)hidden(\s|$)/);
   });
 
-  it("keeps +127 as a static NIM-signalled stat pill, not a wallet control", () => {
+  it("keeps the one-vote-per-wallet rule as a static pill, not a wallet control", () => {
     render(<MarketingNav />);
 
-    const pill = screen.getByText("+127");
+    const pill = screen.getByText("1");
     expect(pill).toBeInTheDocument();
-    expect(screen.getByText("NIM signalled")).toBeInTheDocument();
+    expect(screen.getByText("vote per wallet")).toBeInTheDocument();
 
     // The stat pill is a span, not an interactive wallet control.
     expect(pill.tagName).toBe("SPAN");
@@ -118,7 +118,7 @@ describe("MarketingNav — landing header", () => {
 
     // And the actual wallet control is separate from the stat.
     expect(screen.getByRole("button", { name: "Connect wallet" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "+127" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "1" })).not.toBeInTheDocument();
   });
 
   it("places the wallet control at the right edge so its menu stays inside the viewport", () => {

@@ -904,7 +904,7 @@ async function testProfilePages(wallets: string[]) {
     `stats: NIM earned renders truthful 0 (${nimEarnedText})`,
   );
   check(
-    walletText.includes(`${nimSupportedText} NIM supported`),
+    walletText.includes(`${nimSupportedText} Legacy NIM support`),
     `stats: NIM supported renders confirmed total (${nimSupportedText})`,
   );
 

@@ -2,11 +2,11 @@
 
 # Votum
 
-### Put NIM behind your say.
+### Verified decisions. Rewards when participation is funded.
 
-**Verified voting and optional NIM support, built inside Nimiq Pay.**
+**Free verified voting and funded participation rewards, built inside Nimiq Pay.**
 
-Votum enables creators, organizations, communities, brands, and fanbases to publish a question, collect one immutable vote per verified wallet, and measure optional NIM support as a separate signal.
+Votum enables creators, organizations, communities, brands, and fanbases to publish a question, collect one immutable vote per verified wallet, and optionally fund the people who participate.
 
 [Launch Votum](https://votum-five.vercel.app) · [How it works](https://votum-five.vercel.app/how-it-works) · [Explore polls](https://votum-five.vercel.app/explore)
 
@@ -20,18 +20,18 @@ Votum enables creators, organizations, communities, brands, and fanbases to publ
 
 Most online polls measure clicks, not accountable participation.
 
-They are easy to spam, repeat, brigade, or abandon. They also force creators to guess whether an audience merely preferred an option or cared enough to support the work behind it.
+They are easy to spam, repeat, brigade, or abandon. They also make it hard for creators to distinguish a verified decision from a casual click.
 
 Votum separates those questions:
 
 - **Votes measure breadth:** how many verified participants chose an option?
-- **NIM support measures depth:** how much optional economic support did that option receive?
+- **Rewards acknowledge participation:** is a fixed campaign funded for eligible participants?
 
 One never buys the other.
 
 > **One verified wallet gets one vote. Sending more NIM never creates more voting power.**
 
-This creates a more useful audience signal without turning a poll into a wager, a stake-weighted election, or a winner-takes-all pool.
+This creates a more useful audience signal without turning a poll into betting, a stake-weighted election, or a winner-takes-all pool.
 
 ---
 
@@ -50,7 +50,7 @@ The current product supports general-purpose polls that can be used for:
 - sports predictions without pooled stakes or winner payouts;
 - entertainment decisions such as episode, character, design, or release preferences.
 
-The launch wedge is simple: create a poll, verify participants, record one vote per wallet, optionally accept direct NIM support, and show both signals clearly.
+The launch wedge is simple: create a free verified poll or fund a fixed participation reward, verify participants, record one vote per wallet, and show the result clearly.
 
 The larger vision is broader:
 
@@ -66,20 +66,17 @@ Votum is not a concept page or static prototype. The complete core loop is deplo
 |---|---|
 | Nimiq Pay integration | Official `@nimiq/mini-app-sdk` initialization and wallet-provider handling |
 | Wallet verification | Cryptographic challenge signing with a 12-hour secure server session |
-| Poll creation | Multi-step creation flow with two to six options, support purpose, recipient, minimum NIM, and duration |
+| Poll creation | Multi-step creation flow with two to six options, reward choice, and duration |
 | Drafts | Browser-local auto-save, recovery, reopening, and deletion |
 | Publishing | Atomic, idempotent poll creation tied to the verified creator wallet |
 | Discovery | Public Explore directory and shareable poll URLs |
 | Creator ownership | My Polls is scoped to the verified creator session |
 | Verified voting | One immutable vote per verified wallet, enforced by the database |
-| NIM support | Native Nimiq Pay transaction approval through `sendBasicTransactionWithData` |
-| On-chain confirmation | Server-side Nimiq PoS JSON-RPC verification before support is counted |
-| Payment recovery | Pending-to-confirmed polling with refresh-safe transaction restoration |
-| Replay protection | One transaction hash cannot be reused across support intents |
-| Results | Vote totals, percentages, NIM totals, and support counts shown separately |
-| Receipts | Private confirmed-support receipt tied to the initiating Votum session |
-| Creator Intelligence | Total polls, votes, confirmed NIM, support counts, option performance, and recent activity |
-| Activity centre | Creator notification bell with publication, vote, and confirmed-support events |
+| Reward campaigns | Creator- or designated-wallet-funded reward configuration with truthful pending states |
+| Results | Vote totals, percentages, and verified participation shown separately from reward status |
+| Receipts | Private verified-vote receipt; legacy support receipts remain scoped to legacy polls |
+| Creator Intelligence | Total polls, votes, legacy confirmed support, option performance, and recent activity |
+| Activity centre | Creator notification bell with publication, vote, and legacy-support events |
 | Product education | Interactive Creator Flow, Voter Flow, and Fairness explanations |
 | Responsive UX | Mobile-first experience designed for use inside Nimiq Pay |
 
@@ -95,12 +92,10 @@ flowchart LR
     D --> E[Participant verifies wallet]
     E --> F[Casts one immutable vote]
     F --> G[Vote results update]
-    E --> H[Optionally supports an option with NIM]
-    H --> I[Nimiq Pay approves transaction]
-    I --> J[Votum verifies transaction on-chain]
-    J --> K[NIM result and private receipt update]
-    G --> L[Creator Intelligence]
-    K --> L
+    E --> H[Eligible participants may earn a funded reward]
+    G --> I[Vote receipt and result update]
+    H --> I
+    I --> J[Creator Intelligence]
 ```
 
 ### Creator flow
@@ -108,20 +103,19 @@ flowchart LR
 1. Open Votum inside Nimiq Pay.
 2. Verify wallet ownership.
 3. Write a question and add two to six meaningful options.
-4. Explain what optional NIM support is for.
-5. Set a minimum amount, duration, and disclosed recipient wallet.
-6. Review the fairness rules and publish.
-7. Track votes, confirmed NIM, option performance, and recent activity.
+4. Choose free verified participation or define a fixed reward budget.
+5. Set duration and review the fairness rules.
+6. Publish and, for rewarded polls, fund the campaign through the designated wallet.
+7. Track votes, reward status, option performance, and recent activity.
 
 ### Participant flow
 
 1. Open a live poll from Explore or a shared link.
 2. Verify a Nimiq wallet.
 3. Select one option and cast one vote.
-4. Optionally support an option with NIM.
-5. Approve the transaction natively through Nimiq Pay.
-6. Receive a confirmed receipt after on-chain verification.
-7. See vote participation and NIM support as separate results.
+4. See whether a funded reward is available, independently of your choice.
+5. Receive a verified vote receipt.
+6. See participation results without a participant payment step.
 
 ---
 
@@ -132,13 +126,13 @@ Votum is designed around Nimiq Pay rather than treating the wallet as an externa
 - The Mini App SDK provides the client-side Nimiq environment.
 - Wallet access is requested only after an explicit user action.
 - Wallet ownership is proven with an official signed-message challenge.
-- NIM support is approved through the native transaction experience.
-- Transactions are verified against the Nimiq PoS network before public totals change.
+- Reward campaign funding is approved through the native transaction experience when a campaign is funded.
+- Funding remains pending until the later chain-observation boundary confirms it.
 - Votum continues to render outside Nimiq Pay and provides truthful guidance when wallet capabilities are unavailable.
 
-### Initiator, payer, and recipient
+### Legacy support payments
 
-Nimiq Pay may select a funding account different from the wallet that initiated the support flow. Votum therefore models three distinct roles:
+Historical `legacy_support` polls may retain the original direct-support flow. In that compatibility path, Nimiq Pay may select a funding account different from the wallet that initiated the support flow. Votum models three distinct roles:
 
 - **Initiator wallet:** the verified Votum session that owns the private support intent and receipt;
 - **Supporter wallet:** the actual on-chain transaction sender selected through Nimiq Pay;
@@ -158,7 +152,7 @@ Each verified wallet can vote once in a poll. Votes are immutable after confirma
 
 ### NIM does not buy influence
 
-Optional support can show conviction, but it does not increase:
+Legacy support can show conviction, but it does not increase:
 
 - vote weight;
 - number of votes;
@@ -166,13 +160,13 @@ Optional support can show conviction, but it does not increase:
 - creator permissions;
 - future accuracy scores, streaks, or leaderboard rank.
 
-### Direct, non-custodial support
+### Direct, non-custodial legacy support
 
-NIM moves directly from the paying account to the poll’s disclosed recipient. Votum does not hold, escrow, pool, redistribute, or refund participant funds.
+For legacy polls, NIM moves directly from the paying account to the poll’s disclosed recipient. Votum does not hold, escrow, pool, redistribute, or refund participant funds.
 
 ### No wagering mechanics
 
-The current product has no odds, stake pool, losing side, payout redistribution, or winner reward funded by participants. Prediction-style polls are expressions of audience expectation, not prediction markets.
+The current product has no odds, stake pool, losing side, payout redistribution, or winner-takes-all reward. Rewarded polls use the same fixed reward for eligible participation regardless of the selected option.
 
 ---
 
@@ -296,7 +290,7 @@ The design guardrails are strict:
 - participation remains free;
 - user support is never pooled into a prize pot;
 - losing users lose nothing;
-- NIM support never buys points or rank;
+- reward campaigns never buy points or rank;
 - reward rules are published before a season begins;
 - anti-farming, eligibility, and manual review come before automated payouts;
 - legal and jurisdictional review is required before public real-value reward campaigns.
@@ -454,7 +448,7 @@ The hackathon release proves:
 - a real Nimiq Pay Mini App experience;
 - secure wallet ownership verification;
 - database-enforced one-wallet-one-vote;
-- native NIM support;
+- historical NIM support compatibility;
 - on-chain transaction confirmation;
 - refresh-safe receipts and replay protection;
 - transparent, separate vote and NIM results;
@@ -475,6 +469,6 @@ Votum is released under the [MIT License](LICENSE).
 
 ### Votum turns audience participation into accountable signal.
 
-**Put NIM behind your say.**
+**Verified decisions. Rewards when participation is funded.**
 
 </div>

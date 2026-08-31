@@ -8,7 +8,8 @@ import {
 } from "@/lib/rewards/config";
 import { ensureCampaignVault } from "@/lib/rewards/vault-service";
 import { lunaToNim } from "@/lib/nimiq/units";
-import { toUserFriendlyAddress } from "@/lib/nimiq/server-crypto";
+import { addressesEqual, normalizeAddress, toUserFriendlyAddress } from "@/lib/nimiq/server-crypto";
+import { isRewardFundingMode, type RewardFundingMode } from "@/lib/polls/economic-model";
 
 export const runtime = "nodejs";
 
@@ -24,6 +25,8 @@ interface CampaignRow {
   id: string;
   poll_id: string;
   creator_wallet: string;
+  funding_mode: RewardFundingMode;
+  funding_wallet: string;
   reward_per_participant_luna: number;
   max_rewarded_participants: number;
   reward_principal_luna: number;
@@ -59,6 +62,8 @@ function toConfigSummary(
     campaignId: campaign.id,
     pollId: campaign.poll_id,
     state: campaign.status,
+    fundingMode: campaign.funding_mode,
+    fundingWallet: campaign.funding_wallet,
     rewardPerParticipant: {
       luna: String(campaign.reward_per_participant_luna),
       nim: lunaToNim(BigInt(campaign.reward_per_participant_luna)),
@@ -129,7 +134,13 @@ export async function POST(
       { status: 401 },
     );
   }
-  const sessionWallet = session.address;
+  const sessionWallet = normalizeAddress(session.address);
+  if (!sessionWallet) {
+    return NextResponse.json(
+      { error: "session_invalid", stage: "session", requestId, message: "Session wallet address is invalid." },
+      { status: 401 },
+    );
+  }
 
   const adminConfig = getAdminConfigStatus();
   if (!adminConfig.configured) {
@@ -174,7 +185,7 @@ export async function POST(
 
   // Creator wallet must come from the session (must equal poll.creator_wallet).
   // The request body may NEVER choose the wallet.
-  if (poll.creator_wallet.toLowerCase() !== sessionWallet.toLowerCase()) {
+  if (!addressesEqual(poll.creator_wallet, sessionWallet)) {
     log("not_owner", { requestId, status: 403 });
     return NextResponse.json(
       { error: "forbidden", stage: "ownership", requestId, message: "Only the poll creator can configure rewards." },
@@ -194,7 +205,12 @@ export async function POST(
   }
   const rewardInput =
     typeof body === "object" && body !== null
-      ? (body as { rewardPerParticipant?: unknown; maxRewardedParticipants?: unknown })
+      ? (body as {
+          rewardPerParticipant?: unknown;
+          maxRewardedParticipants?: unknown;
+          fundingMode?: unknown;
+          fundingWallet?: unknown;
+        })
       : {};
   const validation = validateRewardConfigInput({
     rewardPerParticipant:
@@ -214,6 +230,42 @@ export async function POST(
     );
   }
   const v = validation.value;
+
+  if (
+    rewardInput.fundingMode !== undefined &&
+    !isRewardFundingMode(rewardInput.fundingMode)
+  ) {
+    return NextResponse.json(
+      { error: "validation_failed", stage: "funding", requestId, message: "Invalid funding mode.", fieldErrors: [{ field: "fundingMode", message: "Choose creator or community funding." }] },
+      { status: 400 },
+    );
+  }
+  const fundingMode: RewardFundingMode = isRewardFundingMode(rewardInput.fundingMode)
+    ? rewardInput.fundingMode
+    : "creator";
+  const rawFundingWallet =
+    typeof rewardInput.fundingWallet === "string"
+      ? rewardInput.fundingWallet.trim()
+      : "";
+  let fundingWallet = sessionWallet;
+  if (fundingMode === "community") {
+    const designatedWallet = normalizeAddress(rawFundingWallet);
+    if (!designatedWallet) {
+      return NextResponse.json(
+        { error: "validation_failed", stage: "funding", requestId, message: "A valid designated funding wallet is required.", fieldErrors: [{ field: "fundingWallet", message: "Enter a valid designated funding wallet." }] },
+        { status: 400 },
+      );
+    }
+    fundingWallet = designatedWallet;
+  } else if (rawFundingWallet) {
+    const requestedWallet = normalizeAddress(rawFundingWallet);
+    if (!requestedWallet || requestedWallet !== sessionWallet) {
+      return NextResponse.json(
+        { error: "validation_failed", stage: "funding", requestId, message: "Creator funding must use the verified creator wallet.", fieldErrors: [{ field: "fundingWallet", message: "Creator funding must use the verified creator wallet." }] },
+        { status: 400 },
+      );
+    }
+  }
 
   // Load existing campaign (if any) to enforce immutability and one-per-poll.
   const { data: existing } = await admin
@@ -239,6 +291,8 @@ export async function POST(
     const { error: updErr } = await admin
       .from("reward_campaigns")
       .update({
+        funding_mode: fundingMode,
+        funding_wallet: fundingWallet,
         reward_per_participant_luna: Number(v.rewardPerParticipantLuna),
         max_rewarded_participants: v.maxRewardedParticipants,
         reward_principal_luna: Number(v.rewardPrincipalLuna),
@@ -258,6 +312,8 @@ export async function POST(
       .insert({
         poll_id: pollId,
         creator_wallet: sessionWallet,
+        funding_mode: fundingMode,
+        funding_wallet: fundingWallet,
         reward_per_participant_luna: Number(v.rewardPerParticipantLuna),
         max_rewarded_participants: v.maxRewardedParticipants,
         reward_principal_luna: Number(v.rewardPrincipalLuna),
@@ -332,6 +388,13 @@ export async function GET(
       { status: 401 },
     );
   }
+  const sessionWallet = normalizeAddress(session.address);
+  if (!sessionWallet) {
+    return NextResponse.json(
+      { error: "session_invalid", stage: "session", requestId, message: "Session wallet address is invalid." },
+      { status: 401 },
+    );
+  }
 
   const admin = createAdminClient();
   if (!admin) {
@@ -352,7 +415,7 @@ export async function GET(
       { status: 404 },
     );
   }
-  if (poll.creator_wallet.toLowerCase() !== session.address.toLowerCase()) {
+  if (!addressesEqual(poll.creator_wallet, sessionWallet)) {
     return NextResponse.json(
       { error: "forbidden", stage: "ownership", requestId, message: "Only the poll creator can view reward configuration." },
       { status: 403 },

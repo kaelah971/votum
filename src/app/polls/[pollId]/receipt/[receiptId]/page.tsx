@@ -15,7 +15,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Votum Receipt",
     description:
-      "A Votum Receipt will appear here after a verified NIM-backed vote is recorded.",
+      "A Votum Receipt will appear here after a verified vote is recorded.",
   };
 }
 
@@ -42,7 +42,7 @@ export default async function ReceiptPage({
       {/* Unavailable state — truthful: no receipt data exists */}
       <UnavailableState
         title="This receipt is not available yet."
-        description="A Votum Receipt will appear here after a verified NIM-backed vote is recorded."
+        description="A Votum Receipt will appear here after a verified vote is recorded."
       />
 
       {/* Gold pill CTA to explore public polls */}

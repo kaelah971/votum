@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Explore",
   description:
-    "Discover public Votum Polls. See what communities are choosing and what they care enough to support with NIM-backed votes.",
+    "Discover public Votum polls. See what verified communities are choosing and which campaigns have funded rewards.",
 };
 
 /**
