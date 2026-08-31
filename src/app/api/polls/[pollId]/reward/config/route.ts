@@ -49,6 +49,13 @@ interface FundingSummaryRow {
   created_at: string;
 }
 
+interface PollSummaryRow {
+  id: string;
+  question: string;
+  economic_model: string | null;
+  reward_mode: string | null;
+}
+
 /**
  * Creator-only campaign configuration summary. Safe outward shape — no
  * ciphertext, IV, auth tag, envelope, or key material.
@@ -57,10 +64,18 @@ function toConfigSummary(
   campaign: CampaignRow,
   vaultAddressHex: string | null,
   funding: FundingSummaryRow | null = null,
+  poll?: PollSummaryRow,
 ) {
   return {
     campaignId: campaign.id,
     pollId: campaign.poll_id,
+    pollQuestion: poll?.question ?? null,
+    economicModel: poll?.economic_model === "reward_first" ? "reward_first" : "legacy_support",
+    rewardMode:
+      poll?.economic_model === "reward_first" &&
+      (poll.reward_mode === "free" || poll.reward_mode === "rewarded")
+        ? poll.reward_mode
+        : null,
     state: campaign.status,
     fundingMode: campaign.funding_mode,
     fundingWallet: campaign.funding_wallet,
@@ -160,7 +175,7 @@ export async function POST(
   // Poll must exist and be PUBLIC.
   const { data: poll, error: pollErr } = await admin
     .from("polls")
-    .select("id, creator_wallet, is_public")
+    .select("id, creator_wallet, is_public, question, economic_model, reward_mode")
     .eq("id", pollId)
     .maybeSingle();
   if (pollErr) {
@@ -363,7 +378,12 @@ export async function POST(
 
   log("configured", { requestId, status: 200, campaignId, state: finalCampaign.status });
   return NextResponse.json({
-    config: toConfigSummary(finalCampaign as unknown as CampaignRow, vaultAddressHex),
+    config: toConfigSummary(
+      finalCampaign as unknown as CampaignRow,
+      vaultAddressHex,
+      null,
+      poll as unknown as PollSummaryRow,
+    ),
   });
 }
 
@@ -406,7 +426,7 @@ export async function GET(
 
   const { data: poll, error: pollErr } = await admin
     .from("polls")
-    .select("id, creator_wallet")
+    .select("id, creator_wallet, question, economic_model, reward_mode")
     .eq("id", pollId)
     .maybeSingle();
   if (pollErr || !poll) {
@@ -465,6 +485,7 @@ export async function GET(
       campaign as unknown as CampaignRow,
       vaultAddressHex,
       (funding as FundingSummaryRow | null) ?? null,
+      poll as unknown as PollSummaryRow,
     ),
   });
 }

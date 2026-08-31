@@ -363,6 +363,8 @@ async function run() {
     console.log("\n-- Read model --");
     const read = await apiGet(`/api/polls/${publicPollId}/reward/config`, creatorCookie);
     check(read.status === 200, "creator read model → 200");
+    check(read.data?.config?.pollQuestion === "V2B2 config public?", "read model includes poll identity");
+    check(read.data?.config?.economicModel === "legacy_support", "read model includes economic model");
     const readJson = JSON.stringify(read.data);
     check(readJson.includes("ciphertext") === false, "read model has no ciphertext");
     check(readJson.includes("authentication_tag") === false, "read model has no auth tag");
@@ -413,6 +415,17 @@ async function run() {
       "rewarded poll stores no support configuration",
     );
     check(pubRewardFirst.data?.reward?.rewardFundingRequired === true, "reward-first publish requires funding");
+
+    const myPollsResponse = await apiGet("/api/me/polls", creatorCookie);
+    const myPolls = (myPollsResponse.data?.polls ?? []) as Array<Record<string, any>>;
+    const listedRewardPoll = myPolls.find((poll) => poll.id === pubRewardFirstPollId);
+    check(myPollsResponse.status === 200, "My Polls creator read succeeds");
+    check(listedRewardPoll?.rewardCampaign?.state === "configured", "My Polls exposes configured reward state");
+    check(listedRewardPoll?.rewardCampaign?.rewardPerParticipantNim === "0.25 NIM", "My Polls exposes reward per participant");
+    check(listedRewardPoll?.rewardCampaign?.maxRewardedParticipants === 40, "My Polls exposes maximum rewarded participants");
+    check(listedRewardPoll?.rewardCampaign?.rewardPrincipalNim === "10 NIM", "My Polls exposes reward principal");
+    check(listedRewardPoll?.rewardCampaign?.feeReserveNim === "3.2 NIM", "My Polls exposes fee reserve");
+    check(listedRewardPoll?.rewardCampaign?.totalRequiredFundingNim === "13.2 NIM", "My Polls exposes total required funding");
 
     // -----------------------------------------------------------------
     // No funding / payout / refund rows

@@ -29,7 +29,12 @@ interface FundingSummary {
 }
 
 interface RewardConfig {
+  pollQuestion: string | null;
+  economicModel: "legacy_support" | "reward_first";
+  rewardMode: "free" | "rewarded" | null;
   state: string;
+  rewardPerParticipant: { luna: string; nim: number };
+  maxRewardedParticipants: number;
   rewardPrincipal: { luna: string; nim: number };
   feeReserve: { luna: string; nim: number };
   totalRequiredFunding: { luna: string; nim: number };
@@ -124,17 +129,19 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
           createdAt: serverFunding.createdAt,
         });
       }
-      if (serverHash || pending?.transactionHash) {
+      if (data.config.state === "funding_pending") {
         setStage("submitted");
-      } else if (serverFunding?.status === "submitted" || pending) {
+      } else if (data.config.state === "configured" && (serverHash || pending?.transactionHash)) {
+        setStage("submitted");
+      } else if (data.config.state === "configured") {
         // The intent exists but the creator has not produced a hash yet. It is
         // safe to retry the same server-authoritative intent.
         setStage("idle");
-      } else if (data.config.state === "configured") {
-        setStage("idle");
       } else {
-        setStage("error");
-        setError("This campaign is not ready for another funding request.");
+        // Funded and terminal states remain visible as read-only campaign
+        // status; they must never expose another funding action.
+        setStage("idle");
+        setError(null);
       }
     } catch (loadError) {
       if (mountedRef.current) {
@@ -274,13 +281,16 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
   const canFund = useMemo(() => {
     if (!provider || !isInsideNimiqPay) return false;
     if (walletStatus !== "connected" || !isSessionVerified || !isWalletMatched) return false;
-    return stage === "idle" || stage === "error";
-  }, [isInsideNimiqPay, isSessionVerified, isWalletMatched, provider, stage, walletStatus]);
+    return config?.state === "configured" && (stage === "idle" || stage === "error");
+  }, [config?.state, isInsideNimiqPay, isSessionVerified, isWalletMatched, provider, stage, walletStatus]);
 
   if (notAvailable || !config) return null;
 
-  const isSubmitted = stage === "submitted" || stage === "binding";
-  const statusText = stage === "awaiting_approval"
+  const isSubmitted = config.state === "funding_pending" || stage === "submitted" || stage === "binding";
+  const isFunded = ["funded", "rewarding", "exhausted"].includes(config.state);
+  const statusText = isFunded
+    ? "Rewards funded"
+    : stage === "awaiting_approval"
     ? "Approve the exact funding amount in Nimiq Pay."
     : stage === "creating_intent"
       ? "Preparing the server funding request…"
@@ -295,6 +305,14 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
       <div>
         <p className="text-micro text-quiet-ink tracking-wider">REWARD CAMPAIGN FUNDING</p>
         <h2 className="mt-2 font-display text-section-heading text-ballot-ink">Fund reward campaign</h2>
+        {config.pollQuestion && (
+          <h3 className="mt-4 text-card-heading font-display text-ballot-ink">
+            {config.pollQuestion}
+          </h3>
+        )}
+        {config.economicModel === "reward_first" && config.rewardMode === "rewarded" && (
+          <p className="mt-2 text-secondary text-nim-blue">Rewarded participation</p>
+        )}
         <p className="mt-2 text-body text-quiet-ink">
           The server locks these terms before Nimiq Pay opens. Funding remains
           pending until V2B.2.5 verifies the transaction on-chain.
@@ -302,6 +320,16 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
       </div>
 
       <dl className="space-y-2 text-secondary text-quiet-ink">
+        <div className="flex items-center justify-between gap-4">
+          <dt>Reward per participant</dt>
+          <dd className="font-medium text-ballot-ink">{config.rewardPerParticipant.nim} NIM</dd>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <dt>Maximum rewarded participants</dt>
+          <dd className="font-medium text-ballot-ink">
+            {config.maxRewardedParticipants.toLocaleString()}
+          </dd>
+        </div>
         <div className="flex items-center justify-between gap-4">
           <dt>Reward principal</dt>
           <dd className="font-medium text-ballot-ink">{config.rewardPrincipal.nim} NIM</dd>
@@ -354,7 +382,7 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
             Rewards are not available yet. Votum must verify the transaction on-chain first.
           </p>
         </div>
-      ) : (
+      ) : config.state === "configured" ? (
         <Button
           type="button"
           className="w-full"
@@ -369,18 +397,18 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
                 ? "Retry funding"
                 : "Fund reward campaign"}
         </Button>
-      )}
+      ) : null}
 
-      {!isInsideNimiqPay && (
+      {config.state === "configured" && !isSubmitted && !isInsideNimiqPay && (
         <p className="text-micro text-quiet-ink text-center">Open Votum in Nimiq Pay to fund this campaign.</p>
       )}
-      {isInsideNimiqPay && walletStatus !== "connected" && (
+      {config.state === "configured" && !isSubmitted && isInsideNimiqPay && walletStatus !== "connected" && (
         <p className="text-micro text-quiet-ink text-center">Connect your creator wallet to fund this campaign.</p>
       )}
-      {isInsideNimiqPay && walletStatus === "connected" && !isSessionVerified && (
+      {config.state === "configured" && !isSubmitted && isInsideNimiqPay && walletStatus === "connected" && !isSessionVerified && (
         <p className="text-micro text-quiet-ink text-center">Verify your creator wallet before funding.</p>
       )}
-      {isInsideNimiqPay && isSessionVerified && !isWalletMatched && (
+      {config.state === "configured" && !isSubmitted && isInsideNimiqPay && isSessionVerified && !isWalletMatched && (
         <p className="text-micro text-quiet-ink text-center">The connected wallet does not match the verified creator wallet.</p>
       )}
     </Card>

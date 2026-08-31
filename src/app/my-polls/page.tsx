@@ -22,6 +22,14 @@ interface CreatorPoll {
   optionCount: number;
   economicModel: "legacy_support" | "reward_first";
   rewardMode: "free" | "rewarded" | null;
+  rewardCampaign: {
+    state: string;
+    rewardPerParticipantNim: string;
+    maxRewardedParticipants: number;
+    rewardPrincipalNim: string;
+    feeReserveNim: string;
+    totalRequiredFundingNim: string;
+  } | null;
 }
 
 export default function MyPollsPage() {
@@ -195,56 +203,92 @@ export default function MyPollsPage() {
       </p>
 
       <div className="space-y-3">
-        {safePolls.map((poll) => (
-          <Link key={poll.id} href={`/polls/${poll.id}`} className="block">
-            <Card className="p-5 hover:shadow-card transition-shadow">
-              <div className="flex flex-col gap-2">
-                <h3 className="text-card-heading font-display text-ballot-ink line-clamp-2">
-                  {poll.question}
-                </h3>
-                <div className="flex items-center gap-2 flex-wrap text-micro text-quiet-ink">
-                  <span
-                    className={`rounded-full px-2.5 py-0.5 font-medium text-xs ${
-                      poll.status === "live"
-                        ? "bg-signal-gold/10 text-deep-gold"
-                        : "bg-soft-fog text-quiet-ink"
-                    }`}
-                  >
-                    {poll.status === "live"
-                      ? "Live"
-                      : poll.status === "closed"
-                        ? "Closed"
-                        : poll.status}
+        {safePolls.map((poll) => {
+          const rewardCampaign =
+            poll.economicModel === "reward_first" && poll.rewardMode === "rewarded"
+              ? poll.rewardCampaign
+              : null;
+          const isFundingPending = rewardCampaign?.state === "funding_pending";
+          const isFunded = ["funded", "rewarding", "exhausted"].includes(
+            rewardCampaign?.state ?? "",
+          );
+          const showFundAction =
+            poll.isPublic && rewardCampaign?.state === "configured";
+
+          return (
+            <div key={poll.id}>
+              <Link href={`/polls/${poll.id}`} className="block">
+                <Card className="p-5 hover:shadow-card transition-shadow">
+                  <div className="flex flex-col gap-2">
+                    <h3 className="text-card-heading font-display text-ballot-ink line-clamp-2">
+                      {poll.question}
+                    </h3>
+                    <div className="flex items-center gap-2 flex-wrap text-micro text-quiet-ink">
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 font-medium text-xs ${
+                          poll.status === "live"
+                            ? "bg-signal-gold/10 text-deep-gold"
+                            : "bg-soft-fog text-quiet-ink"
+                        }`}
+                      >
+                        {poll.status === "live"
+                          ? "Live"
+                          : poll.status === "closed"
+                            ? "Closed"
+                            : poll.status}
+                      </span>
+                      <span>·</span>
+                      <span>
+                        {poll.optionCount} option
+                        {poll.optionCount !== 1 ? "s" : ""}
+                      </span>
+                      <span>·</span>
+                      <span>
+                        {new Date(poll.createdAt).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </span>
+                      <span>·</span>
+                      <span className={poll.isPublic ? "text-nim-blue" : ""}>
+                        {poll.isPublic ? "Public" : "Private"}
+                      </span>
+                      <span>·</span>
+                      <span>
+                        {poll.economicModel === "legacy_support"
+                          ? "Legacy support"
+                          : poll.rewardMode === "rewarded"
+                            ? "Rewarded participation"
+                            : "Free verified"}
+                      </span>
+                    </div>
+                    {isFundingPending && (
+                      <p className="text-body text-fairness-amber" role="status">
+                        Funding submitted - waiting for network confirmation.
+                      </p>
+                    )}
+                    {isFunded && (
+                      <p className="text-body text-verified-green" role="status">
+                        Rewards funded
+                      </p>
+                    )}
+                  </div>
+                </Card>
+              </Link>
+              {showFundAction && rewardCampaign && (
+                <Link
+                  href={`/my-polls/${poll.id}`}
+                  className="mt-2 inline-flex min-h-11 items-center justify-center rounded-full bg-signal-gold px-5 py-2.5 text-sm font-medium text-ballot-ink transition-colors hover:bg-deep-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold focus-visible:ring-offset-2"
+                >
+                  Fund rewards
+                  <span className="ml-2 text-quiet-ink">
+                    {rewardCampaign.totalRequiredFundingNim}
                   </span>
-                  <span>·</span>
-                  <span>
-                    {poll.optionCount} option
-                    {poll.optionCount !== 1 ? "s" : ""}
-                  </span>
-                  <span>·</span>
-                  <span>
-                    {new Date(poll.createdAt).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </span>
-                  <span>·</span>
-                  <span className={poll.isPublic ? "text-nim-blue" : ""}>
-                    {poll.isPublic ? "Public" : "Private"}
-                  </span>
-                  <span>·</span>
-                  <span>
-                    {poll.economicModel === "legacy_support"
-                      ? "Legacy support"
-                      : poll.rewardMode === "rewarded"
-                        ? "Rewarded participation"
-                        : "Free verified"}
-                  </span>
-                </div>
-              </div>
-            </Card>
-          </Link>
-        ))}
+                </Link>
+              )}
+            </div>
+          );
+        })}
       </div>
     </ProductShell>
   );

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { getVerifiedWalletSession } from "@/lib/api/session";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerClient, getConfigStatus } from "@/lib/supabase/config";
+import { lunaToNim } from "@/lib/nimiq/units";
 import { normalizeCategory, normalizeFormat } from "@/lib/polls/taxonomy";
 
 export const runtime = "nodejs";
@@ -9,6 +11,20 @@ export const dynamic = "force-dynamic";
 
 function log(stage: string, data: Record<string, unknown>) {
   console.error("[me-polls]", { stage, ...data });
+}
+
+interface RewardCampaignSummaryRow {
+  poll_id: string;
+  status: string;
+  reward_per_participant_luna: number | string;
+  max_rewarded_participants: number;
+  reward_principal_luna: number | string;
+  fee_reserve_luna: number | string;
+  total_budget_luna: number | string;
+}
+
+function formatNim(luna: number | string): string {
+  return `${lunaToNim(BigInt(String(luna)))} NIM`;
 }
 
 export async function GET() {
@@ -68,6 +84,25 @@ export async function GET() {
 
     if (optErr) throw optErr;
 
+    // Reward campaign rows are protected by RLS. The poll IDs were already
+    // constrained to the verified creator above, so this admin read only
+    // enriches that creator-owned list with the safe funding summary.
+    const admin = createAdminClient();
+    const campaignByPoll = new Map<string, RewardCampaignSummaryRow>();
+    if (admin) {
+      const { data: campaigns, error: campaignErr } = await admin
+        .from("reward_campaigns")
+        .select(
+          "poll_id, status, reward_per_participant_luna, max_rewarded_participants, reward_principal_luna, fee_reserve_luna, total_budget_luna",
+        )
+        .in("poll_id", pollIds);
+
+      if (campaignErr) throw campaignErr;
+      for (const campaign of (campaigns ?? []) as RewardCampaignSummaryRow[]) {
+        campaignByPoll.set(campaign.poll_id, campaign);
+      }
+    }
+
     const optsByPoll = new Map<string, typeof options>();
     for (const opt of options ?? []) {
       const list = optsByPoll.get(opt.poll_id) ?? [];
@@ -96,6 +131,22 @@ export async function GET() {
         p.economic_model === "reward_first" &&
         (p.reward_mode === "free" || p.reward_mode === "rewarded")
           ? p.reward_mode
+          : null,
+      rewardCampaign:
+        p.economic_model === "reward_first" && p.reward_mode === "rewarded"
+          ? (() => {
+              const campaign = campaignByPoll.get(p.id);
+              return campaign
+                ? {
+                    state: campaign.status,
+                    rewardPerParticipantNim: formatNim(campaign.reward_per_participant_luna),
+                    maxRewardedParticipants: campaign.max_rewarded_participants,
+                    rewardPrincipalNim: formatNim(campaign.reward_principal_luna),
+                    feeReserveNim: formatNim(campaign.fee_reserve_luna),
+                    totalRequiredFundingNim: formatNim(campaign.total_budget_luna),
+                  }
+                : null;
+            })()
           : null,
     }));
 

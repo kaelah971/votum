@@ -644,7 +644,11 @@ export default function CreatePollPage() {
       setPublishState("success");
       try { deleteDraft(draft!.id); } catch { /* non-critical */ }
       setTimeout(() => {
-        router.replace(`/polls/${pollId}?published=1`);
+        router.replace(
+          data.reward?.rewardFundingRequired
+            ? `/my-polls/${pollId}`
+            : `/polls/${pollId}?published=1`,
+        );
       }, 1000);
       return;
     }
