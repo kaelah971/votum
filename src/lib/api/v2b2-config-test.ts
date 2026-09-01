@@ -34,6 +34,10 @@ function check(condition: boolean, label: string): void {
   }
 }
 
+function trace(message: string): void {
+  console.log(`[config-test] ${message}`);
+}
+
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 if (!isLocalSupabaseUrl(url)) {
   console.error("REFUSED: NEXT_PUBLIC_SUPABASE_URL is not a local instance — aborting before any DB query.");
@@ -80,11 +84,19 @@ function cleanupSql(wallets: string[]): void {
     DELETE FROM public.wallet_sessions WHERE wallet_address IN (${wl});
     DELETE FROM public.participant_profiles WHERE wallet_address IN (${wl});
   `;
-  execFileSync("docker", [
-    "exec", "supabase_db_votum",
-    "psql", "-U", "postgres", "-d", "postgres",
-    "-c", sql,
-  ], { stdio: "pipe" });
+  trace("cleanup DB started");
+  try {
+    execFileSync("docker", [
+      "exec", "supabase_db_votum",
+      "psql", "-U", "postgres", "-d", "postgres",
+      "-c", sql,
+    ], { stdio: "pipe", timeout: 15000 });
+    trace("cleanup DB complete");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[config-test] cleanup DB failed: ${message}`);
+    throw error;
+  }
 }
 
 const CREATOR = randomNimiqHex();
@@ -159,6 +171,7 @@ async function insertPrivatePoll(creator: string): Promise<string> {
 
 async function run() {
   console.log("V2B.2.3 Creator Reward Configuration Suite");
+  trace("runner started");
   const wallets = [CREATOR, OTHER, PARTICIPANT];
   const sessions: string[] = [];
   let creatorCookie = "";
@@ -168,12 +181,20 @@ async function run() {
 
   try {
     console.log("Starting Next.js dev server...");
+    trace("server spawn requested");
     await startNextDev();
+    trace("server ready");
     console.log("Next.js ready.\n");
 
+    trace("starting fixture setup");
+    trace("creating creator session fixture");
     creatorCookie = await createTestSession(CREATOR);
+    trace("creator session fixture complete");
+    trace("creating other-wallet session fixture");
     otherCookie = await createTestSession(OTHER);
+    trace("other-wallet session fixture complete");
     sessions.push(creatorCookie, otherCookie);
+    trace("fixture setup complete");
 
     // -----------------------------------------------------------------
     // Local env guard
@@ -416,6 +437,14 @@ async function run() {
     );
     check(pubRewardFirst.data?.reward?.rewardFundingRequired === true, "reward-first publish requires funding");
 
+    const rewardFirstConfig = await apiGet(
+      `/api/polls/${pubRewardFirstPollId}/reward/config`,
+      creatorCookie,
+    );
+    check(rewardFirstConfig.status === 200, "reward-first creator config read succeeds");
+    check(rewardFirstConfig.data?.config?.pollId === pubRewardFirstPollId, "config read keeps poll identity");
+    check(rewardFirstConfig.data?.config?.state === "configured", "reward-first config starts configured");
+
     const myPollsResponse = await apiGet("/api/me/polls", creatorCookie);
     const myPolls = (myPollsResponse.data?.polls ?? []) as Array<Record<string, any>>;
     const listedRewardPoll = myPolls.find((poll) => poll.id === pubRewardFirstPollId);
@@ -440,9 +469,13 @@ async function run() {
     const refundRows = await admin.from("reward_refunds").select("id").in("creator_wallet", [CREATOR, OTHER, PARTICIPANT]);
     check((refundRows.data ?? []).length === 0, "no refund rows created");
   } finally {
-    for (const s of sessions) { try { await deleteTestSession(s); } catch { /* ok */ } }
+    trace("cleanup starting");
+    for (const s of sessions) {
+      try { await deleteTestSession(s); } catch { /* best effort */ }
+    }
     try { cleanupSql(wallets); } catch { /* best effort */ }
     stopNextDev();
+    trace("cleanup complete");
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

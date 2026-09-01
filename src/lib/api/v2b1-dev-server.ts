@@ -11,20 +11,81 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createHash, randomBytes } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
 import { createClient } from "@supabase/supabase-js";
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import "./load-local-env";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321";
 const key = process.env.SUPABASE_SECRET_KEY ?? "";
+const TEST_IO_TIMEOUT_MS = 15000;
+
+function requestPath(input: RequestInfo | URL): string {
+  try {
+    return new URL(input instanceof Request ? input.url : input.toString()).pathname;
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
+const fetchWithTimeout: typeof fetch = (input, init) => {
+  const timeoutSignal = AbortSignal.timeout(TEST_IO_TIMEOUT_MS);
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, timeoutSignal])
+    : timeoutSignal;
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  const path = requestPath(input);
+  console.log(`[dev-server] HTTP ${method} ${path} started`);
+  return fetch(input, { ...init, signal }).then(
+    (response) => {
+      console.log(`[dev-server] HTTP ${method} ${path} response status=${response.status}`);
+      return response;
+    },
+    (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[dev-server] HTTP ${method} ${path} failed: ${message}`);
+      throw error;
+    },
+  );
+};
+
+async function readJsonResponse(
+  response: Response,
+  method: string,
+  path: string,
+): Promise<any | null> {
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error(`Timed out after ${TEST_IO_TIMEOUT_MS / 1000}s waiting for ${method} ${path} response body`));
+    }, TEST_IO_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([response.json(), timeout]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[dev-server] response body read failed: ${method} ${path}: ${message}`);
+    if (timedOut || (error instanceof Error && error.name === "AbortError")) {
+      throw new Error(`Timed out after ${TEST_IO_TIMEOUT_MS / 1000}s waiting for ${method} ${path} response body`);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export const admin = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   db: { schema: "public" },
+  global: { fetch: fetchWithTimeout },
 });
 
 export const NEXT_PORT = 3101;
 export const NEXT_BASE = `http://127.0.0.1:${NEXT_PORT}`;
+const NEXT_READY_TIMEOUT_MS = 60000;
 
 let nextProcess: ChildProcess | null = null;
 
@@ -38,83 +99,122 @@ export function sha256Hex(input: string): string {
 }
 
 export function startNextDev(): Promise<void> {
+  if (nextProcess) {
+    return Promise.reject(new Error(`Next.js dev server is already running on port ${NEXT_PORT}`));
+  }
+
   return new Promise((resolve, reject) => {
-    nextProcess = spawn(
-      "npx", ["next", "dev", "--port", String(NEXT_PORT)],
+    const child = spawn(
+      process.execPath,
+      [resolvePath(process.cwd(), "node_modules/next/dist/bin/next"), "dev", "--port", String(NEXT_PORT)],
       {
+        cwd: process.cwd(),
         env: { ...process.env },
         stdio: ["ignore", "pipe", "pipe"],
-        shell: true,
+        shell: false,
         windowsHide: true,
       },
     );
+    nextProcess = child;
+    console.log(`[dev-server] child spawned pid=${child.pid ?? "unknown"}`);
 
-    let started = false;
-    let polling = false;
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
-    let failTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+    let pollInFlight = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let readinessTimer: ReturnType<typeof setTimeout> | null = null;
     let output = "";
 
     const cleanup = () => {
-      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      if (failTimer) { clearTimeout(failTimer); failTimer = null; }
-      polling = false;
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+      if (readinessTimer) { clearTimeout(readinessTimer); readinessTimer = null; }
+      process.removeListener("SIGINT", onSignal);
+      process.removeListener("SIGTERM", onSignal);
     };
 
-    const onData = (d: Buffer) => {
-      const t = d.toString();
-      output += t;
-      if ((t.includes("Local:") || t.includes("Ready in")) && !started && !polling) {
-        started = true;
-        polling = true;
-
-        pollTimer = setInterval(async () => {
-          try {
-            const res = await fetch(`${NEXT_BASE}/`, { signal: AbortSignal.timeout(5000) });
-            if (res.status < 500) {
-              cleanup();
-              resolve();
-            }
-          } catch {
-            // not ready yet
-          }
-        }, 1000);
-
-        failTimer = setTimeout(() => {
-          cleanup();
-          reject(new Error(
-            `Next.js dev server did not become ready within 60 s. Last output: ${output.slice(-400)}`,
-          ));
-        }, 60000);
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) {
+        stopNextDev();
+        reject(error);
+      } else {
+        resolve();
       }
     };
 
-    nextProcess.stdout?.on("data", onData);
-    nextProcess.stderr?.on("data", onData);
+    const schedulePoll = () => {
+      if (settled || pollTimer) return;
+      pollTimer = setTimeout(() => {
+        pollTimer = null;
+        void pollReadiness();
+      }, 250);
+    };
 
-    nextProcess.on("error", (e: Error) => { cleanup(); reject(e); });
-    nextProcess.on("exit", (code) => {
-      if (!started) {
-        cleanup();
-        reject(new Error(`next dev exited with code ${code}`));
+    const pollReadiness = async () => {
+      if (settled || pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const res = await fetchWithTimeout(`${NEXT_BASE}/`);
+        console.log(`[dev-server] readiness probe complete status=${res.status}`);
+        settle();
+      } catch {
+        schedulePoll();
+      } finally {
+        pollInFlight = false;
+      }
+    };
+
+    const onData = (d: Buffer, target: NodeJS.WriteStream) => {
+      const t = d.toString();
+      output += t;
+      target.write(t);
+    };
+
+    const onSignal = (signal: NodeJS.Signals) => {
+      settle(new Error(`Next.js dev server test interrupted by ${signal}`));
+    };
+
+    child.stdout?.on("data", (d: Buffer) => onData(d, process.stdout));
+    child.stderr?.on("data", (d: Buffer) => onData(d, process.stderr));
+
+    child.on("error", (e: Error) => settle(new Error(`Could not start next dev: ${e.message}`)));
+    child.on("exit", (code, signal) => {
+      console.log(`[dev-server] child exited code=${code} signal=${signal ?? "none"}`);
+      if (!settled) {
+        settle(new Error(
+          `next dev exited before readiness (code ${code}, signal ${signal ?? "none"}). Last output: ${output.slice(-400)}`,
+        ));
+      } else if (nextProcess === child) {
+        nextProcess = null;
       }
     });
 
-    failTimer = setTimeout(() => {
-      if (!started) {
-        cleanup();
-        reject(new Error("next dev did not produce 'Local:' output within 60 s"));
-      }
-    }, 60000);
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+    console.log("[dev-server] readiness probe started");
+    void pollReadiness();
+    readinessTimer = setTimeout(() => {
+      settle(new Error(
+        `Next.js dev server did not become ready within ${NEXT_READY_TIMEOUT_MS / 1000} s. Last output: ${output.slice(-400)}`,
+      ));
+    }, NEXT_READY_TIMEOUT_MS);
   });
 }
 
 export function stopNextDev(): void {
   if (nextProcess && nextProcess.pid) {
+    console.log("[dev-server] terminating child");
+    const terminateStartedAt = Date.now();
     try {
-      execSync(`taskkill /PID ${nextProcess.pid} /T /F 2>nul`, { stdio: "ignore" });
+      execFileSync("taskkill", ["/PID", String(nextProcess.pid), "/T", "/F"], {
+        stdio: "ignore",
+        timeout: TEST_IO_TIMEOUT_MS,
+        windowsHide: true,
+      });
+      console.log(`[dev-server] terminate command complete elapsed_ms=${Date.now() - terminateStartedAt}`);
     } catch {
-      /* already gone */
+      console.log(`[dev-server] terminate command ended elapsed_ms=${Date.now() - terminateStartedAt}`);
     }
     nextProcess = null;
   }
@@ -124,18 +224,24 @@ export function stopNextDev(): void {
 export async function createTestSession(addr: string): Promise<string> {
   const token = randomBytes(32).toString("base64url");
   const hashed = sha256Hex(token);
+  console.log("[dev-server] session fixture delete started");
   await admin.from("wallet_sessions").delete().eq("token_hash", hashed);
+  console.log("[dev-server] session fixture delete complete");
+  console.log("[dev-server] session fixture insert started");
   await admin.from("wallet_sessions").insert({
     token_hash: hashed,
     wallet_address: addr,
     expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
     last_seen_at: new Date().toISOString(),
   });
+  console.log("[dev-server] session fixture insert complete");
   return token;
 }
 
 export async function deleteTestSession(token: string): Promise<void> {
+  console.log("[dev-server] session fixture cleanup started");
   await admin.from("wallet_sessions").delete().eq("token_hash", sha256Hex(token));
+  console.log("[dev-server] session fixture cleanup complete");
 }
 
 export async function apiPost(
@@ -145,14 +251,26 @@ export async function apiPost(
 ): Promise<{ status: number; data: any }> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers["Cookie"] = `votum_session=${cookie}`;
-  const res = await fetch(`${NEXT_BASE}${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-  let data: any = null;
-  try { data = await res.json(); } catch { /* ok */ }
-  return { status: res.status, data };
+  console.log(`[dev-server] request started: POST ${path}`);
+  try {
+    const res = await fetchWithTimeout(`${NEXT_BASE}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    console.log(`[dev-server] response body read started: POST ${path}`);
+    const data = await readJsonResponse(res, "POST", path);
+    console.log(`[dev-server] response body read complete: POST ${path}`);
+    const outcome = data && typeof data === "object"
+      ? ` error=${typeof data.error === "string" ? data.error : "none"} stage=${typeof data.stage === "string" ? data.stage : "none"} result=${typeof data.resultKind === "string" ? data.resultKind : "none"}`
+      : "";
+    console.log(`[dev-server] request complete: POST ${path} status=${res.status}${outcome}`);
+    return { status: res.status, data };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[dev-server] request failed: POST ${path}: ${message}`);
+    throw error;
+  }
 }
 
 export async function apiGet(
@@ -161,8 +279,20 @@ export async function apiGet(
 ): Promise<{ status: number; data: any }> {
   const headers: Record<string, string> = {};
   if (cookie) headers["Cookie"] = `votum_session=${cookie}`;
-  const res = await fetch(`${NEXT_BASE}${path}`, { headers });
-  let data: any = null;
-  try { data = await res.json(); } catch { /* ok */ }
-  return { status: res.status, data };
+  console.log(`[dev-server] request started: GET ${path}`);
+  try {
+    const res = await fetchWithTimeout(`${NEXT_BASE}${path}`, { headers });
+    console.log(`[dev-server] response body read started: GET ${path}`);
+    const data = await readJsonResponse(res, "GET", path);
+    console.log(`[dev-server] response body read complete: GET ${path}`);
+    const outcome = data && typeof data === "object"
+      ? ` error=${typeof data.error === "string" ? data.error : "none"} stage=${typeof data.stage === "string" ? data.stage : "none"} result=${typeof data.resultKind === "string" ? data.resultKind : "none"}`
+      : "";
+    console.log(`[dev-server] request complete: GET ${path} status=${res.status}${outcome}`);
+    return { status: res.status, data };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[dev-server] request failed: GET ${path}: ${message}`);
+    throw error;
+  }
 }
