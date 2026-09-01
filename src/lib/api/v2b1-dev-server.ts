@@ -85,9 +85,27 @@ export const admin = createClient(url, key, {
 
 export const NEXT_PORT = 3101;
 export const NEXT_BASE = `http://127.0.0.1:${NEXT_PORT}`;
-const NEXT_READY_TIMEOUT_MS = 60000;
+export const NEXT_READY_TIMEOUT_MS = 60000;
+
+export interface NextDevLaunchMetadata {
+  executable: string;
+  args: string[];
+  shell: boolean;
+  pid: number | null;
+  exited: boolean;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+}
 
 let nextProcess: ChildProcess | null = null;
+let lastNextDevLaunch: NextDevLaunchMetadata | null = null;
+
+/** Test-only launch evidence; no child process handle or environment is exposed. */
+export function getLastNextDevLaunch(): NextDevLaunchMetadata | null {
+  return lastNextDevLaunch
+    ? { ...lastNextDevLaunch, args: [...lastNextDevLaunch.args] }
+    : null;
+}
 
 /** Generate a valid Nimiq address as canonical hex (0x01 + 19 random bytes). */
 export function randomNimiqHex(): string {
@@ -104,17 +122,26 @@ export function startNextDev(): Promise<void> {
   }
 
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      [resolvePath(process.cwd(), "node_modules/next/dist/bin/next"), "dev", "--port", String(NEXT_PORT)],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env },
-        stdio: ["ignore", "pipe", "pipe"],
-        shell: false,
-        windowsHide: true,
-      },
-    );
+    const executable = process.execPath;
+    const args = [resolvePath(process.cwd(), "node_modules/next/dist/bin/next"), "dev", "--port", String(NEXT_PORT)];
+    const shell = false;
+    const child = spawn(executable, args, {
+      cwd: process.cwd(),
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+      shell,
+      windowsHide: true,
+    });
+    const launch: NextDevLaunchMetadata = {
+      executable,
+      args: [...args],
+      shell,
+      pid: child.pid ?? null,
+      exited: false,
+      exitCode: null,
+      signal: null,
+    };
+    lastNextDevLaunch = launch;
     nextProcess = child;
     console.log(`[dev-server] child spawned pid=${child.pid ?? "unknown"}`);
 
@@ -178,9 +205,15 @@ export function startNextDev(): Promise<void> {
     child.stdout?.on("data", (d: Buffer) => onData(d, process.stdout));
     child.stderr?.on("data", (d: Buffer) => onData(d, process.stderr));
 
-    child.on("error", (e: Error) => settle(new Error(`Could not start next dev: ${e.message}`)));
+    child.on("error", (e: Error) => {
+      launch.exited = true;
+      settle(new Error(`Could not start next dev: ${e.message}`));
+    });
     child.on("exit", (code, signal) => {
       console.log(`[dev-server] child exited code=${code} signal=${signal ?? "none"}`);
+      launch.exited = true;
+      launch.exitCode = code;
+      launch.signal = signal;
       if (!settled) {
         settle(new Error(
           `next dev exited before readiness (code ${code}, signal ${signal ?? "none"}). Last output: ${output.slice(-400)}`,
