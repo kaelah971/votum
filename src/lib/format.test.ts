@@ -54,4 +54,10 @@ describe("canonicalWalletKey", () => {
       canonicalWalletKey("NQ47vgr3VVK0"),
     );
   });
+
+  it("normalizes a valid NQ address and its canonical hex address together", () => {
+    const nq = "NQ47 VGR3 VVK0 R49X 98YG CNDY NST3 6CR5 BCKQ";
+    const hex = "ec323ef660c913e4a3f0659bfb6b63333255b278";
+    expect(canonicalWalletKey(nq)).toBe(canonicalWalletKey(hex));
+  });
 });

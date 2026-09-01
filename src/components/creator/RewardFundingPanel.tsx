@@ -42,6 +42,8 @@ interface RewardConfig {
   funding: FundingSummary | null;
 }
 
+type AccessState = "session_required" | "forbidden" | "not_found" | "server_error";
+
 interface FundingIntent {
   fundingIntentId: string;
   campaignId: string;
@@ -88,7 +90,7 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
   const [transactionHash, setTransactionHash] = useState<string | null>(null);
   const [stage, setStage] = useState<FundingStage>("loading");
   const [error, setError] = useState<string | null>(null);
-  const [notAvailable, setNotAvailable] = useState(false);
+  const [accessState, setAccessState] = useState<AccessState | null>(null);
   const mountedRef = useRef(true);
 
   const loadConfig = useCallback(async () => {
@@ -97,8 +99,17 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
         credentials: "same-origin",
         cache: "no-store",
       });
-      if (response.status === 404) {
-        if (mountedRef.current) setNotAvailable(true);
+      if (response.status === 401 || response.status === 403 || response.status === 404) {
+        if (mountedRef.current) {
+          setAccessState(
+            response.status === 401
+              ? "session_required"
+              : response.status === 403
+                ? "forbidden"
+                : "not_found",
+          );
+          setStage("idle");
+        }
         return;
       }
       if (!response.ok) {
@@ -108,6 +119,7 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
       if (!data.config) throw new Error("Invalid reward configuration response.");
       if (!mountedRef.current) return;
 
+      setAccessState(null);
       setConfig(data.config);
       const serverFunding = data.config.funding;
       const pending = getPendingRewardFunding(pollId);
@@ -146,6 +158,7 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
     } catch (loadError) {
       if (mountedRef.current) {
         setStage("error");
+        setAccessState("server_error");
         setError(loadError instanceof Error ? loadError.message : "Could not load reward funding details.");
       }
     }
@@ -284,7 +297,24 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
     return config?.state === "configured" && (stage === "idle" || stage === "error");
   }, [config?.state, isInsideNimiqPay, isSessionVerified, isWalletMatched, provider, stage, walletStatus]);
 
-  if (notAvailable || !config) return null;
+  if (accessState) {
+    const message =
+      accessState === "session_required"
+        ? "Your verified wallet session is required to manage this poll."
+        : accessState === "forbidden"
+          ? "You do not have permission to manage this poll."
+          : accessState === "not_found"
+            ? "Reward campaign not found for this poll."
+            : "Reward funding details are temporarily unavailable. Try again.";
+
+    return (
+      <Card className="mt-6 p-5">
+        <p className="text-body text-quiet-ink" role="status" aria-live="polite">{message}</p>
+      </Card>
+    );
+  }
+
+  if (!config) return null;
 
   const isSubmitted = config.state === "funding_pending" || stage === "submitted" || stage === "binding";
   const isFunded = ["funded", "rewarding", "exhausted"].includes(config.state);
