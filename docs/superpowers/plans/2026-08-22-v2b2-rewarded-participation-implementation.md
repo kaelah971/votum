@@ -671,3 +671,530 @@ Nimiq Pay, mirroring the T12/V2B.1 device QA process. Record in a review doc.
 - No unexplained assertion-count reduction.
 - Device QA recorded; #21 carried to hosted gate.
 - No hosted Supabase, no deploy, no merge to main.
+
+---
+
+## Current V2B.2 status and immediate sequence (2026-09-01)
+
+The V2B.2 Poll roadmap above is preserved in full. This status addendum does
+not renumber, replace, or redesign any V2B.2 checkpoint. The current unfinished
+Poll work remains the immediate prerequisite for Campaign work.
+
+The known blocker remains:
+
+- `/api/me/polls` succeeds;
+- creator reward management / reward-config lookup produces an incorrect 404
+  or state;
+- an already connected creator is incorrectly told: "Connect your wallet to
+  manage this poll."
+
+The active remaining sequence is:
+
+1. **V2B.2.4** — Creator funding initiation / management bug resolution.
+2. **V2B.2.5** — On-chain funding observation + reconciliation.
+3. **V2B.2.6** — Atomic eligibility + reward reservation.
+4. **V2B.2.7** — Automatic vault payout.
+5. **V2B.2.8** — Payout reconciliation + retries + durable idempotency.
+6. **V2B.2.9** — Rewarded poll participant UX.
+7. **V2B.2.10** — Earn NIM discovery.
+8. **V2B.2.11** — Creator reward/refund management.
+9. **V2B.2.12** — Profile NIM earned.
+10. **V2B.2.13** — Privacy / money / backward compatibility gate.
+11. **V2B.2.14** — Full physical Nimiq Pay QA.
+
+V2C implementation must not begin until this sequence is respected. Remaining
+Poll UX and profile work may continue alongside V2C only after the shared
+financial engine is proven.
+
+---
+
+# V2C — Campaigns
+
+Votum is a verified participation network with two separate first-class
+product surfaces:
+
+- **Polls** let communities ask people to participate in decisions.
+- **Campaigns** let communities, projects and creators activate and reward
+  people using NIM.
+
+These are separate UX surfaces. They may reuse shared identity and financial
+infrastructure where technically appropriate, but Campaign concepts must not
+be used to rebuild or merge Poll creation.
+
+Navigation and product actions eventually preserve:
+
+- Browse Polls;
+- Create Poll;
+- Create Campaign.
+
+Create Poll is not renamed to Create and is not merged with Create Campaign.
+
+NIM Drop is part of Campaigns. Cashlinks are rejected for this direction.
+
+## Campaign custody direction
+
+The accepted MVP architecture is a dedicated native NIM vault for every
+Campaign. Each Campaign receives an isolated Nimiq address/keypair:
+
+```text
+Creator Wallet -> Campaign Vault
+Campaign Vault -> Participant Wallet
+Campaign Vault -> Creator/Funder Wallet (refund)
+```
+
+Campaign custody is temporary and Votum-controlled. It is custodial and must
+never be called non-custodial. Existing per-reward-campaign encrypted-key
+architecture should be reused and generalized only where the readiness audit
+proves that it is actually shared.
+
+Architecture Spike #2 is an accepted technical premise for this roadmap. On
+Nimiq TestAlbatross it physically proved Campaign wallet generation, native
+funding, server-signed native payout, an exact 5 NIM claimant receipt, the
+remaining 15 NIM refund, the Campaign balance reaching zero, RPC transaction
+retrieval, and `executionResult: true`.
+
+The spike also proved that a submitted transaction hash is not transaction
+success: one submitted hash later returned `Transaction not found`. Every
+Campaign funding, payout and refund flow therefore requires transaction
+observation, reconciliation and finality awareness. A broadcast hash is never
+surfaced as Paid or Confirmed by itself.
+
+## V2C.0 — Campaign Integration Readiness Audit
+
+**Timing:** before any Campaign implementation.
+
+Audit the actual Votum codebase and produce a map of the existing boundaries,
+callers, state transitions, authorization checks, and public shapes for:
+
+- reward Campaign schema;
+- vault schema;
+- vault generation;
+- encrypted key storage;
+- funding requirements;
+- funding initiation;
+- funding transaction storage;
+- funding reconciliation;
+- reward receipt model;
+- payout code;
+- payout reconciliation;
+- wallet verification;
+- session auth;
+- creator authorization;
+- profile accounting;
+- refund architecture;
+- routing;
+- APIs;
+- discovery surfaces.
+
+The audit must answer, with file and database/RPC references:
+
+1. What is already generic enough?
+2. What is tightly coupled to `poll_id`?
+3. What should become shared infrastructure?
+4. What must remain poll-specific?
+5. Should Poll rewards and standalone Campaigns share a base financial entity?
+6. What additive schema work is required?
+7. How can existing rewarded Polls remain untouched?
+8. What should not be generalized?
+
+The audit is a readiness gate, not permission for a giant refactor. No Campaign
+implementation, schema change, migration, or legacy Poll reinterpretation is
+part of V2C.0.
+
+## V2C.1 — Shared Financial Engine Generalization
+
+After V2C.0, generalize only proven reusable components:
+
+- vault generation;
+- vault encryption and storage;
+- funding requirements;
+- funding initiation;
+- funding observation and reconciliation;
+- transaction lifecycle;
+- payout signing;
+- serialized per-vault transaction queue;
+- durable payout idempotency;
+- payout reconciliation;
+- refund lifecycle.
+
+Poll eligibility remains poll-specific. Campaign eligibility remains
+Campaign-specific. Existing rewarded Polls must continue to work without being
+migrated into Campaigns. Shared infrastructure must be additive and must not
+hide or merge the separate UX models.
+
+## V2C.2 — Create Campaign
+
+Add a separate first-class Create Campaign experience while preserving Create
+Poll. The Campaign type selector must support:
+
+- Giveaway;
+- Secret Drop;
+- Private Drop;
+- Event Drop;
+- Community Reward.
+
+Do not rename Create Poll to Create, merge Poll and Campaign creation into one
+wizard, or rebuild Poll creation around Campaign concepts. All five types must
+become real supported flows; do not ship fake cards or placeholders for
+unsupported types.
+
+## V2C.3 — Public Giveaway
+
+Complete lifecycle:
+
+```text
+Creator: create -> configure -> review -> publish -> fund -> confirm active
+Participant: open -> verify -> claim -> reserve -> payout -> confirm
+Creator: monitor -> exhaust/expire -> reconcile -> refund -> close
+```
+
+Requirements:
+
+- one wallet = one claim;
+- creator cannot self-claim by default;
+- creator-funded principal and fee reserve are explicit;
+- claim capacity is reserved atomically;
+- payout reaches a confirmed/final state only from observed chain truth;
+- physical Nimiq Pay QA is required.
+
+## V2C.4 — Secret Drop
+
+Eligibility is established by a secure Campaign-bound code.
+
+Requirements:
+
+- store a secure hash rather than plaintext where avoidable;
+- rate-limit code attempts;
+- return a generic invalid-code response;
+- bind the code claim to the Campaign;
+- prevent replay;
+- enforce one-wallet uniqueness;
+- complete the same reservation, payout and reconciliation path as other
+  claim-style Campaigns.
+
+## V2C.5 — Private Drop
+
+Eligibility is established by a wallet allowlist.
+
+Requirements:
+
+- creator input/import;
+- canonical address normalization;
+- server-authoritative allowlist checks;
+- deterministic duplicate handling;
+- privacy review for allowlist data and responses;
+- complete funding, claim, payout, reconciliation, refund and closure
+  lifecycle.
+
+## V2C.6 — Event Drop
+
+Support an event-oriented Campaign path with:
+
+- Campaign URL;
+- QR representation;
+- Nimiq Pay deep link where actually supported;
+- activation/event code;
+- expiry;
+- one-wallet rule;
+- capacity;
+- physical-device QA.
+
+Do not assume a special Nimiq Pay native scanner API without current proof.
+QR and deep-link behaviour must be verified on the target physical device.
+
+## V2C.7 — Community Reward
+
+Support a community/contributor reward workflow using the shared Campaign
+engine and allowlist strategy where appropriate. Do not invent external
+contributor integrations before the core flow works. Eligibility, claim,
+reservation, payout, reconciliation, refund and closure must use the same
+financial safety boundaries as the other Campaign types.
+
+## V2C.8 — Campaign Management
+
+The eventual creator dashboard/surface should show:
+
+- type;
+- status;
+- vault;
+- principal;
+- fee reserve;
+- total funded;
+- rewarded wallets;
+- capacity remaining;
+- amount distributed;
+- pending payouts;
+- failures;
+- current balance;
+- expiry;
+- refundable amount;
+- refund state;
+- Campaign link;
+- transaction proof.
+
+Valid creator actions should eventually include:
+
+- fund;
+- complete funding;
+- retry permitted failures;
+- close;
+- request refund;
+- share;
+- copy Campaign code;
+- QR/share tools.
+
+Every management figure and action must be authorized against the creator or
+funder identity and must reflect the durable financial state.
+
+## V2C.9 — Campaign Discovery
+
+Add discovery deliberately without damaging Browse Polls. A possible additive
+surface is `/campaigns`, with Browse Campaigns and/or an Active Campaigns
+section.
+
+Useful information may include:
+
+- Campaign type;
+- creator or project;
+- reward;
+- remaining capacity;
+- expiry.
+
+Do not rank the product around the highest payout. Avoid casino-like cards,
+countdowns, language, or presentation. Poll discovery and Campaign discovery
+remain distinguishable surfaces.
+
+## V2C.10 — Proof of Campaign
+
+Public proof must truthfully expose only what Nimiq and the Votum ledger can
+prove:
+
+- Campaign wallet;
+- funding transaction;
+- funded amount;
+- payout transactions;
+- amount distributed;
+- remaining balance;
+- refund transaction;
+- refunded amount;
+- status.
+
+Chain data does not prove unique humans, the off-chain reason for eligibility,
+Secret Drop code entry, or identity beyond wallet ownership. Public proof must
+not claim those things.
+
+## V2C.11 — Refund + Closure Hardening
+
+Test at minimum:
+
+- expiry with no claims;
+- partial claims;
+- exhausted Campaign;
+- overpayment;
+- underpayment;
+- pending payout at expiry;
+- failed payout;
+- accidental duplicate funding;
+- unsolicited NIM;
+- refund;
+- final zero-balance close where expected.
+
+Refund must be blocked while unresolved obligations exist, including reserved,
+payout-pending, retryable, or otherwise unresolved financial states. Closure,
+refund reservation, refund broadcast, observation, and final confirmation must
+be separately represented and reconciled.
+
+## V2C.12 — Security Gate
+
+Before Campaign release, audit:
+
+- vault isolation;
+- key encryption;
+- master-key assumptions;
+- future signer/HSM boundary;
+- authentication;
+- replay prevention;
+- race conditions;
+- atomic reservation;
+- payout idempotency;
+- serialized per-vault queue;
+- transaction finality;
+- network mismatch;
+- amount mismatch;
+- creator self-claim;
+- allowlists;
+- Secret Drop brute force;
+- refund authorization;
+- logs and secrets;
+- financial-state truthfulness.
+
+The gate must demonstrate that no client callback, submitted hash, stale read,
+or unauthenticated request can create a false financial state.
+
+## V2C.13 — Full Physical Nimiq Pay E2E
+
+Run full physical Nimiq Pay E2E for all five Campaign types:
+
+- Giveaway: creator create/fund -> participant claim/receive -> creator
+  reconcile/refund;
+- Secret Drop: enter code -> claim -> receive;
+- Private Drop: eligible wallet accepted -> ineligible wallet rejected;
+- Event Drop: QR/deep link -> Nimiq Pay -> claim;
+- Community Reward: eligible member -> claim -> receive.
+
+Every UI financial status must be checked against actual chain state. Device QA
+must cover cancellation, retry, expiry, wallet switching, capacity, and proof
+surfaces where applicable. Do not mark a Campaign paid from a broadcast hash
+alone.
+
+## Campaign Claim Model
+
+Claim-style Campaigns follow:
+
+```text
+eligible -> reserved -> payout_pending -> broadcast -> observed/executed -> confirmed/final
+```
+
+Appropriate failure states include:
+
+- failed;
+- retryable;
+- rejected;
+- released/expired.
+
+`broadcast` is an operational lifecycle state, not proof of payment. A receipt
+is not Paid until the stored transaction is observed as executed and confirmed
+under the configured network/finality policy.
+
+## Atomic Claim Guarantee
+
+One wallet equals one Campaign claim unless a future Campaign type explicitly
+changes the rule. This means wallet uniqueness, not human uniqueness.
+
+Use a durable uniqueness constraint equivalent to:
+
+```sql
+UNIQUE(campaign_id, canonical_wallet)
+```
+
+Claim capacity must be reserved transactionally. If one reward remains and 100
+requests race, exactly one request may reserve it. The losing requests must
+receive a truthful ineligible/exhausted result and cannot create a payout.
+
+## Payout Idempotency
+
+Persist durable payout intent and state before or at the signing/broadcast
+boundary. Broadcasting and then losing the HTTP response must not allow a
+retry to send a second reward. A retry must reconcile the previous attempt and
+its stored hash before creating another spend. Unique attempt identity,
+guarded transitions, and chain observation must make duplicate workers safe.
+
+## Per-Vault Queue
+
+Spends from the same Campaign vault must be serialized or use an equivalent
+account-state-safe design:
+
+```text
+Campaign A: payout 1 -> payout 2 -> payout 3
+Campaign B: may process independently
+```
+
+Unrelated workers must not concurrently spend the same vault without a
+serialized transaction queue, nonce/account-state coordination, or an equally
+strong proven mechanism.
+
+## Reward Economics
+
+The creator defines:
+
+- reward per recipient;
+- maximum recipients.
+
+The server derives:
+
+```text
+principal = reward per recipient * maximum recipients
+required funding = principal + fee reserve
+```
+
+Participants receive the exact advertised reward. The creator/Campaign bears
+operational transaction cost. TestAlbatross zero-fee observations must not be
+treated as proof of mainnet zero fees; retain the current conservative
+fee-reserve model until mainnet economics are deliberately validated.
+
+## Product Guardrails
+
+Votum remains verified participation:
+
+- Polls let communities ask;
+- Campaigns let communities activate/reward.
+
+Votum must not become a Galxe clone, quest marketplace, casino, prediction
+market, marketing CRM, token-weighted governance product, or random social
+platform.
+
+Poll reward behaviour remains:
+
+```text
+participate -> automatic reward
+```
+
+Ordinary rewarded Polls have no Claim button. Campaign behaviour remains:
+
+```text
+open Campaign -> satisfy eligibility -> intentionally claim
+```
+
+These UX models must not be merged.
+
+## Legacy Support
+
+Preserve `legacy_support` completely. Do not migrate legacy Polls into
+Campaigns, reinterpret historical NIM support as Campaign rewards, or merge
+the underlying ledgers. They remain distinct and auditable:
+
+- legacy support;
+- Poll participation rewards;
+- Campaign rewards.
+
+Profile aggregation can be designed later, but raw ledgers must remain
+auditable and their source meaning must remain explicit.
+
+## Long-Term Custody Direction
+
+The isolated Campaign vault is accepted MVP custody, not a permanent product
+constraint. Future architecture evaluation should include:
+
+- isolated remote signer;
+- HSM;
+- KMS;
+- MPC/threshold signing;
+- policy-restricted signing;
+- future Nimiq primitives;
+- future native batch/claim distribution.
+
+The product must preserve a future signer boundary rather than locking itself to
+ordinary application-server custody.
+
+## V2C Sequencing and Stop Condition
+
+Do not start V2C implementation in this roadmap update. The immediate order is:
+
+1. Integrate this roadmap.
+2. Finish V2B.2.4 creator-management/config/auth bug.
+3. Build V2B.2.5 funding reconciliation.
+4. Build V2B.2.6 atomic reservation.
+5. Build V2B.2.7 automatic payout.
+6. Build V2B.2.8 reconciliation/retries/idempotency.
+7. Run V2C.0 Campaign Integration Readiness Audit against the actual code.
+8. Generalize only proven shared infrastructure.
+9. Add Create Campaign.
+10. Build Giveaway, Secret Drop, Private Drop, Event Drop, and Community
+    Reward.
+11. Complete Campaign management, discovery, proof, refunds, and security.
+12. Run full physical Nimiq Pay E2E.
+13. Prepare the submission.
+
+Stop after roadmap integration. No Campaign implementation, schema/migration
+work, NIM transfer, deployment, or hosted rollout is part of this document
+update.

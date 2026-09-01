@@ -285,6 +285,40 @@ Build category, creator, competition, weekly, and seasonal leaderboards around c
 
 Explore transparent NIM rewards for eligible milestones and leaderboard performance, funded independently by Votum or sponsors.
 
+### V2C — Campaigns
+
+Votum is evolving as a verified participation network with two separate
+first-class surfaces:
+
+- **Polls:** communities ask people to participate in decisions.
+- **Campaigns:** communities, projects and creators activate and reward people
+  using NIM.
+
+Campaigns are a separate experience from Polls. The future product actions
+remain **Browse Polls**, **Create Poll**, and **Create Campaign**; Create Poll is
+not being renamed or merged into a Campaign wizard.
+
+The Campaign roadmap includes five real campaign types:
+
+- Giveaway;
+- Secret Drop;
+- Private Drop;
+- Event Drop;
+- Community Reward.
+
+NIM Drop belongs to Campaigns. Cashlinks are not part of the direction. The
+planned MVP uses an isolated native NIM vault for each Campaign, with a
+temporary Votum-custodied funding and reward flow. This is custodial
+infrastructure, not non-custodial custody. Campaign financial states and proof
+will be derived from verified chain activity rather than a submitted
+transaction hash alone.
+
+Campaigns will reuse shared identity and financial infrastructure only where
+that is technically proven. Poll rewards remain automatic after participation;
+Campaigns require an eligible participant to intentionally claim. Campaigns
+will not turn Votum into a betting, gambling, quest-marketplace or
+highest-payout product.
+
 The design guardrails are strict:
 
 - participation remains free;
