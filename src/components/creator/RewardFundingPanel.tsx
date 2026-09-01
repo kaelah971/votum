@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import {
+  normalizeWalletFailure,
   sendBasicTransactionWithData,
   type BasicTransactionWithData,
 } from "@/lib/nimiq/client";
@@ -262,7 +263,15 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
       data: activeIntent.memo,
     };
     setStage("awaiting_approval");
-    const result = await sendBasicTransactionWithData(provider, transaction);
+    let result: Awaited<ReturnType<typeof sendBasicTransactionWithData>>;
+    try {
+      result = await sendBasicTransactionWithData(provider, transaction);
+    } catch (fundingError: unknown) {
+      const failure = normalizeWalletFailure(fundingError);
+      setError("denied" in failure ? "Funding cancelled. No transaction was sent." : failure.error);
+      setStage("error");
+      return;
+    }
     if ("denied" in result) {
       setError("Funding cancelled. No transaction was sent.");
       setStage("error");

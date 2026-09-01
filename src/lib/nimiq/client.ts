@@ -219,6 +219,13 @@ function safeErrorSummary(err: unknown): string {
   return "Unknown wallet error";
 }
 
+export function normalizeWalletFailure(err: unknown): { denied: true } | { error: string } {
+  if (isDenialFromThrown(err)) {
+    return { denied: true };
+  }
+  return { error: safeErrorSummary(err) };
+}
+
 export async function initializeNimiqProvider(
   timeout = 5000,
 ): Promise<{ provider: NimiqProvider } | { error: string }> {
@@ -280,10 +287,7 @@ export async function signMessage(
     }
     return { error: errMsg || type || "Signature request failed" };
   } catch (err: unknown) {
-    if (isDenialFromThrown(err)) {
-      return { denied: true };
-    }
-    return { error: safeErrorSummary(err) };
+    return normalizeWalletFailure(err);
   }
 }
 
@@ -324,10 +328,7 @@ export async function requestAccounts(
 
     return { error: "Unexpected response from wallet" };
   } catch (err: unknown) {
-    if (isDenialFromThrown(err)) {
-      return { denied: true };
-    }
-    return { error: safeErrorSummary(err) };
+    return normalizeWalletFailure(err);
   }
 }
 
@@ -370,9 +371,6 @@ export async function sendBasicTransactionWithData(
     }
     return { error: message || type || "Wallet transaction failed" };
   } catch (err: unknown) {
-    if (isDenialFromThrown(err)) {
-      return { denied: true };
-    }
-    return { error: safeErrorSummary(err) };
+    return normalizeWalletFailure(err);
   }
 }

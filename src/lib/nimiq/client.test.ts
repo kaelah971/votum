@@ -11,6 +11,7 @@ const CANCELLATION_VARIANTS = [
   { error: { type: "denied", message: "The user rejected the request" } },
   { type: "denied", message: "Request rejected" },
   { error: { type: "UserRejected", message: "user cancelled" } },
+  { code: 4001, message: "User rejected the request." },
 ];
 
 // A genuine SDK/network failure (must stay an error, not become cancellation)
