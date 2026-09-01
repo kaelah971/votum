@@ -15,6 +15,10 @@ import {
   getPendingRewardFunding,
   setPendingRewardFunding,
 } from "@/lib/rewards/pending-funding";
+import {
+  deriveRewardFundingDisplayState,
+  isBoundRewardFundingHash,
+} from "@/lib/rewards/funding-state";
 
 interface FundingSummary {
   fundingIntentId: string;
@@ -124,8 +128,15 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
       setConfig(data.config);
       const serverFunding = data.config.funding;
       const pending = getPendingRewardFunding(pollId);
-      const serverHash = serverFunding?.submittedTransactionHash ?? null;
-      setTransactionHash(serverHash ?? pending?.transactionHash ?? null);
+      const serverHash = isBoundRewardFundingHash(serverFunding?.submittedTransactionHash)
+        ? serverFunding.submittedTransactionHash
+        : null;
+      const canResumePending = data.config.state === "configured" || data.config.state === "funding_pending";
+      const pendingHash = canResumePending && isBoundRewardFundingHash(pending?.transactionHash)
+        ? pending.transactionHash
+        : null;
+      const resumedHash = serverHash ?? pendingHash;
+      setTransactionHash(resumedHash);
       if (serverFunding && data.config.vaultAddressNq) {
         setIntent({
           fundingIntentId: serverFunding.fundingIntentId,
@@ -142,11 +153,13 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
           createdAt: serverFunding.createdAt,
         });
       }
-      if (data.config.state === "funding_pending") {
+      const fundingDisplayState = deriveRewardFundingDisplayState(data.config.state, {
+        status: serverFunding?.status ?? null,
+        submittedTransactionHash: resumedHash,
+      });
+      if (fundingDisplayState === "submitted") {
         setStage("submitted");
-      } else if (data.config.state === "configured" && (serverHash || pending?.transactionHash)) {
-        setStage("submitted");
-      } else if (data.config.state === "configured") {
+      } else if (fundingDisplayState === "configured" || fundingDisplayState === "intent_pending") {
         // The intent exists but the creator has not produced a hash yet. It is
         // safe to retry the same server-authoritative intent.
         setStage("idle");
@@ -303,8 +316,16 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
   const canFund = useMemo(() => {
     if (!provider || !isInsideNimiqPay) return false;
     if (walletStatus !== "connected" || !isSessionVerified || !isWalletMatched) return false;
-    return config?.state === "configured" && (stage === "idle" || stage === "error");
-  }, [config?.state, isInsideNimiqPay, isSessionVerified, isWalletMatched, provider, stage, walletStatus]);
+    const fundingDisplayState = deriveRewardFundingDisplayState(config?.state ?? "", {
+      status: intent ? "submitted" : null,
+      submittedTransactionHash: transactionHash,
+    });
+    return (
+      (fundingDisplayState === "configured" ||
+        (fundingDisplayState === "intent_pending" && Boolean(intent))) &&
+      (stage === "idle" || stage === "error")
+    );
+  }, [config?.state, intent, isInsideNimiqPay, isSessionVerified, isWalletMatched, provider, stage, transactionHash, walletStatus]);
 
   if (accessState) {
     const message =
@@ -325,19 +346,28 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
 
   if (!config) return null;
 
-  const isSubmitted = config.state === "funding_pending" || stage === "submitted" || stage === "binding";
-  const isFunded = ["funded", "rewarding", "exhausted"].includes(config.state);
+  const fundingDisplayState = deriveRewardFundingDisplayState(config.state, {
+    status: intent ? "submitted" : null,
+    submittedTransactionHash: transactionHash,
+  });
+  const isSubmitted = fundingDisplayState === "submitted";
+  const isFunded = fundingDisplayState === "funded";
+  const isIntentPending = fundingDisplayState === "intent_pending";
+  const showFundingAction =
+    fundingDisplayState === "configured" || (isIntentPending && Boolean(intent));
   const statusText = isFunded
     ? "Rewards funded"
     : stage === "awaiting_approval"
-    ? "Approve the exact funding amount in Nimiq Pay."
-    : stage === "creating_intent"
-      ? "Preparing the server funding request…"
-      : stage === "binding"
-        ? "Recording the transaction hash…"
-        : isSubmitted
-          ? "Funding submitted — waiting for network confirmation."
-          : null;
+      ? "Approve the exact funding amount in Nimiq Pay."
+      : stage === "creating_intent"
+        ? "Preparing the server funding request…"
+        : stage === "binding"
+          ? "Recording the transaction hash…"
+          : isSubmitted
+            ? "Funding submitted — waiting for network confirmation."
+            : isIntentPending
+              ? "Funding not sent - retry funding."
+              : null;
 
   return (
     <Card className="mt-6 p-5 space-y-5" aria-busy={stage === "loading" || stage === "creating_intent" || stage === "awaiting_approval" || stage === "binding"}>
@@ -421,7 +451,7 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
             Rewards are not available yet. Votum must verify the transaction on-chain first.
           </p>
         </div>
-      ) : config.state === "configured" ? (
+      ) : showFundingAction ? (
         <Button
           type="button"
           className="w-full"
@@ -432,22 +462,22 @@ export function RewardFundingPanel({ pollId }: { pollId: string }) {
             ? "Preparing funding…"
             : stage === "awaiting_approval"
               ? "Waiting for Nimiq Pay…"
-              : intent
+              : intent || isIntentPending
                 ? "Retry funding"
                 : "Fund reward campaign"}
         </Button>
       ) : null}
 
-      {config.state === "configured" && !isSubmitted && !isInsideNimiqPay && (
+      {showFundingAction && !isSubmitted && !isInsideNimiqPay && (
         <p className="text-micro text-quiet-ink text-center">Open Votum in Nimiq Pay to fund this campaign.</p>
       )}
-      {config.state === "configured" && !isSubmitted && isInsideNimiqPay && walletStatus !== "connected" && (
+      {showFundingAction && !isSubmitted && isInsideNimiqPay && walletStatus !== "connected" && (
         <p className="text-micro text-quiet-ink text-center">Connect your creator wallet to fund this campaign.</p>
       )}
-      {config.state === "configured" && !isSubmitted && isInsideNimiqPay && walletStatus === "connected" && !isSessionVerified && (
+      {showFundingAction && !isSubmitted && isInsideNimiqPay && walletStatus === "connected" && !isSessionVerified && (
         <p className="text-micro text-quiet-ink text-center">Verify your creator wallet before funding.</p>
       )}
-      {config.state === "configured" && !isSubmitted && isInsideNimiqPay && isSessionVerified && !isWalletMatched && (
+      {showFundingAction && !isSubmitted && isInsideNimiqPay && isSessionVerified && !isWalletMatched && (
         <p className="text-micro text-quiet-ink text-center">The connected wallet does not match the verified creator wallet.</p>
       )}
     </Card>

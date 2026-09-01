@@ -12,6 +12,7 @@ import { WalletButton } from "@/components/ui/WalletButton";
 import { WalletIconLarge } from "@/components/ui/icons";
 import { useVotumSession } from "@/providers/VotumSessionProvider";
 import { useNimiqContext } from "@/providers/NimiqProvider";
+import type { RewardFundingDisplayState } from "@/lib/rewards/funding-state";
 
 interface CreatorPoll {
   id: string;
@@ -24,6 +25,7 @@ interface CreatorPoll {
   rewardMode: "free" | "rewarded" | null;
   rewardCampaign: {
     state: string;
+    fundingState: RewardFundingDisplayState;
     rewardPerParticipantNim: string;
     maxRewardedParticipants: number;
     rewardPrincipalNim: string;
@@ -208,12 +210,12 @@ export default function MyPollsPage() {
             poll.economicModel === "reward_first" && poll.rewardMode === "rewarded"
               ? poll.rewardCampaign
               : null;
-          const isFundingPending = rewardCampaign?.state === "funding_pending";
-          const isFunded = ["funded", "rewarding", "exhausted"].includes(
-            rewardCampaign?.state ?? "",
-          );
+          const fundingState = rewardCampaign?.fundingState;
+          const isIntentPending = fundingState === "intent_pending";
+          const isFundingSubmitted = fundingState === "submitted";
+          const isFunded = fundingState === "funded";
           const showFundAction =
-            poll.isPublic && rewardCampaign?.state === "configured";
+            poll.isPublic && (fundingState === "configured" || isIntentPending);
 
           return (
             <div key={poll.id}>
@@ -262,7 +264,12 @@ export default function MyPollsPage() {
                             : "Free verified"}
                       </span>
                     </div>
-                    {isFundingPending && (
+                    {isIntentPending && (
+                      <p className="text-body text-fairness-amber" role="status">
+                        Funding not sent - retry funding.
+                      </p>
+                    )}
+                    {isFundingSubmitted && (
                       <p className="text-body text-fairness-amber" role="status">
                         Funding submitted - waiting for network confirmation.
                       </p>
@@ -280,7 +287,7 @@ export default function MyPollsPage() {
                   href={`/my-polls/${poll.id}`}
                   className="mt-2 inline-flex min-h-11 items-center justify-center rounded-full bg-signal-gold px-5 py-2.5 text-sm font-medium text-ballot-ink transition-colors hover:bg-deep-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-gold focus-visible:ring-offset-2"
                 >
-                  Fund rewards
+                  {isIntentPending ? "Retry funding" : "Fund rewards"}
                   <span className="ml-2 text-quiet-ink">
                     {rewardCampaign.totalRequiredFundingNim}
                   </span>

@@ -5,6 +5,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerClient, getConfigStatus } from "@/lib/supabase/config";
 import { lunaToNim } from "@/lib/nimiq/units";
 import { normalizeCategory, normalizeFormat } from "@/lib/polls/taxonomy";
+import {
+  deriveRewardFundingDisplayState,
+  type RewardFundingSnapshot,
+} from "@/lib/rewards/funding-state";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +18,7 @@ function log(stage: string, data: Record<string, unknown>) {
 }
 
 interface RewardCampaignSummaryRow {
+  id: string;
   poll_id: string;
   status: string;
   reward_per_participant_luna: number | string;
@@ -88,18 +93,45 @@ export async function GET() {
     // constrained to the verified creator above, so this admin read only
     // enriches that creator-owned list with the safe funding summary.
     const admin = createAdminClient();
-    const campaignByPoll = new Map<string, RewardCampaignSummaryRow>();
+    const campaignByPoll = new Map<
+      string,
+      RewardCampaignSummaryRow & { funding: RewardFundingSnapshot | null }
+    >();
     if (admin) {
       const { data: campaigns, error: campaignErr } = await admin
         .from("reward_campaigns")
         .select(
-          "poll_id, status, reward_per_participant_luna, max_rewarded_participants, reward_principal_luna, fee_reserve_luna, total_budget_luna",
+          "id, poll_id, status, reward_per_participant_luna, max_rewarded_participants, reward_principal_luna, fee_reserve_luna, total_budget_luna",
         )
         .in("poll_id", pollIds);
 
       if (campaignErr) throw campaignErr;
+
+      const fundingByCampaign = new Map<string, RewardFundingSnapshot>();
+      const campaignIds = (campaigns ?? []).map((campaign) => campaign.id);
+      if (campaignIds.length > 0) {
+        const { data: fundingRows, error: fundingErr } = await admin
+          .from("reward_funding_transactions")
+          .select("campaign_id, status, submitted_transaction_hash, created_at")
+          .in("campaign_id", campaignIds)
+          .order("created_at", { ascending: false });
+
+        if (fundingErr) throw fundingErr;
+        for (const funding of fundingRows ?? []) {
+          if (!fundingByCampaign.has(funding.campaign_id)) {
+            fundingByCampaign.set(funding.campaign_id, {
+              status: funding.status,
+              submittedTransactionHash: funding.submitted_transaction_hash,
+            });
+          }
+        }
+      }
+
       for (const campaign of (campaigns ?? []) as RewardCampaignSummaryRow[]) {
-        campaignByPoll.set(campaign.poll_id, campaign);
+        campaignByPoll.set(campaign.poll_id, {
+          ...campaign,
+          funding: fundingByCampaign.get(campaign.id) ?? null,
+        });
       }
     }
 
@@ -138,7 +170,8 @@ export async function GET() {
               const campaign = campaignByPoll.get(p.id);
               return campaign
                 ? {
-                    state: campaign.status,
+                      state: campaign.status,
+                    fundingState: deriveRewardFundingDisplayState(campaign.status, campaign.funding),
                     rewardPerParticipantNim: formatNim(campaign.reward_per_participant_luna),
                     maxRewardedParticipants: campaign.max_rewarded_participants,
                     rewardPrincipalNim: formatNim(campaign.reward_principal_luna),

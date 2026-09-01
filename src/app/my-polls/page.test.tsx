@@ -64,6 +64,7 @@ const pollBase = {
 
 const rewardCampaign = {
   state: "configured",
+  fundingState: "configured",
   rewardPerParticipantNim: "0.01 NIM",
   maxRewardedParticipants: 1,
   rewardPrincipalNim: "0.01 NIM",
@@ -101,17 +102,31 @@ describe("/my-polls reward funding entry", () => {
     expect(action).toHaveTextContent("0.09 NIM");
   });
 
-  it("shows pending funding without offering a duplicate fund action", async () => {
+  it("shows a null-hash funding intent as not sent and retryable", async () => {
     mockPolls({
       ...pollBase,
       economicModel: "reward_first",
       rewardMode: "rewarded",
-      rewardCampaign: { ...rewardCampaign, state: "funding_pending" },
+      rewardCampaign: { ...rewardCampaign, state: "funding_pending", fundingState: "intent_pending" },
+    });
+    render(<MyPollsPage />);
+
+    await waitFor(() => expect(screen.getByText(/Funding not sent/)).toBeInTheDocument());
+    expect(screen.queryByText(/Funding submitted/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Retry funding/ })).toHaveAttribute("href", "/my-polls/poll-1");
+  });
+
+  it("shows funding as submitted only when a transaction hash is bound", async () => {
+    mockPolls({
+      ...pollBase,
+      economicModel: "reward_first",
+      rewardMode: "rewarded",
+      rewardCampaign: { ...rewardCampaign, state: "funding_pending", fundingState: "submitted" },
     });
     render(<MyPollsPage />);
 
     await waitFor(() => expect(screen.getByText(/Funding submitted/)).toBeInTheDocument());
-    expect(screen.queryByRole("link", { name: /Fund rewards|Complete funding/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Retry funding/ })).not.toBeInTheDocument();
   });
 
   it("shows funded state without a Fund action", async () => {
@@ -119,7 +134,7 @@ describe("/my-polls reward funding entry", () => {
       ...pollBase,
       economicModel: "reward_first",
       rewardMode: "rewarded",
-      rewardCampaign: { ...rewardCampaign, state: "funded" },
+      rewardCampaign: { ...rewardCampaign, state: "funded", fundingState: "funded" },
     });
     render(<MyPollsPage />);
 

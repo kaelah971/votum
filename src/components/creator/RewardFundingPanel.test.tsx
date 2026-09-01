@@ -47,6 +47,23 @@ const configuredConfig = {
   funding: null,
 };
 
+const pendingIntentConfig = {
+  ...configuredConfig,
+  state: "funding_pending",
+  funding: {
+    fundingIntentId: "intent-1",
+    campaignId: "campaign-1",
+    reference: "votum:fund:test",
+    status: "submitted",
+    amountLuna: "9000",
+    rewardPrincipalLuna: "1000",
+    feeReserveLuna: "8000",
+    submittedTransactionHash: null,
+    confirmationDeadline: null,
+    createdAt: "2026-08-31T00:00:00.000Z",
+  },
+};
+
 const fundingIntent = {
   fundingIntentId: "intent-1",
   campaignId: "campaign-1",
@@ -73,16 +90,16 @@ function mockConfig(config: Record<string, unknown>, status = 200) {
   );
 }
 
-function mockFundingFlow() {
-  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+function mockFundingFlow(config: Record<string, unknown> = configuredConfig) {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path.endsWith("/bind")) {
       return Promise.resolve({ ok: true, status: 201, json: async () => ({}) });
     }
-    if (path.endsWith("/reward/funding/intents")) {
+    if (path.endsWith("/reward/funding/intents") && init?.method === "POST") {
       return Promise.resolve({ ok: true, status: 201, json: async () => ({ fundingIntent }) });
     }
-    return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: configuredConfig }) });
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ config }) });
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -114,27 +131,26 @@ describe("RewardFundingPanel canonical creator surface", () => {
     expect(screen.getByText(/NQ00 0000/)).toBeInTheDocument();
   });
 
-  it("shows submitted funding as pending without a duplicate funding CTA", async () => {
+  it("shows a null-hash funding intent as not sent and retryable after reload", async () => {
+    mockConfig(pendingIntentConfig);
+    render(<RewardFundingPanel pollId="poll-qa" />);
+
+    await waitFor(() => expect(screen.getByText(/Funding not sent/)).toBeInTheDocument());
+    expect(screen.queryByText(/Funding submitted/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry funding" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Submitted transaction hash")).not.toBeInTheDocument();
+  });
+
+  it("shows submitted funding only when a real transaction hash is bound", async () => {
     mockConfig({
-      ...configuredConfig,
-      state: "funding_pending",
-      funding: {
-        fundingIntentId: "intent-1",
-        campaignId: "campaign-1",
-        reference: "votum:fund:test",
-        status: "submitted",
-        amountLuna: "9000",
-        rewardPrincipalLuna: "1000",
-        feeReserveLuna: "8000",
-        submittedTransactionHash: null,
-        confirmationDeadline: null,
-        createdAt: "2026-08-31T00:00:00.000Z",
-      },
+      ...pendingIntentConfig,
+      funding: { ...pendingIntentConfig.funding, submittedTransactionHash: "a".repeat(64) },
     });
     render(<RewardFundingPanel pollId="poll-qa" />);
 
     await waitFor(() => expect(screen.getByText(/Funding submitted/)).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: /Fund reward campaign|Retry funding/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry recording transaction" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry funding" })).not.toBeInTheDocument();
   });
 
   it("shows funded state without a Fund CTA", async () => {
@@ -204,5 +220,20 @@ describe("RewardFundingPanel canonical creator surface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry funding" }));
     await waitFor(() => expect(sendTransactionMock).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  it("reuses the existing null-hash intent after a page reload", async () => {
+    const fetchMock = mockFundingFlow(pendingIntentConfig);
+    sendTransactionMock.mockResolvedValueOnce({ transactionHash: "a".repeat(64) });
+    render(<RewardFundingPanel pollId="poll-qa" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry funding" }));
+
+    await waitFor(() => expect(sendTransactionMock).toHaveBeenCalledTimes(1));
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => String(input).endsWith("/reward/funding/intents") && init?.method === "POST",
+      ),
+    ).toBe(false);
   });
 });
