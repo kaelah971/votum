@@ -706,6 +706,25 @@ V2C implementation must not begin until this sequence is respected. Remaining
 Poll UX and profile work may continue alongside V2C only after the shared
 financial engine is proven.
 
+### V2B.2.5 Phase A status (2026-09-06)
+
+Phase A is Docker-off and contains only pure, deterministic funding
+reconciliation plus the server-side Nimiq transaction observation boundary:
+
+- `src/lib/rewards/reconciliation.ts` compares server-authoritative expected
+  funding with normalized chain observations using integer Luna arithmetic.
+- `src/lib/nimiq/observation.ts` fetches and normalizes an existing transaction
+  by hash; it does not sign or broadcast and does not import vault modules.
+- Focused Vitest coverage uses synthetic observations/RPC fixtures only.
+- The current RPC evidence does not define a mainnet finality threshold. The
+  adapter therefore preserves `finality: "unknown"`; DB confirmation remains
+  pending until a trusted finality policy is supplied.
+
+V2B.2.5 is **not complete**. Phase B remains pending for the DB reconciliation
+RPC, atomic campaign transition, funding ledger mutation, and real chain
+integration. No local or hosted Supabase integration is part of this Phase A
+status.
+
 ---
 
 # V2C — Campaigns
