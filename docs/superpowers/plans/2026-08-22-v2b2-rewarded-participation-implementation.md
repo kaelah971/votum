@@ -817,12 +817,41 @@ reservation RPC, alter the database, or change the vote route.
   participation and public rewarded poll, apply creator exclusion, replay the
   existing receipt, enforce capacity, insert `reserved`, increment the counter,
   set `first_reservation_at` once, and return the authoritative result.
-- The current `/api/polls/[pollId]/vote` route calls only
-  `cast_poll_vote_atomic`; a second ordinary RPC call would not make vote plus
-  receipt creation one transaction. Phase B must extend the vote RPC or fuse a
-  companion reservation into the same database transaction/lock boundary.
+- At the Phase A capture, the current `/api/polls/[pollId]/vote` route called
+  only `cast_poll_vote_atomic`; the Phase B implementation intentionally keeps
+  voting and reservation as separate boundaries so a committed valid vote is
+  never failed by an unavailable or ineligible reward. The route now calls the
+  service-only reservation RPC after a created or same-option replayed vote.
 - No payout, signing, broadcasting, vault-key import, or V2C work is included.
-  Phase B database implementation remains pending.
+
+### V2B.2.6 Phase B status (2026-09-06)
+
+Phase B is implemented locally and remains local-only:
+
+- `supabase/migrations/20260906010000_v2b2_reserve_participant_reward.sql`
+  adds the service-role-only `claim_reward_receipt_atomic` RPC. It locks the
+  campaign row, derives the participant wallet and poll/creator identity from
+  `poll_votes` and `polls`, replays the existing receipt before capacity, and
+  atomically inserts `reserved`, increments the authoritative count, transitions
+  `funded → rewarding` or the final slot to `exhausted`, and sets
+  `first_reservation_at` once.
+- `src/app/api/polls/[pollId]/vote/route.ts` looks up the poll campaign and calls
+  reservation after `created` and same-option `replay`. Reservation failures are
+  logged but never turn a committed vote into a failed response.
+- `src/lib/rewards/reservation.db.test.ts` covers 27 local database cases:
+  creator exclusion, public/rewarded eligibility, authoritative amount,
+  option independence, replay idempotency, campaign lifecycle, first-reservation
+  timestamp, capacity, final-slot concurrency, mismatch validation, and no
+  payout/refund side effects.
+- The RED test first failed with PostgREST `PGRST202` for the missing RPC. After
+  the additive migration, focused reservation tests pass `27/27`.
+- The complete suite passes `317/317` across 35 files with
+  `npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism`; the single
+  fork and disabled file parallelism are required for stable Windows local-DB
+  integration runs.
+- No NIM was sent, no wallet transaction was approved, and no hosted Supabase
+  project was accessed. Payout, signing, broadcasting, refunds, V2B.2.7, and
+  V2C remain out of scope.
 
 ---
 

@@ -9,6 +9,64 @@ function log(stage: string, data: Record<string, unknown>) {
   console.error("[vote]", { stage, ...data });
 }
 
+type AdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
+
+async function reserveRewardAfterVote(
+  admin: AdminClient,
+  pollId: string,
+  participationId: unknown,
+  requestId: string,
+): Promise<void> {
+  if (typeof participationId !== "string" || !participationId) return;
+
+  try {
+    const { data: campaign, error: campaignError } = await admin
+      .from("reward_campaigns")
+      .select("id")
+      .eq("poll_id", pollId)
+      .maybeSingle();
+
+    if (campaignError) {
+      log("reward_campaign_lookup_failed", {
+        requestId,
+        code: campaignError.code,
+        message: campaignError.message,
+      });
+      return;
+    }
+
+    if (!campaign) return;
+
+    const { data: reservation, error: reservationError } = await admin.rpc(
+      "claim_reward_receipt_atomic",
+      {
+        _participation_id: participationId,
+        _campaign_id: campaign.id,
+      },
+    );
+
+    if (reservationError) {
+      log("reward_reservation_failed", {
+        requestId,
+        code: reservationError.code,
+        message: reservationError.message,
+      });
+      return;
+    }
+
+    const resultKind = (reservation as Record<string, unknown> | null)?.result_kind;
+    log("reward_reservation", {
+      requestId,
+      resultKind: typeof resultKind === "string" ? resultKind : "unknown",
+    });
+  } catch (error) {
+    log("reward_reservation_unexpected_error", {
+      requestId,
+      error: String(error),
+    });
+  }
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ pollId: string }> },
@@ -138,6 +196,7 @@ export async function POST(
 
     switch (resultKind) {
       case "created":
+        await reserveRewardAfterVote(admin, pollId, r.vote_id, requestId);
         log("vote_created", { requestId, status: 201 });
         return NextResponse.json(
           {
@@ -153,6 +212,7 @@ export async function POST(
         );
 
       case "replay":
+        await reserveRewardAfterVote(admin, pollId, r.vote_id, requestId);
         return NextResponse.json({
           vote: { id: r.vote_id, pollId, optionId },
           resultKind: "replay",

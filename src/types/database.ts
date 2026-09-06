@@ -686,6 +686,14 @@ export type Database = {
         }
         Returns: Json
       }
+      /** Atomically reserve one reward for a committed poll participation. */
+      claim_reward_receipt_atomic: {
+        Args: {
+          _campaign_id: string
+          _participation_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never
