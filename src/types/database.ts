@@ -674,6 +674,18 @@ export type Database = {
         Args: Record<string, unknown>
         Returns: Json
       }
+      /** Atomically confirm server-observed finalized reward funding. */
+      confirm_reward_funding_atomic: {
+        Args: {
+          _block_number?: number | null
+          _campaign_id: string
+          _intent_id: string
+          _observed_amount_luna: number
+          _transaction_hash: string
+          _transaction_timestamp?: string | null
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never

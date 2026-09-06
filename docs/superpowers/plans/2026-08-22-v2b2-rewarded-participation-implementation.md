@@ -1,6 +1,6 @@
 # V2B.2 — Creator-Funded Rewarded Participation (Implementation Plan)
 
-**Status:** Plan — no implementation yet.
+**Status:** Implementation in progress — V2B.2.5 Phase B is locally implemented; final commit and push verification remain.
 **Date:** 2026-08-22
 **Branch:** `feat/v2-participation-record`
 **Starting HEAD:** `80288e523422c89c490eac2f1444f76c3ed39f8d`
@@ -11,8 +11,8 @@ and a **mandatory Slice 0 custody spike** (server-side Nimiq signing/broadcast).
 
 > This document plans V2B.2 as small, independently verifiable checkpoints
 > (V2B.2.1 … V2B.2.14). Each checkpoint is a commit boundary with its own goal,
-> files, invariants, tests, and acceptance criteria. Nothing here is
-> implemented yet.
+> files, invariants, tests, and acceptance criteria. Checkpoint status notes below
+> record the work completed so far.
 
 ---
 
@@ -744,10 +744,33 @@ boundary:
   `https://raw.githubusercontent.com/nimiq/core-rs-albatross/albatross/rpc-interface/src/policy.rs`,
   and `https://raw.githubusercontent.com/nimiq/core-rs-albatross/albatross/rpc-interface/src/types.rs`.
 
-V2B.2.5 is **not complete**. Phase B remains pending for the DB reconciliation
-RPC, atomic campaign transition, funding ledger mutation, and real chain
-integration. No local or hosted Supabase integration is part of this Phase A
-status.
+At the time of this Phase A record, V2B.2.5 was **not complete**: Phase B was
+still pending for the DB reconciliation RPC, atomic campaign transition, funding
+ledger mutation, and real chain integration. No local or hosted Supabase
+integration was part of that Phase A status. The Phase B status below supersedes
+that pending note.
+
+### V2B.2.5 Phase B status (2026-09-06)
+
+Phase B is locally implemented and remains local-only:
+
+- `supabase/migrations/20260906000000_v2b2_confirm_reward_funding.sql` adds the
+  service-role-only `confirm_reward_funding_atomic` RPC. It locks the campaign
+  before the funding intent, validates the bound hash, vault snapshot, funding
+  terms, and observed integer Luna amount, then atomically marks the funding and
+  campaign funded. It creates no receipt, payout, or refund rows.
+- `src/lib/rewards/funding-confirmation.ts` loads server-authoritative context,
+  observes the stored transaction hash through the existing Nimiq adapter, and
+  calls the RPC only after pure reconciliation returns confirmed.
+- `POST /api/polls/[pollId]/reward/funding/intents/[intentId]/confirm` derives
+  all financial truth server-side and accepts no browser confirmation or amount
+  fields.
+- The local migration was applied with `npx supabase migration up --local`.
+- Phase B boundary and database tests pass: 22 focused tests. The complete
+  Vitest suite passes 267 tests across 33 files when run without file-level
+  parallelism, which avoids unrelated local-DB contention in vault tests.
+- No NIM was sent, no wallet transaction was approved, and no hosted Supabase
+  project was accessed.
 
 ---
 
