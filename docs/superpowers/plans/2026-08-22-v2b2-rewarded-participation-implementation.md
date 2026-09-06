@@ -1,6 +1,6 @@
 # V2B.2 — Creator-Funded Rewarded Participation (Implementation Plan)
 
-**Status:** Implementation in progress — V2B.2.5 Phase B is locally implemented; final commit and push verification remain.
+**Status:** V2B.2.6 Phase A implemented locally; Phase B database implementation remains pending.
 **Date:** 2026-08-22
 **Branch:** `feat/v2-participation-record`
 **Starting HEAD:** `80288e523422c89c490eac2f1444f76c3ed39f8d`
@@ -771,6 +771,58 @@ Phase B is locally implemented and remains local-only:
   parallelism, which avoids unrelated local-DB contention in vault tests.
 - No NIM was sent, no wallet transaction was approved, and no hosted Supabase
   project was accessed.
+
+### V2B.2.6 Phase A status (2026-09-06)
+
+Phase A is Docker-off and pure. It defines the policy only; it does not add a
+reservation RPC, alter the database, or change the vote route.
+
+- The participation source of truth is `poll_votes`. Its canonical identity is
+  `poll_votes.voter_wallet`, and the existing unique constraint
+  `(poll_id, voter_wallet)` preserves one verified vote per wallet. The current
+  vote route obtains the wallet from `getVerifiedWalletSession`; verification
+  stores the canonical wallet in `wallet_sessions` after the signed challenge.
+- Creator identity is `polls.creator_wallet`. The policy compares it with the
+  participant wallet and returns `creator_not_reward_eligible` without changing
+  or invalidating the creator's committed vote.
+- `reward_receipts` already provides the required ledger shape: campaign/poll,
+  participant wallet, integer `amount_luna`, and lifecycle statuses including
+  `reserved`, `payout_pending`, `paid`, `failed`, and `retryable`. It has no
+  selected-option field and already enforces `UNIQUE(campaign_id,
+  participant_wallet)`.
+- Capacity uses the existing authoritative integer
+  `reward_campaigns.rewarded_participant_count` against
+  `max_rewarded_participants`; fee reserve, raw vault balance, and client
+  counters are excluded. Existing receipt presence returns the authoritative
+  idempotent reservation before capacity is evaluated.
+- `src/lib/rewards/eligibility.ts` returns deterministic `eligible`,
+  `already_reserved`, `no_capacity`, or `ineligible` results. Eligible results
+  use the campaign's immutable `reward_per_participant_luna` and request a
+  `reserved` receipt; browser-supplied reward amounts are ignored.
+- Eligibility is independent of the selected option. The pure regression runs
+  the same synthetic participation with option A and option B and receives the
+  same result; the result contains no option data.
+- `first_reservation_at` is represented as a one-time
+  `shouldSetFirstReservationAt` boundary. The future atomic operation must set
+  it only when it is NULL and never overwrite it.
+- Funding confirmation leaves the campaign in `funded`. The future reservation
+  transition is `funded → rewarding`; when the increment reaches the cap, the
+  same locked transaction may finish at `exhausted`. `rewarding` accepts later
+  reservations; `exhausted` never accepts a new one.
+- No new columns or uniqueness indexes appear necessary for Phase B. The
+  smallest future financial boundary is the plan's
+  `claim_reward_receipt_atomic(_participation_id uuid, _campaign_id uuid)`
+  (or equivalently named reservation RPC), deriving wallet, poll, creator, and
+  reward terms server-side. It must lock the campaign, validate the committed
+  participation and public rewarded poll, apply creator exclusion, replay the
+  existing receipt, enforce capacity, insert `reserved`, increment the counter,
+  set `first_reservation_at` once, and return the authoritative result.
+- The current `/api/polls/[pollId]/vote` route calls only
+  `cast_poll_vote_atomic`; a second ordinary RPC call would not make vote plus
+  receipt creation one transaction. Phase B must extend the vote RPC or fuse a
+  companion reservation into the same database transaction/lock boundary.
+- No payout, signing, broadcasting, vault-key import, or V2C work is included.
+  Phase B database implementation remains pending.
 
 ---
 
