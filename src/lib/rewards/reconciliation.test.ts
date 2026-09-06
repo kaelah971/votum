@@ -32,6 +32,7 @@ function observedTransaction(
 ): ObservedFundingTransaction {
   return {
     transactionHash: EXPECTED_HASH,
+    blockHash: null,
     networkId: NETWORK_ID,
     sender: SENDER_HEX,
     recipient: VAULT_NQ,
@@ -42,6 +43,16 @@ function observedTransaction(
     timestampMs: 1_725_000_000_000,
     confirmationCount: null,
     finality: "final",
+    finalityReason: null,
+    finalityEvidence: {
+      transactionBlockHeight: 12345,
+      transactionBlockHash: null,
+      canonicalBlockHash: "c".repeat(64),
+      canonicalBlockVerified: true,
+      batchNumber: 7,
+      finalizingMacroBlockHeight: 12350,
+      finalizingMacroBlockHash: "d".repeat(64),
+    },
     ...overrides,
   };
 }
@@ -86,6 +97,22 @@ describe("reconcileRewardFunding", () => {
     expect(result.confirmed).toBe(false);
   });
 
+  it("keeps a canonical block mismatch pending instead of permanently rejecting it", () => {
+    const result = reconcileRewardFunding(
+      expectedFunding,
+      found({
+        finality: "not_final",
+        finalityReason: "canonical_block_mismatch",
+      }),
+    );
+
+    expect(result).toMatchObject({
+      status: "pending",
+      reasonCode: "canonical_block_mismatch",
+      confirmed: false,
+    });
+  });
+
   it("confirms exact funding only after successful final observation", () => {
     const result = reconcileRewardFunding(expectedFunding, found());
 
@@ -96,6 +123,19 @@ describe("reconcileRewardFunding", () => {
       amountComparison: "exact",
     });
     expect(result.excessAmountLuna).toBe(BigInt(0));
+  });
+
+  it("does not trust a finality string without canonical and macro evidence", () => {
+    const result = reconcileRewardFunding(
+      expectedFunding,
+      found({ finality: "final", finalityEvidence: null }),
+    );
+
+    expect(result).toMatchObject({
+      status: "pending",
+      reasonCode: "finality_unknown",
+      confirmed: false,
+    });
   });
 
   it("rejects a wrong recipient", () => {

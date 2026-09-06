@@ -709,16 +709,40 @@ financial engine is proven.
 ### V2B.2.5 Phase A status (2026-09-06)
 
 Phase A is Docker-off and contains only pure, deterministic funding
-reconciliation plus the server-side Nimiq transaction observation boundary:
+reconciliation plus a server-side Nimiq canonical-chain/finality observation
+boundary:
 
 - `src/lib/rewards/reconciliation.ts` compares server-authoritative expected
   funding with normalized chain observations using integer Luna arithmetic.
-- `src/lib/nimiq/observation.ts` fetches and normalizes an existing transaction
-  by hash; it does not sign or broadcast and does not import vault modules.
-- Focused Vitest coverage uses synthetic observations/RPC fixtures only.
-- The current RPC evidence does not define a mainnet finality threshold. The
-  adapter therefore preserves `finality: "unknown"`; DB confirmation remains
-  pending until a trusted finality policy is supplied.
+- `src/lib/nimiq/observation.ts` fetches an existing transaction by hash and,
+  when requested, proves finality without signing or broadcasting and without
+  importing vault modules.
+- Focused Vitest coverage uses synthetic observations/RPC fixtures only. It
+  covers exact finality, pre-macro pending, canonical block mismatches,
+  transaction disappearance from a canonical block body, RPC failures,
+  failed execution, and unmined transactions.
+- The verified policy is: `getTransactionByHash` supplies transaction facts;
+  `getLatestBlock` supplies the current main-chain head;
+  `getBlockByNumber(blockNumber, true)` is main-chain-only per the official
+  RPC interface and must contain the observed transaction hash;
+  `getBatchAt(blockNumber)` identifies the batch; `getMacroBlockOf(batch)`
+  identifies the batch-finalizing macro-block; and
+  `getBlockByNumber(macroHeight, false)` must return a canonical macro block
+  with the expected height and batch. Only that combination yields
+  `finality: "final"`.
+- The current `getTransactionByHash` shape does not include a block hash. If
+  an observation does include one, the adapter compares it with the
+  canonical block hash. Body membership remains the canonical inclusion
+  proof, so a reorg/disappearance never confirms and remains pending.
+- No arbitrary confirmation count is used. Mini App SDK confirmation counts
+  are not financial truth. Missing macro finality is `not_final` or `unknown`;
+  RPC failures are retryable and never confirm.
+- Sources verified against installed `@nimiq/core@2.7.2` and
+  `@nimiq/mini-app-sdk@0.1.0`, plus the official RPC interface:
+  `https://www.nimiq.com/developers/protocol/`,
+  `https://raw.githubusercontent.com/nimiq/core-rs-albatross/albatross/rpc-interface/src/blockchain.rs`,
+  `https://raw.githubusercontent.com/nimiq/core-rs-albatross/albatross/rpc-interface/src/policy.rs`,
+  and `https://raw.githubusercontent.com/nimiq/core-rs-albatross/albatross/rpc-interface/src/types.rs`.
 
 V2B.2.5 is **not complete**. Phase B remains pending for the DB reconciliation
 RPC, atomic campaign transition, funding ledger mutation, and real chain

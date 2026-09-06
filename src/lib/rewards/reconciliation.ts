@@ -3,6 +3,21 @@ import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 /** The finality states a trusted server-side observation may report. */
 export type FundingFinality = "final" | "not_final" | "unknown";
 
+export type FundingFinalityReason =
+  | "observed_not_final"
+  | "canonical_block_mismatch"
+  | "finality_unknown";
+
+export interface FundingFinalityEvidence {
+  transactionBlockHeight: number | null;
+  transactionBlockHash: string | null;
+  canonicalBlockHash: string | null;
+  canonicalBlockVerified: boolean;
+  batchNumber: number | null;
+  finalizingMacroBlockHeight: number | null;
+  finalizingMacroBlockHash: string | null;
+}
+
 /** Server-authoritative funding facts loaded from the funding record. */
 export interface ExpectedFunding {
   campaignId?: string;
@@ -18,6 +33,8 @@ export interface ExpectedFunding {
 /** Chain facts normalized by the Nimiq observation adapter. */
 export interface ObservedFundingTransaction {
   transactionHash: string;
+  /** Optional because the current getTransactionByHash response omits it. */
+  blockHash: string | null;
   networkId: number | null;
   sender: string | null;
   recipient: string;
@@ -29,6 +46,8 @@ export interface ObservedFundingTransaction {
   confirmationCount: number | null;
   /** Unknown is intentional until a network finality policy is proven. */
   finality: FundingFinality;
+  finalityReason: FundingFinalityReason | null;
+  finalityEvidence: FundingFinalityEvidence | null;
 }
 
 export type FundingObservation =
@@ -59,6 +78,7 @@ export const FUNDING_RECONCILIATION_REASON_CODES = [
   "amount_underpaid",
   "amount_exact",
   "amount_overpaid",
+  "canonical_block_mismatch",
   "memo_mismatch",
   "memo_unknown",
   "execution_failed",
@@ -94,6 +114,19 @@ export interface FundingReconciliationResult {
 
 function isTransactionHash(value: string): boolean {
   return /^[0-9a-fA-F]{64}$/.test(value.trim());
+}
+
+function hasFinalityEvidence(observed: ObservedFundingTransaction): boolean {
+  const evidence = observed.finalityEvidence;
+  return evidence !== null &&
+    evidence.canonicalBlockVerified &&
+    evidence.transactionBlockHeight === observed.blockHeight &&
+    evidence.canonicalBlockHash !== null &&
+    isTransactionHash(evidence.canonicalBlockHash) &&
+    evidence.batchNumber !== null &&
+    evidence.finalizingMacroBlockHeight !== null &&
+    evidence.finalizingMacroBlockHash !== null &&
+    isTransactionHash(evidence.finalizingMacroBlockHash);
 }
 
 function baseResult(expected: ExpectedFunding): FundingReconciliationResult {
@@ -261,10 +294,19 @@ export function reconcileRewardFunding(
   if (observed.finality === "not_final") {
     return withDecision(expected, {
       status: "pending",
-      reasonCode: "observed_but_not_final",
+      reasonCode: observed.finalityReason === "canonical_block_mismatch"
+        ? "canonical_block_mismatch"
+        : "observed_but_not_final",
     }, observed, amountComparison);
   }
   if (observed.finality !== "final") {
+    return withDecision(expected, {
+      status: "pending",
+      reasonCode: "finality_unknown",
+    }, observed, amountComparison);
+  }
+
+  if (!hasFinalityEvidence(observed)) {
     return withDecision(expected, {
       status: "pending",
       reasonCode: "finality_unknown",

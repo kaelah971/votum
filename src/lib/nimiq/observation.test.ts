@@ -42,6 +42,7 @@ describe("Nimiq observation adapter", () => {
       kind: "found",
       transaction: {
         transactionHash: HASH,
+        blockHash: null,
         networkId: 42,
         sender: SENDER,
         recipient: RECIPIENT_NQ,
@@ -52,6 +53,8 @@ describe("Nimiq observation adapter", () => {
         timestampMs: 1_725_000_000_000,
         confirmationCount: 3,
         finality: "unknown",
+        finalityReason: null,
+        finalityEvidence: null,
       },
     });
   });
