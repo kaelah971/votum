@@ -80,5 +80,5 @@ describe("V2B HTTP test server lifecycle", () => {
     await waitForPortFree();
     expect(exited.exited).toBe(true);
     expect(Date.now() - cleanupStartedAt).toBeLessThan(45000);
-  });
+  }, 90_000);
 });

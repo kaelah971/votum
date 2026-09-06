@@ -11,6 +11,7 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createHash, randomBytes } from "node:crypto";
+import { createConnection } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
@@ -86,6 +87,25 @@ export const admin = createClient(url, key, {
 export const NEXT_PORT = 3101;
 export const NEXT_BASE = `http://127.0.0.1:${NEXT_PORT}`;
 export const NEXT_READY_TIMEOUT_MS = 60000;
+
+function isNextPortListening(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port: NEXT_PORT });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, 1000);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
 
 export interface NextDevLaunchMetadata {
   executable: string;
@@ -182,9 +202,12 @@ export function startNextDev(): Promise<void> {
       if (settled || pollInFlight) return;
       pollInFlight = true;
       try {
-        const res = await fetchWithTimeout(`${NEXT_BASE}/`);
-        console.log(`[dev-server] readiness probe complete status=${res.status}`);
-        settle();
+        if (await isNextPortListening()) {
+          console.log("[dev-server] readiness probe complete port=listening");
+          settle();
+        } else {
+          schedulePoll();
+        }
       } catch {
         schedulePoll();
       } finally {
