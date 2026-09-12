@@ -1,6 +1,7 @@
 # V2B.2 — Creator-Funded Rewarded Participation (Implementation Plan)
 
-**Status:** V2B.2.7 complete locally; V2B.2.8 reconciliation/finality remains pending.
+**Status:** V2B.2.8 complete locally; physical payout QA and later V2B.2
+surface checkpoints remain pending.
 **Date:** 2026-08-22
 **Branch:** `feat/v2-participation-record`
 **Starting HEAD:** `80288e523422c89c490eac2f1444f76c3ed39f8d`
@@ -91,9 +92,9 @@ re-derives state from confirmed hashes when a callback/response is lost.
 |---------|--------|
 | A. Broadcast succeeds, HTTP response dies | Payout attempt row persists; reconciliation re-observes the stored hash → confirms. |
 | B. Chain confirms, DB write fails | Observer re-checks hash; confirm RPC idempotent via guarded transition + partial-unique hash. |
-| C. DB marks pending, broadcast never occurs | Payout attempt `failed`/`retryable`; no receipt reaches `paid` without a confirmed hash; retry path re-broadcasts. |
+| C. DB marks pending, broadcast never occurs | Payout attempt remains recoverable; no receipt reaches `paid` without a confirmed hash; a new attempt is allowed only for a hashless pre-broadcast failure. |
 | D. Same payout worker retries | `UNIQUE(receipt_id, attempt_number)` + guarded state; a duplicate attempt returns `replay`/`attempt_exists`. |
-| E. Crash between signing and persistence | Sign-and-broadcast is the boundary; if persistence failed, reconciliation observes the broadcast hash or re-broadcasts under a fresh attempt. |
+| E. Crash between signing and persistence | V2B.2.7 persists the signed bytes/hash before the network call; if that persistence fails, the network call is not made. A stored hash or broadcast-start marker is always reconciled before any retry. |
 | F. Duplicate transaction observation | Partial-unique hash across the whole payout ledger; one hash used once. |
 | G. Insufficient fee reserve | Broadcast gated on fee coverage; attempt `failed` (`fee_reserve_insufficient`); creator notified to top up (D9). |
 
@@ -425,39 +426,64 @@ receipt `payout_pending`, and no paid/finality/retry reconciliation is started.
 
 ---
 
-### V2B.2.8 — Payout reconciliation / retry
+### V2B.2.8 — Payout reconciliation / finality / safe retry boundary
 
-**Status:** Required follow-up; not started by V2B.2.7.
+**Status:** Complete locally; no physical NIM payout or hosted rollout.
 
-**Goal:** Reconcile payouts from chain; retry `retryable` receipts with bounded
-attempts; surface `fee_reserve_insufficient` for creator top-up (D9).
+**Goal:** Reconcile payouts from chain truth and atomically transition only an
+exact, executed, canonical, macro-final payout to `paid`. A broadcast hash,
+confirmation count, client label, or client-supplied fields are insufficient.
 
 **Likely files/modules:**
-- `src/lib/rewards/reconcile.ts` (extend): payout observation loop + retry
-  scheduling.
-- `retry_reward_payout_atomic` (RPC #5).
-- `GET /api/me/rewards` and creator payout-failures view.
+- `src/lib/rewards/payout-reconciliation.ts`: server-only context loading,
+  observation orchestration, pure decision application, and vault-lease reuse.
+- `src/lib/rewards/reconciliation.ts`: exact payout policy added beside the
+  existing funding policy; it reuses the existing observation/finality types.
+- `src/app/api/polls/[pollId]/reward/payouts/[attemptId]/reconcile/route.ts`:
+  participant-authenticated reconcile request with no chain-truth input body.
+- `confirm_reward_payout_atomic` (paid transition) and
+  `retry_reward_payout_atomic` (safe retry creation gate).
 
-**Schema/RPC work:** retry RPC; a `list_retryable_receipts` read function.
+**Schema/RPC work:** payout confirmation metadata for canonical micro-block,
+batch, and finalizing macro-block evidence; atomic paid transition; bounded
+hashless-pre-broadcast retry gate. No list/job/refund/profile work is included.
 
 **Invariants introduced:**
-- Bounded retries; final-failed receipts excluded from refund math correctly.
-- Confirmed-but-missed payouts caught by re-observation.
-- Fee reserve exhaustion is a surfaced, actionable state (not silent).
+- Only exact sender, recipient, amount, stored hash, network, successful
+  execution, canonical inclusion, and macro finality can produce `paid`.
+- Confirmed-but-missed payouts are caught by re-observation of the stored hash.
+- `paid_at`/`confirmed_at` and `paid_amount_luna` are written once by one
+  security-definer transaction; duplicate confirmation returns `replay`.
+- Concurrent reconciliation for one campaign vault cannot double-account.
+- Hash-bearing pending/unknown/rejected attempts cannot create a second send.
+- A new attempt is permitted only after a definite hashless pre-broadcast
+  failure and is bounded by `MAX_PAYOUT_ATTEMPTS` (5).
 
 **Tests BEFORE/with implementation:**
-- `v2b2-retry-test.ts`: simulated cases A–G; attempt cap; `fee_reserve_insufficient`
-  surfaces; retry succeeds; no double pay.
+- `src/lib/rewards/payout-reconciliation.test.ts`: 30 deterministic tests for
+  exact finality, all exact-field mismatches, execution/finality uncertainty,
+  missing/not-found/RPC/malformed observations, idempotency, concurrency,
+  no-broadcast/no-option/no-refund boundaries, and retry safety.
+- `src/lib/rewards/payout-reconciliation.db.test.ts`: 8 local PostgreSQL tests
+  for paid transition/evidence, timestamp/accounting idempotency, concurrent
+  confirmation, wrong pairing, not-found safety, no refunds, and the retry
+  gate.
+- Existing V2B.2.7, reservation, funding confirmation, observation/finality,
+  and vault/security suites remain green.
 
-**Manual verification:** kill a worker mid-broadcast; observe reconciliation
-recovers without double payout.
+**Manual verification:** deferred until physical Nimiq QA is explicitly allowed.
+The local proof uses mocked/deterministic chain observations only.
 
-**Failure cases:** permanent failure (final-failed); node downtime.
+**Failure cases:** not-found, RPC failure, non-final, reorg/canonical mismatch,
+malformed, wrong sender/recipient/network/amount, and execution failure never
+mark paid. Hash-bearing failures remain pending/manual-review-compatible because
+the current Nimiq semantics do not prove that a fresh spend is safe.
 
-**Acceptance criteria:** reconciliation is chain-truth idempotent; retries
-bounded; no double pay.
+**Acceptance criteria:** canonical/final payout proof works; paid transition is
+atomic and idempotent; exact amount is enforced; unknown/not-found/reorg states
+remain safe; retry cannot blindly resend; no duplicate payout or refund is made.
 
-**Commit boundary:** `feat(v2b2): add payout reconciliation and retry`
+**Commit boundary:** `feat(v2b2): reconcile reward payouts onchain`
 **Local Supabase only:** yes. **Hosted-rollout prohibition:** explicit.
 
 ---
@@ -882,6 +908,40 @@ Phase B is implemented locally and remains local-only:
 - No NIM was sent, no wallet transaction was approved, and no hosted Supabase
   project was accessed. Payout, signing, broadcasting, refunds, V2B.2.7, and
   V2C remain out of scope.
+
+### V2B.2.8 status (2026-09-12)
+
+V2B.2.8 is implemented locally and remains local-only:
+
+- `src/lib/nimiq/observation.ts` remains the sole chain observation/finality
+  adapter. Payout reconciliation reuses its transaction, canonical micro-block,
+  batch, and finalizing macro-block evidence; no parallel observer exists.
+- `supabase/migrations/20260912020000_v2b2_reconcile_reward_payouts.sql` adds
+  confirmation evidence columns and the service-role-only
+  `confirm_reward_payout_atomic` RPC. The RPC locks attempt → receipt →
+  campaign, verifies their relationship and exact persisted terms, marks the
+  attempt `confirmed`, marks the receipt `paid`, increments principal once, and
+  returns `replay` without rewriting timestamps on duplicates.
+- `supabase/migrations/20260912030000_v2b2_safe_reward_payout_retry.sql` adds
+  `retry_reward_payout_atomic`. It refuses all hash-bearing attempts with
+  `reconciliation_required`; only a definite hashless pre-broadcast failure
+  may create a bounded next attempt.
+- `src/lib/rewards/payout-reconciliation.ts` is server-only and provides the
+  participant-authenticated reconcile route. It accepts no chain truth from the
+  browser and never imports or calls the payout broadcaster.
+- RED evidence: the first focused run failed to resolve the missing
+  `payout-reconciliation` module. After the minimum implementation, focused
+  reconciliation tests pass `30/30` and local DB tests pass `8/8`.
+- The Windows-stable full command passes `391/391` across 40 files:
+  `npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism`.
+  TypeScript, lint, build, and `git diff --check` also pass.
+- Execution failure, malformed evidence, reorg/canonical mismatch, not-found,
+  unknown, and RPC failure never mark `paid`. Hash-bearing uncertain or failed
+  attempts remain pending/manual-review-compatible because current Nimiq
+  semantics do not prove a fresh spend is safe. No aggressive automatic retry
+  worker is included.
+- No NIM was sent, no physical payout QA was performed, and no hosted Supabase
+  project was accessed.
 
 ---
 

@@ -96,6 +96,14 @@ export interface RewardPayoutAttemptRow {
   broadcast_started_at: string | null;
   error_code: string | null;
   broadcast_at: string | null;
+  confirmed_network_id: number | null;
+  confirmed_block_number: number | null;
+  confirmed_transaction_timestamp: string | null;
+  confirmed_transaction_block_hash: string | null;
+  confirmed_canonical_block_hash: string | null;
+  confirmed_batch_number: number | null;
+  confirmed_finalizing_macro_block_height: number | null;
+  confirmed_finalizing_macro_block_hash: string | null;
   confirmed_at: string | null;
   created_at: string;
   updated_at: string;

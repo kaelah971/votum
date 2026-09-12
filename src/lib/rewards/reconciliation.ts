@@ -56,6 +56,71 @@ export type FundingObservation =
   | { kind: "rpc_error"; code: "rpc_unavailable" | "rpc_timeout" }
   | { kind: "malformed"; reasonCode: "malformed_transaction" };
 
+/** Server-authoritative payout facts loaded from the receipt and campaign vault. */
+export interface ExpectedPayout {
+  campaignId?: string;
+  receiptId?: string;
+  attemptId?: string;
+  networkId: number;
+  transactionHash: string;
+  vaultAddress: string;
+  participantWallet: string;
+  amountLuna: bigint;
+}
+
+export const PAYOUT_RECONCILIATION_STATUSES = [
+  "pending",
+  "confirmed",
+  "retryable",
+  "rejected",
+  "unknown",
+] as const;
+
+export type PayoutReconciliationStatus =
+  (typeof PAYOUT_RECONCILIATION_STATUSES)[number];
+
+export const PAYOUT_RECONCILIATION_REASON_CODES = [
+  "transaction_not_found_yet",
+  "rpc_unavailable",
+  "rpc_timeout",
+  "wrong_network",
+  "network_unknown",
+  "hash_mismatch",
+  "wrong_sender",
+  "wrong_recipient",
+  "amount_underpaid",
+  "amount_exact",
+  "amount_overpaid",
+  "canonical_block_mismatch",
+  "execution_failed",
+  "execution_unknown",
+  "observed_but_not_final",
+  "finality_unknown",
+  "confirmed_success",
+  "malformed_transaction",
+ ] as const;
+
+export type PayoutReconciliationReasonCode =
+  (typeof PAYOUT_RECONCILIATION_REASON_CODES)[number];
+
+export interface PayoutReconciliationResult {
+  status: PayoutReconciliationStatus;
+  reasonCode: PayoutReconciliationReasonCode;
+  confirmed: boolean;
+  campaignId?: string;
+  receiptId?: string;
+  attemptId?: string;
+  expectedTransactionHash: string;
+  observedTransactionHash: string | null;
+  expectedSender: string;
+  observedSender: string | null;
+  expectedRecipient: string;
+  observedRecipient: string | null;
+  expectedAmountLuna: bigint;
+  observedAmountLuna: bigint | null;
+  amountComparison: FundingAmountComparison;
+}
+
 export const FUNDING_RECONCILIATION_STATUSES = [
   "pending",
   "confirmed",
@@ -116,15 +181,22 @@ function isTransactionHash(value: string): boolean {
   return /^[0-9a-fA-F]{64}$/.test(value.trim());
 }
 
-function hasFinalityEvidence(observed: ObservedFundingTransaction): boolean {
+export function hasFinalityEvidence(observed: ObservedFundingTransaction): boolean {
   const evidence = observed.finalityEvidence;
   return evidence !== null &&
     evidence.canonicalBlockVerified &&
     evidence.transactionBlockHeight === observed.blockHeight &&
     evidence.canonicalBlockHash !== null &&
     isTransactionHash(evidence.canonicalBlockHash) &&
+    (observed.blockHash === null ||
+      observed.blockHash.trim().toLowerCase() === evidence.canonicalBlockHash.trim().toLowerCase()) &&
+    (evidence.transactionBlockHash === null ||
+      observed.blockHash !== null &&
+      evidence.transactionBlockHash.trim().toLowerCase() === observed.blockHash.trim().toLowerCase()) &&
     evidence.batchNumber !== null &&
     evidence.finalizingMacroBlockHeight !== null &&
+    observed.blockHeight !== null &&
+    evidence.finalizingMacroBlockHeight >= observed.blockHeight &&
     evidence.finalizingMacroBlockHash !== null &&
     isTransactionHash(evidence.finalizingMacroBlockHash);
 }
@@ -318,5 +390,185 @@ export function reconcileRewardFunding(
     reasonCode: amountComparison === "overpaid"
       ? "amount_overpaid"
       : "confirmed_success",
+  }, observed, amountComparison);
+}
+
+function payoutBaseResult(expected: ExpectedPayout): PayoutReconciliationResult {
+  return {
+    status: "unknown",
+    reasonCode: "malformed_transaction",
+    confirmed: false,
+    campaignId: expected.campaignId,
+    receiptId: expected.receiptId,
+    attemptId: expected.attemptId,
+    expectedTransactionHash: expected.transactionHash.trim().toLowerCase(),
+    observedTransactionHash: null,
+    expectedSender: expected.vaultAddress,
+    observedSender: null,
+    expectedRecipient: expected.participantWallet,
+    observedRecipient: null,
+    expectedAmountLuna: expected.amountLuna,
+    observedAmountLuna: null,
+    amountComparison: "unknown",
+  };
+}
+
+function withPayoutDecision(
+  expected: ExpectedPayout,
+  decision: Pick<PayoutReconciliationResult, "status" | "reasonCode">,
+  observed?: ObservedFundingTransaction,
+  amountComparison: FundingAmountComparison = "unknown",
+): PayoutReconciliationResult {
+  const result = payoutBaseResult(expected);
+  result.status = decision.status;
+  result.reasonCode = decision.reasonCode;
+  result.confirmed = decision.status === "confirmed";
+  result.amountComparison = amountComparison;
+  if (observed) {
+    result.observedTransactionHash = observed.transactionHash.trim().toLowerCase();
+    result.observedSender = observed.sender;
+    result.observedRecipient = observed.recipient;
+    result.observedAmountLuna = observed.valueLuna;
+  }
+  return result;
+}
+
+/**
+ * Reconcile one stored payout hash against one server-side chain observation.
+ * Unlike funding, payout value must be exact: both underpayment and overpayment
+ * are rejected. This function is pure and never mutates financial state.
+ */
+export function reconcileRewardPayout(
+  expected: ExpectedPayout,
+  observation: FundingObservation,
+): PayoutReconciliationResult {
+  if (
+    !isTransactionHash(expected.transactionHash) ||
+    expected.amountLuna <= BigInt(0) ||
+    !Number.isSafeInteger(expected.networkId) ||
+    expected.networkId < 0
+  ) {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: "malformed_transaction",
+    });
+  }
+
+  if (observation.kind === "not_found") {
+    return withPayoutDecision(expected, {
+      status: "pending",
+      reasonCode: "transaction_not_found_yet",
+    });
+  }
+  if (observation.kind === "rpc_error") {
+    return withPayoutDecision(expected, {
+      status: "retryable",
+      reasonCode: observation.code,
+    });
+  }
+  if (observation.kind === "malformed") {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: observation.reasonCode,
+    });
+  }
+
+  const observed = observation.transaction;
+  const resultHash = observed.transactionHash.trim().toLowerCase();
+  if (!isTransactionHash(observed.transactionHash)) {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: "malformed_transaction",
+    }, observed);
+  }
+  if (resultHash !== expected.transactionHash.trim().toLowerCase()) {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: "hash_mismatch",
+    }, observed);
+  }
+
+  if (observed.networkId === null) {
+    return withPayoutDecision(expected, {
+      status: "unknown",
+      reasonCode: "network_unknown",
+    }, observed);
+  }
+  if (observed.networkId !== expected.networkId) {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: "wrong_network",
+    }, observed);
+  }
+
+  const expectedSender = normalizeAddress(expected.vaultAddress);
+  const observedSender = observed.sender === null ? null : normalizeAddress(observed.sender);
+  const expectedRecipient = normalizeAddress(expected.participantWallet);
+  const observedRecipient = normalizeAddress(observed.recipient);
+  if (!expectedSender || !expectedRecipient || !observedRecipient || observedSender === null) {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: "malformed_transaction",
+    }, observed);
+  }
+  if (observedSender !== expectedSender) {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: "wrong_sender",
+    }, observed);
+  }
+  if (observedRecipient !== expectedRecipient) {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: "wrong_recipient",
+    }, observed);
+  }
+
+  const amountComparison: FundingAmountComparison =
+    observed.valueLuna < expected.amountLuna
+      ? "underpaid"
+      : observed.valueLuna === expected.amountLuna
+        ? "exact"
+        : "overpaid";
+  if (amountComparison !== "exact") {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: amountComparison === "underpaid" ? "amount_underpaid" : "amount_overpaid",
+    }, observed, amountComparison);
+  }
+
+  if (observed.executionResult === false) {
+    return withPayoutDecision(expected, {
+      status: "rejected",
+      reasonCode: "execution_failed",
+    }, observed, amountComparison);
+  }
+  if (observed.executionResult !== true) {
+    return withPayoutDecision(expected, {
+      status: "unknown",
+      reasonCode: "execution_unknown",
+    }, observed, amountComparison);
+  }
+
+  if (observed.finality === "not_final") {
+    return withPayoutDecision(expected, {
+      status: "pending",
+      reasonCode: observed.finalityReason === "canonical_block_mismatch"
+        ? "canonical_block_mismatch"
+        : "observed_but_not_final",
+    }, observed, amountComparison);
+  }
+  if (observed.finality !== "final" || !hasFinalityEvidence(observed)) {
+    return withPayoutDecision(expected, {
+      status: "pending",
+      reasonCode: observed.finalityReason === "canonical_block_mismatch"
+        ? "canonical_block_mismatch"
+        : "finality_unknown",
+    }, observed, amountComparison);
+  }
+
+  return withPayoutDecision(expected, {
+    status: "confirmed",
+    reasonCode: "confirmed_success",
   }, observed, amountComparison);
 }
