@@ -308,10 +308,13 @@ function validatePayload(
   if (economicModel === NEW_REWARD_FIRST_POLL && rewardMode === "free" && rewardRaw) {
     errors.push({ field: "reward", message: "Free polls cannot include reward configuration." });
   }
+  if (economicModel === LEGACY_SUPPORT_ENABLED && rewardRaw) {
+    errors.push({ field: "reward", message: "Legacy support polls cannot include reward configuration." });
+  }
   if (economicModel === NEW_REWARD_FIRST_POLL && rewardMode === "rewarded" && !rewardRaw) {
     errors.push({ field: "reward", message: "Rewarded polls require reward configuration." });
   }
-  if (rewardRaw !== undefined && (economicModel === LEGACY_SUPPORT_ENABLED || rewardMode === "rewarded")) {
+  if (rewardRaw !== undefined && rewardMode === "rewarded") {
     const fundingMode =
       economicModel === LEGACY_SUPPORT_ENABLED
         ? "creator"
@@ -664,7 +667,7 @@ export async function POST(request: Request) {
       vaultAddressHex: string | null;
     } | null = null;
 
-    if (pollResult.id && d.reward) {
+    if (pollResult.id && d.economicModel === NEW_REWARD_FIRST_POLL && d.reward) {
       try {
         const { data: campaign } = await admin
           .from("reward_campaigns")

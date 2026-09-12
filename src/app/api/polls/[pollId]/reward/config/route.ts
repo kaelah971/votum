@@ -208,6 +208,14 @@ export async function POST(
     );
   }
 
+  if (poll.economic_model !== "reward_first" || poll.reward_mode !== "rewarded") {
+    log("poll_not_rewardable", { requestId, status: 422 });
+    return NextResponse.json(
+      { error: "poll_not_rewardable", stage: "economic_model", requestId, message: "Only rewarded reward-first polls can configure rewards." },
+      { status: 422 },
+    );
+  }
+
   // Parse + validate reward config.
   let body: unknown;
   try {
@@ -439,6 +447,12 @@ export async function GET(
     return NextResponse.json(
       { error: "forbidden", stage: "ownership", requestId, message: "Only the poll creator can view reward configuration." },
       { status: 403 },
+    );
+  }
+  if (poll.economic_model !== "reward_first" || poll.reward_mode !== "rewarded") {
+    return NextResponse.json(
+      { error: "poll_not_rewardable", stage: "economic_model", requestId, message: "Only rewarded reward-first polls have reward configuration." },
+      { status: 422 },
     );
   }
 

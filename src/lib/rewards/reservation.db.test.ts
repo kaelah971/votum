@@ -93,6 +93,7 @@ async function createFixture(options: {
   const participantWallet = options.participantWallet ?? wallet();
   fixtureWallets.push(creatorWallet, participantWallet);
   const question = `Reservation fixture ${randomUUID()}`;
+  const isLegacy = options.pollEconomicModel === "legacy_support";
 
   const { data: poll, error: pollError } = await admin.from("polls").insert({
     creator_wallet: creatorWallet,
@@ -100,10 +101,10 @@ async function createFixture(options: {
     description: null,
     economic_model: options.pollEconomicModel ?? "reward_first",
     reward_mode: options.rewardMode === undefined ? "rewarded" : options.rewardMode,
-    mode: null,
-    destination_wallet: null,
-    destination_purpose: null,
-    min_nim_luna: null,
+    mode: isLegacy ? "creator_support" : null,
+    destination_wallet: isLegacy ? creatorWallet : null,
+    destination_purpose: isLegacy ? "Legacy fixture" : null,
+    min_nim_luna: isLegacy ? 1000 : null,
     fairness_mode: "one_wallet_one_vote",
     status: options.pollStatus ?? "live",
     starts_at: new Date(Date.now() - 1000).toISOString(),
@@ -325,6 +326,17 @@ describe("claim_reward_receipt_atomic", () => {
 
   it("rejects a free poll without creating a reservation", async () => {
     const fixture = await createFixture({ rewardMode: "free" });
+    const result = await claim(fixture.participationId, fixture.campaignId);
+
+    expect(resultKind(result)).toBe("poll_not_rewarded");
+    expect(await readReceipt(fixture.campaignId, fixture.participantWallet)).toBeNull();
+  });
+
+  it("rejects a legacy-support poll even if a campaign row exists", async () => {
+    const fixture = await createFixture({
+      pollEconomicModel: "legacy_support",
+      rewardMode: null,
+    });
     const result = await claim(fixture.participationId, fixture.campaignId);
 
     expect(resultKind(result)).toBe("poll_not_rewarded");

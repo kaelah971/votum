@@ -13,6 +13,7 @@
  *   - SUPABASE_SECRET_KEY
  */
 
+import "./load-local-env";
 import { createHash, randomBytes } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { nimDecimalToLuna } from "@/lib/nimiq/units";

@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Branch | `feat/v2-participation-record` |
-| Expected/current application HEAD | `32b0a8e` |
+| Regression-gate baseline HEAD | `ddd0d8f` |
 | Local Supabase hostname | `127.0.0.1` |
 | Wi-Fi IPv4 | `192.168.0.3` |
 | LAN URL | `http://192.168.0.3:3000` |
@@ -21,6 +21,10 @@
 The local environment has an active session row, but its wallet was not
 identified as the physical creator wallet. A fresh QA campaign must therefore
 be created manually through the verified physical wallet session.
+
+The V2B.2.13 regression gate was run separately against local Supabase only.
+It did not create a physical campaign, open Nimiq Pay, bind a transaction hash,
+or observe the chain. The physical checkpoint below remains NOT RUN.
 
 ## Code-Derived Economics
 
@@ -42,13 +46,16 @@ the QA request:
 2. Connect and verify the physical creator wallet. Do not use a seeded or test wallet.
 3. Open `/create`.
 4. Create a harmless public poll with question `V2B.2.4 physical funding QA — 0.01 NIM` and options `Yes` and `No`.
-5. Enable participant rewards.
+5. Select the Rewards step and enable participant rewards.
 6. Set reward per participant to `0.01 NIM`.
 7. Set maximum rewarded participants to `1`.
 8. Confirm the review shows `0.01 NIM` principal, `0.08 NIM` fee reserve, and `0.09 NIM` total.
 9. Publish/configure the poll, then open its creator page at `/my-polls/[pollId]`.
 10. Confirm the displayed vault and funding amounts match the server read model.
 11. Stop and obtain explicit approval before tapping `Fund reward campaign`.
+
+For a community-funded campaign, also verify that the designated funding wallet
+is shown explicitly and that only that verified wallet may start or bind funding.
 
 ## Physical Checklist
 

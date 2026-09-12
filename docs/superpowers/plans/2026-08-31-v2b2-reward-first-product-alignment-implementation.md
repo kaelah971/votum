@@ -398,3 +398,33 @@ Implement in this order so each boundary is testable:
 - General copy no longer presents participant-funded support as the normal new-poll path.
 - No hosted database, physical wallet approval, NIM transfer, chain observer, payout, or refund operation was started.
 - Only intended application, migration, test, and copy files are included in the implementation commits.
+
+## 14. V2B.2.13 Regression Gate Record
+
+Recorded 2026-09-12 against the local Supabase project on
+`feat/v2-participation-record`.
+
+### Production hardening
+
+- Reward configuration now accepts only public `reward_first` polls with
+  `rewarded` mode; legacy support and free polls reject reward configuration.
+- Reward reservation now rechecks the poll discriminator and public lifecycle
+  inside the atomic RPC, so a legacy or free poll cannot create a receipt.
+- Public reward campaign reads now require a public `live` or `closed` poll.
+- Funding transaction hashes are trimmed, lowercased, and checked
+  case-insensitively across funding, payout, refund, and legacy support ledgers.
+
+### Regression evidence
+
+- Vitest: `50` files, `523` tests passed with one worker and no file parallelism.
+- V2B.2.1 schema suite: `59` passed, `0` failed.
+- V2B.2.3 configuration suite: `75` passed, `0` failed.
+- V2B.2.4 funding suite: `57` passed, `0` failed.
+- V2B.1 backward-compatibility suite: `59` passed, `0` failed.
+- Publish suite: all `10` groups passed.
+- TypeScript, ESLint, production build, and local schema lint passed.
+
+The local schema lint output contains existing warnings for unused or shadowed
+variables in older functions; no new error was reported. The funding and
+publish suites remain local-only and perform no chain observation, wallet
+approval, NIM transfer, payout, or refund operation.

@@ -59,6 +59,7 @@ function ensureLocal(): void {
 function cleanupSql(wallet: string): void {
   ensureLocal();
   const sql = `
+    SET session_replication_role = replica;
     DELETE FROM public.reward_payout_attempts
       WHERE receipt_id IN (
         SELECT id FROM public.reward_receipts
@@ -91,6 +92,7 @@ function cleanupSql(wallet: string): void {
     DELETE FROM public.polls WHERE creator_wallet = '${wallet}';
     DELETE FROM public.participant_profiles WHERE wallet_address = '${wallet}';
     DELETE FROM public.wallet_sessions WHERE wallet_address = '${wallet}';
+    SET session_replication_role = origin;
   `;
   execFileSync("docker", [
     "exec", "supabase_db_votum",

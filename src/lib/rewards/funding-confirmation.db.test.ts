@@ -261,6 +261,20 @@ describe("confirm_reward_funding_atomic", () => {
     });
   });
 
+  it("rejects a same-ledger hash collision even when the duplicate uses uppercase", async () => {
+    const first = await fixture();
+    const second = await fixture({ submittedHash: null });
+    const result = await admin.from("reward_funding_transactions")
+      .update({ submitted_transaction_hash: first.transactionHash.toUpperCase() })
+      .eq("id", second.intentId);
+
+    expect(result.error).not.toBeNull();
+    expect((await readState(second)).funding).toMatchObject({
+      status: "submitted",
+      submitted_transaction_hash: null,
+    });
+  });
+
   it("rejects wrong campaign/intent pairs", async () => {
     const first = await fixture();
     const second = await fixture();

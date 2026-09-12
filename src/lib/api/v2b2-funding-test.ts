@@ -278,7 +278,9 @@ async function run() {
     check(finalCampaign.data?.funded_at === null, "binding does not set funded_at");
 
     const receipts = await admin.from("reward_receipts").select("id").eq("campaign_id", config?.campaignId);
-    const payouts = await admin.from("reward_payout_attempts").select("id");
+    const payouts = receipts.data && receipts.data.length > 0
+      ? await admin.from("reward_payout_attempts").select("id").in("receipt_id", receipts.data.map((receipt) => receipt.id))
+      : { data: [] };
     const refunds = await admin.from("reward_refunds").select("id").eq("campaign_id", config?.campaignId);
     check((receipts.data ?? []).length === 0, "no reward receipt created");
     check((payouts.data ?? []).length === 0, "no payout attempt created");

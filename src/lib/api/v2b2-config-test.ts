@@ -21,6 +21,7 @@ import "./load-local-env";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { isLocalSupabaseUrl } from "@/lib/rewards/test-env";
+import { mapPollRow } from "@/lib/data/public-polls";
 
 let passed = 0;
 let failed = 0;
@@ -223,6 +224,15 @@ async function run() {
       .eq("poll_id", publicPollId);
     check((offCampaigns.data ?? []).length === 0, "reward OFF → no campaign row");
 
+    const legacyRewardConfig = await publishPublicPoll(
+      CREATOR,
+      creatorCookie,
+      uuid(),
+      "V2B2 legacy reward rejection?",
+      { rewardPerParticipant: "0.01", maxRewardedParticipants: 1 },
+    );
+    check(legacyRewardConfig.status === 400, "legacy support poll rejects reward configuration");
+
     const rewardFirstFree = await publishRewardFirstPoll(
       CREATOR,
       creatorCookie,
@@ -246,6 +256,59 @@ async function run() {
         freePoll.data?.min_nim_luna === null,
       "free reward-first poll stores no support configuration",
     );
+
+    const freeOptions = await admin
+      .from("poll_options")
+      .select("*")
+      .eq("poll_id", freePollId)
+      .order("sort_order");
+    const freeView = freePoll.data && freeOptions.data
+      ? mapPollRow(freePoll.data as any, freeOptions.data as any)
+      : null;
+    check(freeView?.economicModel === "reward_first", "free poll maps through the public poll view");
+    check(freeView?.rewardMode === "free", "public mapper preserves free reward mode");
+
+    const participantCookie = await createTestSession(PARTICIPANT);
+    sessions.push(participantCookie);
+    const freeVote = await apiPost(
+      `/api/polls/${freePollId}/vote`,
+      { optionId: freeOptions.data?.[0]?.id },
+      participantCookie,
+    );
+    check(freeVote.status === 201, "verified participant can vote on a free reward-first poll");
+    const freeSecondVote = await apiPost(
+      `/api/polls/${freePollId}/vote`,
+      { optionId: freeOptions.data?.[1]?.id },
+      participantCookie,
+    );
+    check(freeSecondVote.status === 409, "free poll keeps one-wallet-one-vote behavior");
+
+    const freeSupportIntents = await admin
+      .from("nim_support_intents")
+      .select("id")
+      .eq("poll_id", freePollId);
+    const freeContributions = await admin
+      .from("nim_contributions")
+      .select("id")
+      .eq("poll_id", freePollId);
+    const freeReceipts = await admin
+      .from("reward_receipts")
+      .select("id")
+      .eq("poll_id", freePollId);
+    check((freeSupportIntents.data ?? []).length === 0, "free poll creates no legacy support intent");
+    check((freeContributions.data ?? []).length === 0, "free poll creates no NIM contribution");
+    check((freeReceipts.data ?? []).length === 0, "free poll creates no reward receipt");
+
+    const rewardable = await publishRewardFirstPoll(
+      CREATOR,
+      creatorCookie,
+      uuid(),
+      "V2B2 rewardable config target?",
+      "rewarded",
+      { fundingMode: "creator", rewardPerParticipant: "0.01", maxRewardedParticipants: 1 },
+    );
+    check(rewardable.status === 201, "rewarded reward-first poll publishes for configuration");
+    publicPollId = rewardable.data?.poll?.id as string;
 
     const mixedRewardFirst = await apiPost("/api/polls/publish", {
       category: "communities",
@@ -384,8 +447,8 @@ async function run() {
     console.log("\n-- Read model --");
     const read = await apiGet(`/api/polls/${publicPollId}/reward/config`, creatorCookie);
     check(read.status === 200, "creator read model → 200");
-    check(read.data?.config?.pollQuestion === "V2B2 config public?", "read model includes poll identity");
-    check(read.data?.config?.economicModel === "legacy_support", "read model includes economic model");
+    check(read.data?.config?.pollQuestion === "V2B2 rewardable config target?", "read model includes poll identity");
+    check(read.data?.config?.economicModel === "reward_first", "read model includes economic model");
     const readJson = JSON.stringify(read.data);
     check(readJson.includes("ciphertext") === false, "read model has no ciphertext");
     check(readJson.includes("authentication_tag") === false, "read model has no auth tag");
@@ -400,10 +463,14 @@ async function run() {
     // Publish integration: reward config via publish → campaign created
     // -----------------------------------------------------------------
     console.log("\n-- Publish integration --");
-    const pubReward = await publishPublicPoll(CREATOR, creatorCookie, uuid(), "V2B2 config via publish?", {
-      rewardPerParticipant: "0.25",
-      maxRewardedParticipants: 40,
-    });
+    const pubReward = await publishRewardFirstPoll(
+      CREATOR,
+      creatorCookie,
+      uuid(),
+      "V2B2 config via publish?",
+      "rewarded",
+      { fundingMode: "creator", rewardPerParticipant: "0.25", maxRewardedParticipants: 40 },
+    );
     check(pubReward.status === 201 || pubReward.status === 200, "publish with reward config succeeds");
     check(pubReward.data?.reward?.rewardFundingRequired === true, "publish returns rewardFundingRequired:true");
     const pubRewardPollId = pubReward.data?.poll?.id as string;
