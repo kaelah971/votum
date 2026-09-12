@@ -599,7 +599,13 @@ export type Database = {
           broadcast_at: string | null
           broadcast_started_at: string | null
           campaign_id: string
+          confirmed_batch_number: number | null
           confirmed_at: string | null
+          confirmed_canonical_block_hash: string | null
+          confirmed_finalizing_macro_block_hash: string | null
+          confirmed_finalizing_macro_block_height: number | null
+          confirmed_network_id: number | null
+          confirmed_transaction_block_hash: string | null
           created_at: string
           creator_wallet: string
           error_code: string | null
@@ -623,7 +629,13 @@ export type Database = {
           broadcast_at?: string | null
           broadcast_started_at?: string | null
           campaign_id: string
+          confirmed_batch_number?: number | null
           confirmed_at?: string | null
+          confirmed_canonical_block_hash?: string | null
+          confirmed_finalizing_macro_block_hash?: string | null
+          confirmed_finalizing_macro_block_height?: number | null
+          confirmed_network_id?: number | null
+          confirmed_transaction_block_hash?: string | null
           created_at?: string
           creator_wallet: string
           error_code?: string | null
@@ -647,7 +659,13 @@ export type Database = {
           broadcast_at?: string | null
           broadcast_started_at?: string | null
           campaign_id?: string
+          confirmed_batch_number?: number | null
           confirmed_at?: string | null
+          confirmed_canonical_block_hash?: string | null
+          confirmed_finalizing_macro_block_hash?: string | null
+          confirmed_finalizing_macro_block_height?: number | null
+          confirmed_network_id?: number | null
+          confirmed_transaction_block_hash?: string | null
           created_at?: string
           creator_wallet?: string
           error_code?: string | null
@@ -935,6 +953,27 @@ export type Database = {
           _observed_recipient: string
           _observed_sender: string
           _receipt_id: string
+          _transaction_block_hash: string | null
+          _transaction_hash: string
+          _transaction_timestamp: string | null
+        }
+        Returns: Json
+      }
+      /** Atomically settle a server-observed canonical/final refund. */
+      confirm_reward_refund_atomic: {
+        Args: {
+          _batch_number: number
+          _block_number: number
+          _campaign_id: string
+          _canonical_block_hash: string
+          _execution_result: boolean
+          _finalizing_macro_block_hash: string
+          _finalizing_macro_block_height: number
+          _network_id: number
+          _observed_amount_luna: number
+          _observed_recipient: string
+          _observed_sender: string
+          _refund_id: string
           _transaction_block_hash: string | null
           _transaction_hash: string
           _transaction_timestamp: string | null

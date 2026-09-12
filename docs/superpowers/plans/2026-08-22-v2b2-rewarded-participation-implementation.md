@@ -1,9 +1,9 @@
 # V2B.2 — Creator-Funded Rewarded Participation (Implementation Plan)
 
 **Status:** V2B.2.8 complete locally; V2B.2.11 Phases A (pure closure/refund
-policy), B (atomic refund preparation/freeze), and C (server sign/broadcast)
-complete locally; refund confirmation, physical payout QA, and later V2B.2
-checkpoints remain pending.
+policy), B (atomic refund preparation/freeze), C (server sign/broadcast), and D
+(server observation/final refund reconciliation) complete locally; physical
+payout QA and later V2B.2 checkpoints remain pending.
 **Date:** 2026-08-22
 **Branch:** `feat/v2-participation-record`
 **Starting HEAD:** `80288e523422c89c490eac2f1444f76c3ed39f8d`
@@ -627,12 +627,35 @@ implementation.
   production build also pass. Local schema lint completes without errors; its
   recorded local schema still reports PL/pgSQL warnings, while the final
   migration file removes the two new refund-function unused-variable warnings.
+- **Phase D status (2026-09-12):** Complete locally; no hosted rollout, real
+  NIM transfer, or client-supplied financial authority. `reconcileRewardRefund`
+  reuses the canonical micro-block/finalizing macro-block observation contract
+  and confirms only an exact hash, network, vault sender, creator recipient,
+  amount, successful execution, and final proof. Non-final, missing, malformed,
+  mismatched, or RPC-error observations never close the campaign.
+- `src/lib/rewards/refund-reconciliation.ts` is the server-only observation and
+  atomic-confirmation boundary. It has no signing or broadcast dependency, uses
+  the shared campaign-vault lease, enforces creator authorization for the HTTP
+  route, and supports an internal admin/job call without a viewer wallet.
+- `supabase/migrations/20260912060000_v2b2_reconcile_reward_refunds.sql` adds
+  finality evidence fields, a service-role-only
+  `confirm_reward_refund_atomic` RPC, and a confirmed-refund terminal mutation
+  guard. The RPC confirms the refund and performs the one `refunding` →
+  `refunded` campaign transition in one transaction; replay is side-effect free.
+- `src/app/api/polls/[pollId]/reward/refund/[refundId]/reconcile/route.ts` is
+  the verified creator reconciliation endpoint. `refund-reconciliation.test.ts`
+  contains 26 deterministic unit tests and `refund-reconciliation.db.test.ts`
+  contains 8 local integration tests for exact proof, no-close outcomes,
+  authorization, pairing, replay, concurrency, evidence persistence, and
+  terminal freeze. The full local suite passes with 46 files and 513 tests;
+  TypeScript, focused lint, and local schema lint pass.
 
 **Likely files/modules:**
 - `src/app/my-polls/[pollId]/rewards/page.tsx` (new) + view component.
 - `src/app/api/polls/[pollId]/reward/refund/route.ts` (new): explicit refund
   initiation (RPC #7).
-- Refund confirmation route (RPC #8) + observation.
+- `src/app/api/polls/[pollId]/reward/refund/[refundId]/reconcile/route.ts`
+  (refund confirmation route) + observation.
 - `src/lib/rewards/refund.ts` (new): remainder computation
   (principal + fee reserve + excess − paid − fees), D4 gating.
 
@@ -645,12 +668,17 @@ implementation.
 - No automatic timed refund.
 - Refund destination = immutable `creator_wallet`.
 - Cancel allowed only before `first_reservation_at` (D10).
+- Broadcast alone is never confirmation; finality requires canonical
+  micro-block and finalizing macro-block evidence.
+- Refund confirmation updates the refund and campaign terminal state exactly
+  once; confirmed refund proof and refunded campaign state are immutable.
 
 **Tests BEFORE/with implementation:**
 - `v2b2-refund-test.ts`: refund blocked while payouts pending; explicit-only
   (no auto); remainder = principal+fee+excess−paid−fees; idempotent; creator
   only; cancel-before-reservation recovers funds; cancel-after-reservation
-  rejected; refund proof fields.
+  rejected; refund proof fields; exact final refund observation; non-final and
+  mismatched proof does not close; replay/concurrency and terminal freeze.
 
 **Manual verification:** creator closes a poll, reconciles, initiates refund,
 observes confirmation.
@@ -660,7 +688,7 @@ insufficient for the refund tx.
 
 **Acceptance criteria:** D4/D10 enforced; remainder exact; idempotent; provable.
 
-**Commit boundary:** `feat(v2b2): add creator reward management and refunds`
+**Commit boundary:** `feat(v2b2): reconcile reward refunds onchain`
 **Local Supabase only:** yes. **Hosted-rollout prohibition:** explicit.
 
 ---

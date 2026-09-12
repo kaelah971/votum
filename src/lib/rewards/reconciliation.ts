@@ -68,6 +68,17 @@ export interface ExpectedPayout {
   amountLuna: bigint;
 }
 
+/** Server-authoritative refund facts loaded from the refund record. */
+export interface ExpectedRefund {
+  campaignId?: string;
+  refundId?: string;
+  networkId: number;
+  transactionHash: string;
+  vaultAddress: string;
+  creatorWallet: string;
+  amountLuna: bigint;
+}
+
 export const PAYOUT_RECONCILIATION_STATUSES = [
   "pending",
   "confirmed",
@@ -110,6 +121,23 @@ export interface PayoutReconciliationResult {
   campaignId?: string;
   receiptId?: string;
   attemptId?: string;
+  expectedTransactionHash: string;
+  observedTransactionHash: string | null;
+  expectedSender: string;
+  observedSender: string | null;
+  expectedRecipient: string;
+  observedRecipient: string | null;
+  expectedAmountLuna: bigint;
+  observedAmountLuna: bigint | null;
+  amountComparison: FundingAmountComparison;
+}
+
+export interface RefundReconciliationResult {
+  status: PayoutReconciliationStatus;
+  reasonCode: PayoutReconciliationReasonCode;
+  confirmed: boolean;
+  campaignId?: string;
+  refundId?: string;
   expectedTransactionHash: string;
   observedTransactionHash: string | null;
   expectedSender: string;
@@ -570,5 +598,201 @@ export function reconcileRewardPayout(
   return withPayoutDecision(expected, {
     status: "confirmed",
     reasonCode: "confirmed_success",
+  }, observed, amountComparison);
+}
+
+function baseRefundResult(expected: ExpectedRefund): RefundReconciliationResult {
+  return {
+    status: "unknown",
+    reasonCode: "malformed_transaction",
+    confirmed: false,
+    campaignId: expected.campaignId,
+    refundId: expected.refundId,
+    expectedTransactionHash: expected.transactionHash.toLowerCase(),
+    observedTransactionHash: null,
+    expectedSender: normalizeAddress(expected.vaultAddress) ?? expected.vaultAddress,
+    observedSender: null,
+    expectedRecipient: normalizeAddress(expected.creatorWallet) ?? expected.creatorWallet,
+    observedRecipient: null,
+    expectedAmountLuna: expected.amountLuna,
+    observedAmountLuna: null,
+    amountComparison: "unknown",
+  };
+}
+
+function withRefundDecision(
+  expected: ExpectedRefund,
+  decision: Pick<RefundReconciliationResult, "status" | "reasonCode" | "confirmed">,
+  observed?: ObservedFundingTransaction,
+  amountComparison: FundingAmountComparison = "unknown",
+): RefundReconciliationResult {
+  const result = baseRefundResult(expected);
+  return {
+    ...result,
+    ...decision,
+    observedTransactionHash: observed?.transactionHash ?? null,
+    observedSender: observed?.sender === null || observed?.sender === undefined
+      ? null
+      : normalizeAddress(observed.sender),
+    observedRecipient: observed ? normalizeAddress(observed.recipient) : null,
+    observedAmountLuna: observed?.valueLuna ?? null,
+    amountComparison,
+  };
+}
+
+/**
+ * Reconcile one stored refund hash against one server-side chain observation.
+ * Refund confirmation uses the same exact-transfer and canonical finality rules
+ * as payout confirmation, but never mutates financial state.
+ */
+export function reconcileRewardRefund(
+  expected: ExpectedRefund,
+  observation: FundingObservation,
+): RefundReconciliationResult {
+  if (
+    !isTransactionHash(expected.transactionHash) ||
+    expected.amountLuna <= BigInt(0) ||
+    !Number.isSafeInteger(expected.networkId) ||
+    expected.networkId < 0
+  ) {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: "malformed_transaction",
+      confirmed: false,
+    });
+  }
+
+  if (observation.kind === "not_found") {
+    return withRefundDecision(expected, {
+      status: "pending",
+      reasonCode: "transaction_not_found_yet",
+      confirmed: false,
+    });
+  }
+  if (observation.kind === "rpc_error") {
+    return withRefundDecision(expected, {
+      status: "retryable",
+      reasonCode: observation.code,
+      confirmed: false,
+    });
+  }
+  if (observation.kind === "malformed") {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: observation.reasonCode,
+      confirmed: false,
+    });
+  }
+
+  const observed = observation.transaction;
+  const resultHash = observed.transactionHash.trim().toLowerCase();
+  if (!isTransactionHash(observed.transactionHash)) {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: "malformed_transaction",
+      confirmed: false,
+    }, observed);
+  }
+  if (resultHash !== expected.transactionHash.trim().toLowerCase()) {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: "hash_mismatch",
+      confirmed: false,
+    }, observed);
+  }
+
+  if (observed.networkId === null) {
+    return withRefundDecision(expected, {
+      status: "unknown",
+      reasonCode: "network_unknown",
+      confirmed: false,
+    }, observed);
+  }
+  if (observed.networkId !== expected.networkId) {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: "wrong_network",
+      confirmed: false,
+    }, observed);
+  }
+
+  const expectedSender = normalizeAddress(expected.vaultAddress);
+  const observedSender = observed.sender === null ? null : normalizeAddress(observed.sender);
+  const expectedRecipient = normalizeAddress(expected.creatorWallet);
+  const observedRecipient = normalizeAddress(observed.recipient);
+  if (!expectedSender || !expectedRecipient || !observedRecipient || !observedSender) {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: "malformed_transaction",
+      confirmed: false,
+    }, observed);
+  }
+  if (observedSender !== expectedSender) {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: "wrong_sender",
+      confirmed: false,
+    }, observed);
+  }
+  if (observedRecipient !== expectedRecipient) {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: "wrong_recipient",
+      confirmed: false,
+    }, observed);
+  }
+
+  const amountComparison: FundingAmountComparison =
+    observed.valueLuna < expected.amountLuna
+      ? "underpaid"
+      : observed.valueLuna === expected.amountLuna
+        ? "exact"
+        : "overpaid";
+  if (amountComparison !== "exact") {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: amountComparison === "underpaid" ? "amount_underpaid" : "amount_overpaid",
+      confirmed: false,
+    }, observed, amountComparison);
+  }
+
+  if (observed.executionResult === false) {
+    return withRefundDecision(expected, {
+      status: "rejected",
+      reasonCode: "execution_failed",
+      confirmed: false,
+    }, observed, amountComparison);
+  }
+  if (observed.executionResult !== true) {
+    return withRefundDecision(expected, {
+      status: "unknown",
+      reasonCode: "execution_unknown",
+      confirmed: false,
+    }, observed, amountComparison);
+  }
+
+  if (observed.finality === "not_final") {
+    return withRefundDecision(expected, {
+      status: "pending",
+      reasonCode: observed.finalityReason === "canonical_block_mismatch"
+        ? "canonical_block_mismatch"
+        : "observed_but_not_final",
+      confirmed: false,
+    }, observed, amountComparison);
+  }
+  if (observed.finality !== "final" || !hasFinalityEvidence(observed)) {
+    return withRefundDecision(expected, {
+      status: "pending",
+      reasonCode: observed.finalityReason === "canonical_block_mismatch"
+        ? "canonical_block_mismatch"
+        : "finality_unknown",
+      confirmed: false,
+    }, observed, amountComparison);
+  }
+
+  return withRefundDecision(expected, {
+    status: "confirmed",
+    reasonCode: "confirmed_success",
+    confirmed: true,
   }, observed, amountComparison);
 }
