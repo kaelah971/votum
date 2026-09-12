@@ -1,7 +1,8 @@
 # V2B.2 — Creator-Funded Rewarded Participation (Implementation Plan)
 
-**Status:** V2B.2.8 complete locally; physical payout QA and later V2B.2
-surface checkpoints remain pending.
+**Status:** V2B.2.8 complete locally; V2B.2.11 Phase A (pure closure/refund
+policy) complete locally; physical payout QA and later V2B.2 surface checkpoints
+remain pending.
 **Date:** 2026-08-22
 **Branch:** `feat/v2-participation-record`
 **Starting HEAD:** `80288e523422c89c490eac2f1444f76c3ed39f8d`
@@ -564,6 +565,32 @@ cards, compact "Earn NIM" section. No sorting/leaderboard/redesign (D8).
 
 **Goal:** Creator surface to inspect funding/payouts/refunds and explicitly
 initiate close + refund (D4) or pre-reservation cancel (D10).
+
+**Phase A status (2026-09-12):** Complete locally; Docker-off and pure. This
+phase defines the closure/refund policy only. It does not add RPCs, routes,
+database mutations, signing, broadcasting, chain observation, or Campaign
+implementation.
+
+- `src/lib/rewards/refund-policy.ts` classifies every non-`paid` receipt before
+  refund calculation. Reserved, eligible, payout-pending, failed, and retryable
+  obligations block closure; hash-bearing, non-final, broadcast-started, or
+  manual-review payout attempts require reconciliation before funds can be
+  released.
+- Campaign closure requires a closed participation window and a valid
+  `funded`/`rewarding`/`exhausted` lifecycle state. Cancellation is accepted
+  only before `first_reservation_at`; `closed` and `refunded` campaigns are
+  idempotently rejected.
+- Refund accounting uses integer Luna only: unused reward principal, unused fee
+  reserve after confirmed spend and protected reserve, and refundable funding
+  excess are each counted once. The result is capped at the proven vault
+  balance and malformed or negative accounting fails closed.
+- `src/lib/rewards/refund-policy.test.ts` contains 22 deterministic tests for
+  obligation blocking, payout reconciliation gates, cancellation boundaries,
+  exact accounting, vault caps, zero refunds, integer arithmetic, idempotency,
+  and option independence.
+- Phase B remains pending for close/refund reservation/confirmation RPCs,
+  creator-authenticated routes, chain observation, and refund execution. No
+  refund row, transaction, or Campaign surface was created.
 
 **Likely files/modules:**
 - `src/app/my-polls/[pollId]/rewards/page.tsx` (new) + view component.
