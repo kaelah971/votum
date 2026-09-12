@@ -281,20 +281,22 @@ financial binding is designed and implemented.
 
 Use the repository's existing `Reward...` naming convention:
 
-- `RewardParticipationContext`: server-produced source and settlement snapshot used by the shared reservation boundary.
+- `RewardParticipationContext`: server-produced source, evidence, identity, and settlement-binding handoff used by the shared reservation boundary.
 - `RewardParticipationSourceType`: `poll_vote` or `campaign_claim`.
 - `RewardParticipationAdapter`: source-specific resolver that produces a context or a typed ineligibility result.
 - `RewardReservationService`: shared uniqueness, capacity, amount-authority, first-reservation, and atomic reservation boundary.
 - `RewardSettlementContext`: source-independent funding, vault, payout, observation, and finality context.
 - `RewardSettlementService`: shared funding, payout execution, reconciliation, retry, and idempotency orchestration.
-- `RewardClosureContext`: source-independent closure, obligations, accounting, and refund input.
+- `RewardClosureContext`: source-neutral closure-trigger handoff; the service loads obligations, accounting, and refund authority separately.
 - `RewardClosureService`: shared close, refund preparation, broadcast, reconciliation, and terminal-freeze orchestration.
 
 These are design names only. They are not implemented by this document.
 
 ### 3.2 Smallest shared participation contract
 
-The smallest useful adapter output is a server-only `RewardParticipationContext`:
+The smallest useful adapter output is a server-only, minimal
+`RewardParticipationContext`. It carries participation and eligibility handoff
+data only; it is not a financial-engine snapshot:
 
 ```ts
 type RewardParticipationSourceType = "poll_vote" | "campaign_claim";
@@ -313,18 +315,10 @@ interface RewardParticipationContext {
   };
   settlement: {
     id: string;
-    rewardAmountLuna: bigint;
-    capacity: {
-      maxParticipants: number;
-      reservedParticipants: number;
+    binding: {
+      sourceType: RewardParticipationSourceType;
+      sourceId: string;
     };
-    vaultAddressHex: string;
-    state: RewardCampaignState;
-    firstReservationAt: string | null;
-  };
-  lifecycle: {
-    participationOpen: boolean;
-    sourceClosed: boolean;
   };
 }
 ```
@@ -332,20 +326,24 @@ interface RewardParticipationContext {
 The exact TypeScript placement and field casing may follow the implementation's
 module layout, but these meanings are fixed.
 
-The context is a server-produced snapshot, not a client-authoritative command:
+The context is a server-produced internal handoff, not a client-authoritative command:
 
 - `source.type` and `source.id` identify durable source evidence, never an arbitrary browser assertion.
 - `participantWallet` comes from a verified session and the authoritative source row, then is canonicalized and cross-checked.
-- `ownerWallet` comes from the immutable source owner and is checked against the settlement owner.
+- `ownerWallet` comes from the immutable source owner. The reservation engine checks it against the authoritative settlement owner.
 - `eligibility.evidenceId` points to durable server evidence. `verifiedAt` records the server decision time, not a client timestamp.
-- `settlement.id` is an opaque financial settlement identity. In V2C.1 it is the current `reward_campaigns.id`; it is not the Poll ID.
-- `rewardAmountLuna`, capacity, vault, state, and `firstReservationAt` are loaded from the database by the server. They may be included in the context for service composition, but the reservation transaction reloads and verifies them before committing.
-- `lifecycle` distinguishes source participation timing from settlement state. A source may be closed while already-reserved obligations still settle.
+- `settlement.id` and `settlement.binding` identify the intended financial ledger. In V2C.1 the ID is the current `reward_campaigns.id`; it is not the Poll ID.
+- The context contains no reward amount, capacity, reserved count, vault address, settlement state, `first_reservation_at`, or financial lifecycle snapshot. The reservation and settlement engines load those values from authoritative database rows under lock.
+- Source lifecycle is not embedded in this participation context. The source domain or adapter owns whether a new participation is allowed and produces a separate source-neutral closure trigger when the source closes.
 
 No browser payload may construct or serialize this interface for direct use. A
 server route may receive only an untrusted source identifier, Poll option ID,
 opaque claim evidence, or wallet callback. The adapter must resolve that input
 into this context using server-side reads and policy.
+
+This interface is an advisory internal handoff, not a security authority. A
+server-only TypeScript type cannot make a forged object authoritative. No
+branding or opaque-type layer should be added merely to simulate security.
 
 ### 3.3 Authority layering
 
@@ -353,8 +351,8 @@ The context is the handoff contract, not the final authority. The authority
 layers are:
 
 1. Wallet session proves control of the canonical participant or authorized operator wallet.
-2. The source adapter proves source-specific participation and eligibility from durable source evidence.
-3. The reservation engine reloads the settlement row and rechecks owner, amount, capacity, vault, source binding, and lifecycle under the settlement lock.
+2. The source adapter proves source-specific participation and eligibility from durable source evidence and supplies the source-to-settlement identity/binding.
+3. The adapter context is advisory handoff evidence only. The reservation engine reloads the settlement row and rechecks owner, amount, capacity, vault, source binding, and lifecycle under the settlement lock.
 4. The settlement engine reloads receipt, attempt, funding, refund, and vault records before every irreversible or terminal transition.
 5. The database security-definer transition remains the atomic authority for the state mutation.
 
@@ -408,8 +406,8 @@ Every source adapter owns:
 
 Every adapter must not own:
 
-- reward amount calculation from browser input;
-- capacity counters;
+- reward amount, capacity, vault, settlement state, `first_reservation_at`, or financial lifecycle authority;
+- knowledge of financial tables merely to establish source participation or eligibility;
 - vault key material or signing;
 - funding confirmation;
 - payout or refund hashes;
@@ -443,18 +441,16 @@ An adapter may return `eligible` only when all of these are true:
 - the participant wallet is canonical and is the wallet authenticated by the server session;
 - the source evidence exists and belongs to the requested source;
 - the source evidence is committed and has not already been consumed in a conflicting way;
-- the source owner, settlement owner, and adapter policy agree;
+- the source owner and adapter policy agree; the reservation engine rechecks the settlement owner;
 - source-specific eligibility is true without relying on a client boolean;
-- the settlement is the intended reward ledger for this source;
-- the settlement state permits a new reservation candidate;
-- the adapter can identify the exact reward amount and vault snapshot loaded from server authority;
+- the settlement ID and source-to-settlement binding identify the intended reward ledger;
 - no selected option or source-private payload is copied into the shared context.
 
-The adapter may return an ineligible result for no capacity, a closed source,
-creator self-participation, an unfunded settlement, a duplicate, or a source
-policy failure. The shared engine must preserve enough result detail for the
-source route to keep its existing UX semantics without exposing internal
-financial data.
+The adapter may return an ineligible result for a closed source, creator
+self-participation, a duplicate source claim, or a source policy failure. The
+shared financial engine owns no-capacity, unfunded, closed-settlement, and other
+financial-state results. It must preserve enough result detail for the source
+route to keep its existing UX semantics without exposing internal financial data.
 
 ## 6. Poll Adapter Design
 
@@ -476,15 +472,22 @@ After `cast_poll_vote_atomic` returns a successful `vote_id`, the adapter must:
 3. Load `polls` by the vote's `poll_id` and derive the immutable Poll creator wallet and Poll lifecycle.
 4. Require `is_public = true` and a Poll state/window that permits the current V2B.2 reward rule.
 5. Require `economic_model = 'reward_first'` and `reward_mode = 'rewarded'`.
-6. Load exactly one `reward_campaigns` row by `poll_id` and require its Poll binding, owner, funding terms, and lifecycle to be consistent.
-7. Load the isolated vault public address from `reward_campaign_vaults` by the settlement ID.
-8. Derive the amount, cap, reserved count, settlement state, and `first_reservation_at` from the locked financial rows.
-9. Apply the Poll self-participation rule: the creator may vote, but cannot receive a reward.
-10. Return a context containing the vote ID as evidence and no option data.
+6. Resolve and validate the Poll-to-settlement binding and return the attached `reward_campaigns.id` as the settlement ID. In the current schema, the compatibility binding lookup may read `reward_campaigns` solely to establish this identity; it must not load financial terms into the participation context.
+7. Apply the Poll self-participation rule: the creator may vote, but cannot receive a reward.
+8. Return a minimal context containing the vote ID as evidence, the canonical source owner, the settlement ID/binding, and no option data.
 
 The adapter must not accept reward amount, cap, owner, vault, `eligible`, or
-recipient values from the request body. It must not use `option_id` to choose a
-reward amount or to create a reward receipt.
+recipient values from the request body. It must not load or derive reward amount,
+capacity, vault, settlement state, or `first_reservation_at` merely to establish
+Poll eligibility. It must not use `option_id` to choose a reward amount or to
+create a reward receipt.
+
+The current Poll adapter may need the Poll-bound financial row only as a
+source-to-settlement identity lookup. The shared reservation and settlement
+services load all money, vault, capacity, state, and lifecycle authority from
+financial rows. Future Public, Secret, Private, Event, and Community adapters
+must be able to establish eligibility without knowing the financial tables;
+their only financial handoff is the resolved settlement ID/binding.
 
 ### 6.3 Poll-specific eligibility
 
@@ -544,13 +547,13 @@ secret parsing, allowlist membership, payout signing, or chain observation.
 The shared boundary should perform this sequence in one database transaction or
 through a security-definer RPC that has the same atomic semantics:
 
-1. Validate that the request came from a server-produced context and has a non-empty settlement ID and source evidence ID.
+1. Accept an internal adapter handoff with a non-empty settlement ID, source-to-settlement binding, and source evidence ID. The TypeScript shape itself is advisory and is not treated as security authority.
 2. Lock the authoritative settlement row using the same deterministic lock convention as the current campaign reservation.
 3. Reload the settlement record, source binding, owner, vault, terms, capacity, lifecycle, and first-reservation timestamp.
-4. Compare the reloaded owner, participant, settlement ID, vault, amount, and source relationship with the adapter context. Reject mismatches.
+4. Compare the reloaded owner, participant, settlement ID, source binding, and source relationship with the adapter context. Reject mismatches; there are no context amount, vault, capacity, or lifecycle snapshots to trust.
 5. Recheck source evidence and source-specific eligibility, or call the adapter before entering the atomic section where appropriate.
 6. Reject legacy support and free Poll records through the Poll adapter and database defense-in-depth.
-7. Reject configured, funding-pending, cancelled, closed, or refunded settlements unless an explicit source-neutral policy says they are only replayable.
+7. Reject configured, funding-pending, cancelled, closed, or refunded settlements according to the source-neutral financial policy, while allowing only explicitly permitted replay behavior.
 8. Return a durable replay for an existing canonical participant receipt before evaluating remaining capacity.
 9. Enforce remaining capacity under the settlement lock.
 10. Insert a receipt with the exact server-loaded amount and participant identity, increment the reserved count, set `first_reservation_at` if null, and transition to `rewarding` or `exhausted` atomically.
@@ -562,9 +565,11 @@ than immediately replacing the Poll-bound SQL with a speculative generic RPC.
 
 ### 7.3 Authority and uniqueness
 
-The amount is never taken from the context as final authority. The authoritative
-amount is the locked settlement row. The context amount is a consistency check.
-The same applies to capacity, vault, owner, and lifecycle.
+The participation context contains no amount, capacity, vault, settlement state,
+or lifecycle snapshot. The reservation service loads those financial values from
+the locked settlement row and uses the source context only for participant,
+owner, evidence, settlement ID, and binding consistency checks. The same
+reload-under-lock rule applies in settlement and closure services.
 
 The current database constraint is `UNIQUE (campaign_id, participant_wallet)`
 on raw stored text, while the RPC also performs lower/trim comparisons. This is
@@ -685,9 +690,15 @@ the browser or allow an adapter to submit its own finality evidence.
 
 ### 9.1 Responsibilities
 
-`RewardClosureService` owns:
+The source domain or source adapter owns:
 
-- determining whether the source participation window is closed;
+- determining the source-specific close condition, such as Poll closed/elapsed, Campaign expired, creator cancellation, or another source event;
+- mapping that condition to a source-neutral closure trigger containing source identity, settlement identity/binding, reason, and server observation time;
+- revalidating source-specific authority when a close trigger is requested.
+
+`RewardClosureService` consumes and revalidates that source-neutral trigger, then
+owns:
+
 - locking the settlement before checking obligations;
 - classifying reserved, payout-pending, retryable, and manual-review obligations;
 - requiring payout reconciliation before refund;
@@ -699,38 +710,52 @@ the browser or allow an adapter to submit its own finality evidence.
 - requiring finality before `refunded`;
 - making closure, refund preparation, and final confirmation idempotent.
 
-It does not decide whether a Poll vote, secret, event proof, or allowlist entry
-was eligible. That decision belongs to the source adapter before reservation.
+It does not determine Poll lifecycle, Campaign lifecycle, or any other source
+close condition as a universal rule. It also does not decide whether a Poll vote,
+secret, event proof, or allowlist entry was eligible. Those decisions belong to
+the source domain or adapter before reservation or closure-trigger production.
 
 ### 9.2 Source-neutral closure input
 
-The existing `RewardClosureInput` is already close to a shared pure contract:
+The source domain or adapter produces a minimal source-neutral trigger:
 
 ```ts
-interface RewardClosureContext {
-  settlement: RewardSettlementContext;
+interface RewardClosureTrigger {
   source: {
     type: RewardParticipationSourceType;
     id: string;
-    participationWindowClosed: boolean;
-    closureTrigger: "source_closed" | "expired" | "cancelled";
   };
-  receipts: ReadonlyArray<RewardClosureReceipt>;
-  vaultBalanceLuna: bigint;
+  settlement: {
+    id: string;
+    binding: {
+      sourceType: RewardParticipationSourceType;
+      sourceId: string;
+    };
+  };
+  reason: "source_closed" | "elapsed" | "expired" | "creator_cancelled" | "source_specific";
+  observedAt: string;
+}
+
+interface RewardClosureContext {
+  trigger: RewardClosureTrigger;
 }
 ```
 
-The Poll adapter maps Poll `closed`, an elapsed Poll end time, or the explicitly
-allowed cancellation case into the source-neutral closure trigger. A future
-Campaign adapter maps Campaign expiry or owner cancellation without pretending
-that Campaign lifecycle is Poll lifecycle.
+The Poll domain/adapter maps Poll `closed`, an elapsed Poll end time, or an
+explicitly allowed creator cancellation into the trigger. A future Campaign
+domain/adapter maps Campaign expiry, creator cancellation, or another Campaign
+close condition without pretending that Campaign lifecycle is Poll lifecycle.
+`RewardClosureService` receives this trigger, reloads the authoritative financial
+settlement, receipts, payout attempts, refunds, and vault balance, and constructs
+any internal financial closure context it needs. The trigger contains no money,
+capacity, vault, settlement-state, or obligation snapshot.
 
 ### 9.3 Closure algorithm
 
 The shared closure path must:
 
 1. Acquire the settlement lock before reading or mutating closure state.
-2. Recheck the source lifecycle and permitted closure trigger.
+2. Revalidate the source-neutral trigger with the owning source domain/adapter and confirm its settlement ID/binding under lock; do not treat Poll lifecycle as a universal rule.
 3. Return a replay for an already closed or refunded settlement.
 4. Block if any receipt remains `reserved`, `payout_pending`, or `retryable`.
 5. Block if an attempt has a hash, broadcast marker, unknown outcome, or manual-review evidence that has not been reconciled.
@@ -748,9 +773,10 @@ The shared closure path must:
 `classifyRewardObligations` and `calculateRefundableRewardAmount` can be reused
 as pure policy. `begin_reward_refund_atomic` currently remains Poll-bound because
 it reads `reward_campaigns.poll_id`, `polls.status`, and `polls.ends_at`.
-V2C.1 should extract the source lifecycle input around this function without
-changing its Poll behavior. A future generic close RPC must not query a Poll as
-an implicit universal source.
+V2C.1 should extract the source-owned close-trigger mapping around this function
+without changing its Poll behavior. A future generic close RPC must consume a
+validated source-neutral trigger and must not query a Poll as an implicit
+universal source.
 
 `runRewardRefund`, `RefundSigningContext`, and `RefundReconciliationContext`
 already own source-independent refund execution. The future generalized store
@@ -786,12 +812,18 @@ The future adapter must:
 - parse only the strategy-specific evidence expected for that Campaign;
 - bind evidence to Campaign ID, wallet, purpose, and expiry;
 - persist or consume a durable claim identity atomically where the strategy requires it;
-- resolve the authoritative financial settlement binding from the server;
-- derive reward amount, capacity, owner, vault, and settlement lifecycle from that binding;
-- return a `RewardParticipationContext` with `source.type = 'campaign_claim'` and a durable claim/evidence ID;
+- resolve the settlement ID and source-to-settlement binding from the server;
+- return a minimal `RewardParticipationContext` with `source.type = 'campaign_claim'`, the authoritative Campaign owner wallet, and a durable claim/evidence ID;
 - call the shared reservation boundary, never write a reward receipt directly;
 - return generic safe errors for invalid or expired secrets and private eligibility checks;
 - preserve one wallet per Campaign as a declared identity boundary, without claiming one human per wallet.
+
+The adapter owns Campaign participation and eligibility only. It must not need to
+understand financial tables merely to establish eligibility, and it must not
+load or carry reward amount, capacity, vault, settlement state,
+`first_reservation_at`, or financial lifecycle. The shared reservation,
+settlement, and closure services load those authoritative values from financial
+rows under lock.
 
 The browser may submit a Campaign ID and opaque evidence such as a secret code,
 QR/deep-link value, or event proof. It may never submit authoritative
@@ -804,7 +836,7 @@ The first five future strategies converge at the same boundary:
 
 | Future type | Adapter owns | Shared engine receives |
 |---|---|---|
-| Public Giveaway | Verified wallet and available capacity policy | Server-produced claim candidate and settlement identity |
+| Public Giveaway | Verified wallet and source-level public eligibility policy | Server-produced claim candidate and settlement identity |
 | Secret Drop | Hash-only secret comparison, Campaign binding, expiry, rate limits, single-use policy | Durable valid claim evidence, not the plaintext secret |
 | Private Drop | Canonical allowlist lookup, activation/version policy, privacy-safe response | Durable membership evidence, not a client membership assertion |
 | Event Drop | Scoped event code/link/proof, expiry, replay, and device/deep-link policy | Durable event claim evidence, not a QR success boolean |
@@ -912,7 +944,9 @@ V2C.1 must not add:
 
 ### 12.2 Current database authority
 
-For V2C.1, the Poll adapter should project existing rows as follows:
+For V2C.1, the Poll adapter projects only source identity, evidence, and the
+source-to-settlement binding. The financial services load the following
+authoritative rows after that handoff:
 
 | Shared concept | Current Poll-backed source |
 |---|---|
@@ -921,14 +955,19 @@ For V2C.1, the Poll adapter should project existing rows as follows:
 | Source-to-settlement binding | `reward_campaigns.poll_id = polls.id = poll_votes.poll_id` |
 | Owner | `polls.creator_wallet`, cross-checked with `reward_campaigns.creator_wallet` |
 | Participant | `poll_votes.voter_wallet`, cross-checked with verified session wallet |
-| Reward amount | `reward_campaigns.reward_per_participant_luna` |
-| Capacity | `reward_campaigns.max_rewarded_participants` and `rewarded_participant_count` |
-| Vault identity | `reward_campaign_vaults.vault_address_hex` |
-| First reservation | `reward_campaigns.first_reservation_at` |
-| Funding and balance | `reward_campaigns` plus `reward_funding_transactions` |
-| Receipt | `reward_receipts` |
-| Payout attempt | `reward_payout_attempts` through receipt |
-| Refund | `reward_refunds` |
+| Eligibility evidence | `poll_votes.id` plus verified wallet-session authority |
+| Reward amount | Financial engine reloads `reward_campaigns.reward_per_participant_luna` |
+| Capacity | Financial engine reloads `reward_campaigns.max_rewarded_participants` and `rewarded_participant_count` |
+| Vault identity | Financial engine reloads `reward_campaign_vaults.vault_address_hex` |
+| First reservation | Financial engine reloads `reward_campaigns.first_reservation_at` |
+| Funding and balance | Financial engine reloads `reward_campaigns` plus `reward_funding_transactions` |
+| Receipt | Reservation/settlement engine reloads `reward_receipts` |
+| Payout attempt | Settlement engine reloads `reward_payout_attempts` through the receipt |
+| Refund | Closure/settlement engine reloads `reward_refunds` |
+
+The amount, capacity, vault, settlement state, `first_reservation_at`, and all
+other financial lifecycle values in this table are not participation-context
+fields and are not adapter eligibility outputs.
 
 ### 12.3 Known schema limitations to resolve later
 
@@ -992,7 +1031,8 @@ The following behavior must remain unchanged during extraction:
 
 ### 13.3 Internal service interfaces
 
-The proposed interfaces are server-only and intentionally narrow:
+The proposed interfaces are server-only and intentionally narrow. Their
+TypeScript types describe an internal handoff; they are not security authority:
 
 ```ts
 interface RewardReservationService {
@@ -1025,7 +1065,10 @@ interface RewardClosureService {
 
 These methods are conceptual. The actual implementation may retain the current
 store/dependency injection shapes. The critical rule is that none accepts a
-browser-deserialized `RewardParticipationContext` or client economics.
+browser-deserialized `RewardParticipationContext`, a client closure trigger, or
+client economics. No branding or opaque-type complexity should be introduced
+merely to simulate security. Financial services must reload authoritative rows
+under lock before mutation.
 
 ### 13.4 Browser authority boundary
 
@@ -1047,7 +1090,7 @@ same or a stronger boundary.
 |---|---|---|
 | Wallet-session authority | Same-origin challenge, signed wallet proof, hashed cookie, expiry, revocation, server session lookup | Reuse for authentication. Adapters compare the source wallet with the verified session wallet. |
 | Campaign claim authority | Not present in current Poll flow | Future Campaign adapter must add Campaign-bound claim purpose, nonce, expiry, and atomic consumption. A base session is insufficient. |
-| Server-derived economics | Funding and reservation RPCs load terms from reward tables | Context values are snapshots only; reservation and settlement reload authoritative terms under lock. |
+| Server-derived economics | Funding and reservation RPCs load terms from reward tables | Participation context carries no financial snapshots; reservation and settlement reload amount, capacity, vault, state, `first_reservation_at`, and all economic authority under lock. |
 | Private vault secrecy | Separate RLS-protected vault table, AES-256-GCM envelope, transient key scope, address self-check | Keep vault custody inside settlement execution. No adapter or browser receives key material. |
 | Hash uniqueness | Partial unique indexes, advisory hash locks, cross-ledger trigger/RPC checks, canonical lower/trim normalization in current hardened paths | Every future financial writer uses the same cross-ledger lock and canonical hash policy. |
 | Same-vault serialization | Durable campaign lease held across signing and external broadcast | Lease on the source-independent settlement/vault identity. It must cover payout and refund calls. |
@@ -1061,6 +1104,18 @@ same or a stronger boundary.
 | Owner/refund identity | Campaign creator is checked against Poll creator; refund destination is derived from immutable creator identity | Future owner and refund policy are settlement authority, never request-body destinations. |
 
 ### 14.1 Trust boundary warning
+
+The server-only TypeScript interface is not a security authority. The
+`RewardParticipationContext` is advisory/internal handoff evidence containing
+only source identity, participant/owner identity, eligibility metadata, and
+settlement ID/binding. A caller cannot make financial data authoritative by
+constructing an object that satisfies the type. Do not add branding or opaque
+types merely to simulate this boundary.
+
+Reservation and settlement DB transitions must reload authoritative financial
+rows under lock before mutation. Closure must likewise reload obligations,
+accounting, vault, and lifecycle state rather than trusting a trigger or context
+snapshot.
 
 The current finality RPCs accept server-produced evidence and compare it with
 stored financial terms; they do not independently query the chain. That is safe
@@ -1114,9 +1169,10 @@ V2C.1 is an additive application/domain extraction with no database migration.
 ### Phase 2: Poll adapter behind existing vote flow
 
 - Resolve a context from the existing successful `poll_votes.id`.
+- Resolve or validate only the Poll-to-settlement ID/binding needed for the handoff.
 - Keep `claim_reward_receipt_atomic` as the final Poll reservation authority.
 - Keep automatic payout after a valid vote.
-- Compare adapter output with database-loaded values and fail closed on mismatch.
+- Have reservation and settlement reload all financial authority from database rows under lock and fail closed on identity/binding mismatch.
 - Verify that free, legacy, creator, private, exhausted, duplicate, and failed-reservation cases preserve current behavior.
 
 ### Phase 3: Settlement context extraction
@@ -1128,8 +1184,9 @@ V2C.1 is an additive application/domain extraction with no database migration.
 
 ### Phase 4: Closure context extraction
 
-- Feed Poll close/expiry/cancellation decisions into a source-independent closure policy.
+- Have the Poll domain/adapter map close/elapsed/cancellation decisions into a source-neutral closure trigger.
 - Reuse the existing pure refund policy and execution boundaries.
+- Have `RewardClosureService` consume/revalidate the trigger and reload obligations, accounting, vault, lifecycle, and refund authority under lock.
 - Keep the current Poll-bound closure RPC as the compatibility implementation until a later generic binding is safe.
 - Verify that freeze and unresolved-obligation behavior is identical.
 
@@ -1152,14 +1209,13 @@ Add pure tests for:
 
 - required source type and source ID;
 - canonical participant and owner identity;
-- evidence ID and server verification time;
-- exact integer Luna reward amount;
-- settlement ID distinct from source ID;
-- capacity snapshot and non-negative count;
-- vault address shape and settlement state;
-- source-open versus source-closed lifecycle;
+- evidence ID, evidence kind, and server verification time;
+- settlement ID and source-to-settlement binding distinct from source ID;
+- minimal context shape containing no reward amount, capacity, vault, settlement state, `first_reservation_at`, or financial lifecycle;
 - rejection of client-shaped context or selected-option fields;
-- stale context mismatch against a reloaded settlement snapshot.
+- identity/binding mismatch against a reloaded settlement row;
+- financial service reload of amount, capacity, vault, state, and `first_reservation_at` under lock;
+- source-neutral closure trigger shape without financial snapshots.
 
 ### 17.2 Poll adapter tests
 
@@ -1172,8 +1228,9 @@ Use the existing V2B.2 local fixtures and add assertions for:
 - private Poll and non-public lifecycle fail closed;
 - Poll/campaign owner mismatch fails closed;
 - vote/campaign Poll ID mismatch fails closed;
-- missing vault or malformed campaign terms fail closed;
+- missing or malformed source-to-settlement binding fails closed;
 - the selected option is not present in the context;
+- the adapter returns only source/evidence/identity/binding data and does not load financial terms merely to establish eligibility;
 - changing selected option changes no reward amount;
 - a valid vote remains committed when reservation or payout fails;
 - duplicate vote replay does not create a second receipt;
@@ -1188,7 +1245,9 @@ Preserve and extend the existing DB tests for:
 - final-slot race;
 - replay before capacity check;
 - `first_reservation_at` set exactly once;
-- amount loaded from the settlement, not context or option;
+- amount, capacity, vault, settlement state, and `first_reservation_at` loaded from the settlement, never from context or option;
+- missing vault or malformed financial settlement terms fail closed in the financial engine;
+- server-only TypeScript context shape is not treated as security authority;
 - legacy/free guard;
 - campaign owner exclusion;
 - no receipt on failed or ineligible source evidence;
@@ -1211,7 +1270,16 @@ Keep the current unit and local DB suites for:
 - `paid` only after final confirmation;
 - refund preparation, fee accounting, closure freeze, exact remainder, and final refund proof.
 
-### 17.5 Full gate
+### 17.5 Closure ownership tests
+
+Add source/domain tests proving that:
+
+- Poll closed/elapsed and allowed creator cancellation map to a source-neutral trigger;
+- future Campaign expiry/cancellation can map to the same trigger without Poll lifecycle assumptions;
+- `RewardClosureService` consumes and revalidates the trigger but owns unresolved obligations, accounting, freeze, refund, finality, and terminal closure;
+- closure reloads financial rows under lock rather than trusting trigger or context snapshots.
+
+### 17.6 Full gate
 
 The implementation must rerun the established sequence against local-only
 services when available:
@@ -1245,8 +1313,10 @@ store.
 ### Risk 2: Context becomes a new trust boundary
 
 A typed object can still be forged if it crosses an HTTP boundary. Mitigation:
-keep context types server-only, construct them from durable rows, and reload and
-compare all economic fields under the reservation or settlement lock.
+keep the handoff server-only, construct source identity and evidence from durable
+rows, and have reservation/settlement/closure services reload all financial
+authority under the relevant lock. The context is advisory evidence, not a
+security authority.
 
 ### Risk 3: Historical legacy reward rows
 
@@ -1278,8 +1348,9 @@ before generic exposure.
 ### Risk 7: Closure semantics diverge
 
 Poll close, Campaign expiry, and creator cancellation are different source
-events. Mitigation: adapters map source lifecycle to a shared closure input;
-the closure engine never reads Poll status as a universal rule.
+events. Mitigation: source domains/adapters map their conditions to a
+source-neutral closure trigger; the closure service consumes and revalidates the
+trigger, owns financial closure, and never reads Poll status as a universal rule.
 
 ### Risk 8: Poll automatic payout is accidentally changed to a claim flow
 
@@ -1339,9 +1410,11 @@ types, reservation/settlement/closure contract types, and pure invariant tests.
 `poll_votes.id`, including legacy/free/creator/private/malformed guards. Do not
 change Poll runtime behavior yet.
 
-**Pass criteria:** Context cannot be built from a browser payload; amount,
-capacity, owner, vault, source, and lifecycle meanings are explicit; adapter
-tests prove selected option is excluded.
+**Pass criteria:** Context cannot be built from a browser payload; it contains
+only source identity, durable evidence, canonical participant/owner identity,
+settlement ID/binding, and eligibility metadata; financial authority is explicitly
+owned by reservation/settlement services; adapter tests prove selected option is
+excluded.
 
 ### V2C.1B - Reservation boundary extraction
 
@@ -1375,6 +1448,11 @@ still persists before network contact.
 `begin_reward_refund_atomic` path. Reuse `RewardClosureContext`, obligation
 classification, accounting, refund preparation, signing, broadcast, and finality
 policies. Keep Poll closure mapping explicit and preserve Poll refund routes.
+
+The source domain/adapter produces the closure trigger. `RewardClosureService`
+consumes and revalidates it, then reloads and owns unresolved obligations,
+accounting, freeze, refund, finality, and terminal financial closure. It must not
+treat Poll lifecycle as universal.
 
 **Pass criteria:** Unresolved obligations, payout reconciliation, fee accounting,
 zero remainder, positive remainder, refund freeze, same-vault lease, retry, and
