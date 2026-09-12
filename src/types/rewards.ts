@@ -116,6 +116,17 @@ export interface RewardRefundRow {
   amount_luna: number;
   status: RewardRefundState;
   transaction_hash: string | null;
+  sender_address_hex: string | null;
+  recipient_address_hex: string | null;
+  fee_luna: number | null;
+  network_id: number | null;
+  validity_start_height: number | null;
+  prepared_transaction_hex: string | null;
+  prepared_transaction_hash: string | null;
+  prepared_at: string | null;
+  broadcast_started_at: string | null;
+  broadcast_at: string | null;
+  error_code: string | null;
   block_number: number | null;
   transaction_timestamp: string | null;
   confirmed_at: string | null;

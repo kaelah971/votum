@@ -596,40 +596,73 @@ export type Database = {
         Row: {
           amount_luna: number
           block_number: number | null
+          broadcast_at: string | null
+          broadcast_started_at: string | null
           campaign_id: string
           confirmed_at: string | null
           created_at: string
           creator_wallet: string
+          error_code: string | null
+          fee_luna: number | null
           id: string
+          network_id: number | null
+          prepared_at: string | null
+          prepared_transaction_hash: string | null
+          prepared_transaction_hex: string | null
+          recipient_address_hex: string | null
+          sender_address_hex: string | null
           status: string
           transaction_hash: string | null
           transaction_timestamp: string | null
+          validity_start_height: number | null
           updated_at: string
         }
         Insert: {
           amount_luna: number
           block_number?: number | null
+          broadcast_at?: string | null
+          broadcast_started_at?: string | null
           campaign_id: string
           confirmed_at?: string | null
           created_at?: string
           creator_wallet: string
+          error_code?: string | null
+          fee_luna?: number | null
           id?: string
+          network_id?: number | null
+          prepared_at?: string | null
+          prepared_transaction_hash?: string | null
+          prepared_transaction_hex?: string | null
+          recipient_address_hex?: string | null
+          sender_address_hex?: string | null
           status?: string
           transaction_hash?: string | null
           transaction_timestamp?: string | null
+          validity_start_height?: number | null
           updated_at?: string
         }
         Update: {
           amount_luna?: number
           block_number?: number | null
+          broadcast_at?: string | null
+          broadcast_started_at?: string | null
           campaign_id?: string
           confirmed_at?: string | null
           created_at?: string
           creator_wallet?: string
+          error_code?: string | null
+          fee_luna?: number | null
           id?: string
+          network_id?: number | null
+          prepared_at?: string | null
+          prepared_transaction_hash?: string | null
+          prepared_transaction_hex?: string | null
+          recipient_address_hex?: string | null
+          sender_address_hex?: string | null
           status?: string
           transaction_hash?: string | null
           transaction_timestamp?: string | null
+          validity_start_height?: number | null
           updated_at?: string
         }
         Relationships: [
@@ -767,6 +800,60 @@ export type Database = {
         Args: {
           _campaign_id: string
           _receipt_id: string
+        }
+        Returns: Json
+      }
+      /** Acquire the shared campaign-vault lease for a refund operation. */
+      acquire_reward_refund_vault_lock_atomic: {
+        Args: {
+          _campaign_id: string
+          _lease_seconds?: number
+          _lock_token: string
+          _refund_id: string
+        }
+        Returns: Json
+      }
+      /** Persist the exact signed refund transaction before broadcast. */
+      prepare_reward_refund_transaction_atomic: {
+        Args: {
+          _amount_luna: number
+          _fee_luna: number
+          _network_id: number
+          _prepared_transaction_hash: string
+          _prepared_transaction_hex: string
+          _recipient_address_hex: string
+          _refund_id: string
+          _sender_address_hex: string
+          _validity_start_height: number
+        }
+        Returns: Json
+      }
+      /** Mark the irreversible refund network call as started. */
+      mark_reward_refund_broadcast_starting_atomic: {
+        Args: { _refund_id: string }
+        Returns: Json
+      }
+      /** Persist the normalized refund broadcast callback hash. */
+      mark_reward_refund_broadcast_atomic: {
+        Args: {
+          _refund_id: string
+          _transaction_hash: string
+        }
+        Returns: Json
+      }
+      /** Classify a definite pre-broadcast refund failure as retryable. */
+      record_reward_refund_failure_atomic: {
+        Args: {
+          _error_code: string
+          _refund_id: string
+        }
+        Returns: Json
+      }
+      /** Record an unknown refund broadcast outcome while retaining pending. */
+      record_reward_refund_unknown_atomic: {
+        Args: {
+          _error_code: string
+          _refund_id: string
         }
         Returns: Json
       }

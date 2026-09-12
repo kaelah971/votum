@@ -1,9 +1,9 @@
 # V2B.2 — Creator-Funded Rewarded Participation (Implementation Plan)
 
-**Status:** V2B.2.8 complete locally; V2B.2.11 Phase A (pure closure/refund
-policy) and Phase B (atomic refund preparation/freeze) complete locally; refund
-HTTP surface, chain execution, physical payout QA, and later V2B.2 checkpoints
-remain pending.
+**Status:** V2B.2.8 complete locally; V2B.2.11 Phases A (pure closure/refund
+policy), B (atomic refund preparation/freeze), and C (server sign/broadcast)
+complete locally; refund confirmation, physical payout QA, and later V2B.2
+checkpoints remain pending.
 **Date:** 2026-08-22
 **Branch:** `feat/v2-participation-record`
 **Starting HEAD:** `80288e523422c89c490eac2f1444f76c3ed39f8d`
@@ -586,7 +586,7 @@ implementation.
   reserve after confirmed spend and protected reserve, and refundable funding
   excess are each counted once. The result is capped at the proven vault
   balance and malformed or negative accounting fails closed.
-- `src/lib/rewards/refund-policy.test.ts` contains 22 deterministic tests for
+- `src/lib/rewards/refund-policy.test.ts` contains 23 deterministic tests for
   obligation blocking, payout reconciliation gates, cancellation boundaries,
   exact accounting, vault caps, zero refunds, integer arithmetic, idempotency,
   and option independence.
@@ -603,6 +603,30 @@ implementation.
   no-chain/no-option boundaries.
 - Phase B does not add the HTTP refund route, chain observation, refund
   confirmation, or refund execution; those remain later checkpoints.
+- **Phase C status (2026-09-12):** Complete locally; no hosted rollout, real
+  NIM transfer, or finality observation. `src/lib/rewards/refund.ts` signs the
+  frozen refund from the campaign vault, persists the complete signed
+  transaction before the external call, writes the durable broadcast-start
+  marker, and persists only a normalized callback hash. It never changes the
+  refund out of `pending` or the campaign out of `refunding`.
+- `supabase/migrations/20260912050000_v2b2_broadcast_prepared_reward_refunds.sql`
+  adds prepared-transaction proof fields, crash-window constraints, service
+  role RPCs, and shared campaign-vault locking. Refund execution reuses the
+  existing payout lease-release RPC and signing/broadcast primitives.
+- `src/app/api/polls/[pollId]/reward/refund/route.ts` is the explicit,
+  verified-session creator boundary. It derives the campaign from the poll,
+  invokes the Phase B preparation RPC, and then executes only the returned
+  refund intent; request bodies cannot override economic terms.
+- `src/lib/rewards/refund.test.ts` contains 29 deterministic unit tests for
+  authority, prepared-state idempotency, locking, failure classification,
+  unknown outcomes, malformed responses, no-final-state behavior, and secret
+  boundaries. `src/lib/rewards/refund.db.test.ts` contains 4 local integration
+  tests for durable persistence, unknown-outcome idempotency, concurrent
+  execution, and refund/payout lease contention.
+- The full local suite passes with 44 files and 479 tests; TypeScript, lint, and
+  production build also pass. Local schema lint completes without errors; its
+  recorded local schema still reports PL/pgSQL warnings, while the final
+  migration file removes the two new refund-function unused-variable warnings.
 
 **Likely files/modules:**
 - `src/app/my-polls/[pollId]/rewards/page.tsx` (new) + view component.
