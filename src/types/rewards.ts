@@ -30,6 +30,9 @@ export interface RewardCampaignRow {
   refundable_excess_luna: number;
   rewarded_participant_count: number;
   paid_amount_luna: number;
+  payout_lock_attempt_id: string | null;
+  payout_lock_token: string | null;
+  payout_lock_expires_at: string | null;
   fee_spent_luna: number;
   refundable_amount_luna: number;
   first_reservation_at: string | null;
@@ -82,6 +85,15 @@ export interface RewardPayoutAttemptRow {
   attempt_number: number;
   status: RewardPayoutAttemptState;
   transaction_hash: string | null;
+  sender_address_hex: string | null;
+  recipient_address_hex: string | null;
+  amount_luna: number | null;
+  fee_luna: number | null;
+  network_id: number | null;
+  validity_start_height: number | null;
+  prepared_transaction_hex: string | null;
+  prepared_at: string | null;
+  broadcast_started_at: string | null;
   error_code: string | null;
   broadcast_at: string | null;
   confirmed_at: string | null;

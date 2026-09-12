@@ -84,6 +84,9 @@ export function signRewardPayoutTransaction(
   built: BuiltRewardPayout,
   vaultKey: KeyPair,
 ): BuiltRewardPayout {
+  if (vaultKey.toAddress().toHex().toLowerCase() !== built.senderHex.toLowerCase()) {
+    throw new Error("vault signing key does not match transaction sender");
+  }
   built.tx.sign(vaultKey, undefined);
   return built;
 }

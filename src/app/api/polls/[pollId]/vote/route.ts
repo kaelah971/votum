@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { getVerifiedWalletSession } from "@/lib/api/session";
+import { executeReservedRewardPayout } from "@/lib/rewards/payout";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -59,6 +60,21 @@ async function reserveRewardAfterVote(
       requestId,
       resultKind: typeof resultKind === "string" ? resultKind : "unknown",
     });
+
+    const receiptId = (reservation as Record<string, unknown> | null)?.receipt_id;
+    const receiptStatus = (reservation as Record<string, unknown> | null)?.status;
+    if (
+      (resultKind === "reserved" || resultKind === "replay") &&
+      typeof receiptId === "string" &&
+      (receiptStatus === "reserved" || receiptStatus === "payout_pending")
+    ) {
+      const payout = await executeReservedRewardPayout(admin, receiptId, campaign.id);
+      log("reward_payout", {
+        requestId,
+        resultKind: payout.kind,
+        reasonCode: "reasonCode" in payout ? payout.reasonCode : null,
+      });
+    }
   } catch (error) {
     log("reward_reservation_unexpected_error", {
       requestId,

@@ -18,23 +18,23 @@ function walk(dir: string, out: string[]): void {
 }
 
 describe("server/client boundary", () => {
-  it("vault modules declare server-only (Next build-time boundary)", () => {
-    for (const f of ["vault-key.ts", "vault-signing.ts"]) {
+  it("vault and payout modules declare server-only (Next build-time boundary)", () => {
+    for (const f of ["vault-key.ts", "vault-signing.ts", "payout.ts"]) {
       const src = readFileSync(resolve(PROJECT_ROOT, "src/lib/rewards", f), "utf8");
       expect(src.includes('import "server-only"')).toBe(true);
     }
   });
 
-  it("no vault module contains 'use client'", () => {
-    for (const f of ["vault-key.ts", "vault-signing.ts"]) {
+  it("no vault or payout module contains 'use client'", () => {
+    for (const f of ["vault-key.ts", "vault-signing.ts", "payout.ts"]) {
       const src = readFileSync(resolve(PROJECT_ROOT, "src/lib/rewards", f), "utf8");
       expect(src.includes('"use client"')).toBe(false);
       expect(src.includes("'use client'")).toBe(false);
     }
   });
 
-  it("no NEXT_PUBLIC_ master-key reference exists anywhere in vault code", () => {
-    for (const f of ["vault-key.ts", "vault-signing.ts"]) {
+  it("no NEXT_PUBLIC_ master-key reference exists anywhere in vault/payout code", () => {
+    for (const f of ["vault-key.ts", "vault-signing.ts", "payout.ts"]) {
       const src = readFileSync(resolve(PROJECT_ROOT, "src/lib/rewards", f), "utf8");
       expect(src.includes("NEXT_PUBLIC_")).toBe(false);
     }
@@ -49,7 +49,7 @@ describe("server/client boundary", () => {
       const src = readFileSync(file, "utf8");
       return (
         (src.includes('"use client"') || src.includes("'use client'")) &&
-        (src.includes("vault-key") || src.includes("vault-signing"))
+        (src.includes("vault-key") || src.includes("vault-signing") || src.includes("rewards/payout"))
       );
     });
     expect(offending).toEqual([]);

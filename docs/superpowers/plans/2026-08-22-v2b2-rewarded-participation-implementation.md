@@ -1,6 +1,6 @@
 # V2B.2 — Creator-Funded Rewarded Participation (Implementation Plan)
 
-**Status:** V2B.2.6 Phase A implemented locally; Phase B database implementation remains pending.
+**Status:** V2B.2.7 complete locally; V2B.2.8 reconciliation/finality remains pending.
 **Date:** 2026-08-22
 **Branch:** `feat/v2-participation-record`
 **Starting HEAD:** `80288e523422c89c490eac2f1444f76c3ed39f8d`
@@ -359,45 +359,75 @@ enforced; voting power unchanged.
 
 ---
 
-### V2B.2.7 — Automatic payout engine
+### V2B.2.7 — Automatic payout engine (sign + broadcast only)
 
-**Goal:** After a receipt is reserved, automatically sign + broadcast the vault
-→ participant payout; drive the receipt to `paid` on chain confirmation.
+**Goal:** After a receipt is reserved, automatically sign + broadcast the exact
+vault → participant payout and persist the durable broadcast attempt. This
+checkpoint stops at `payout_pending`; a broadcast hash is not proof of payment.
 
 **Likely files/modules:**
-- `src/lib/rewards/payout.ts` (new): the payout pipeline — decrypt key
-  transiently, sign, broadcast (`sendTransaction`), record attempt, observe.
-- `begin_reward_payout_atomic` / `confirm_reward_payout_atomic` (RPCs #3/#4).
-- Trigger/hook: invoke payout after reservation (in the vote handler after RPC
-  #2) or a bounded worker.
+- `src/lib/rewards/payout.ts`: authoritative payout runner, durable preparation,
+  idempotent replay, and server-only vault signing boundary.
+- `src/lib/nimiq/broadcast.ts`: strict server JSON-RPC `sendTransaction` adapter.
+- `begin_reward_payout_atomic` plus preparation, broadcast-marker, outcome, and
+  campaign-scoped lease-lock RPCs.
+- Vote route hook invokes the payout runner after a successful/replayed
+  reservation; there is no participant claim button or client signing path.
 
-**Schema/RPC work:** payout attempt insert; confirm transition (RPCs #3/#4).
+**Schema/RPC work:** durable prepared transaction/signing metadata, a
+  pre-broadcast marker, normalized hash persistence, and a campaign/vault lease.
+  Existing attempt states remain unchanged: `pending` covers prepared or
+  broadcast-unknown work; `failed`/`retryable` remain existing failure states.
 
 **Invariants introduced:**
-- Receipt reaches `paid` only on confirmed hash.
+- Receipt transitions `reserved → payout_pending` atomically with one active
+  payout attempt. This checkpoint never writes `paid`.
 - Participant receives the exact advertised reward (no fee deduction, D9).
-- Fee spent tracked in `fee_spent_luna`; broadcast gated on fee coverage.
-- Payout hash partial-unique (one hash used once).
+- The authoritative recipient and integer Luna amount come only from the
+  receipt; sender comes only from its campaign vault row.
+- The fixed server fee policy and configured network id are used; no browser
+  amount, sender, recipient, fee, network, or hash is accepted.
+- Signed transaction bytes and deterministic hash are persisted before the
+  network call; `broadcast_started_at` is persisted before the call as well.
+- A campaign-scoped database lease serializes construction/broadcast for the
+  isolated vault while unrelated campaigns proceed independently.
+- Payout hash is partial-unique and guarded against reuse across financial
+  ledgers.
 
 **Tests BEFORE/with implementation:**
-- `v2b2-payout-test.ts`: happy path → paid; fee deducted from reserve not
-  principal; insufficient fee reserve → `fee_reserve_insufficient` + retryable;
-  duplicate observation idempotent; exact-reward assertion.
+- `src/lib/rewards/payout.test.ts`: deterministic signing/broadcast mocks cover
+  authoritative terms, replay, concurrency, failure classification, unknown
+  outcomes, option independence, integer Luna, and secret boundaries.
+- `src/lib/rewards/payout.db.test.ts`: local PostgreSQL proof covers atomic
+  claim, prepared/hash persistence, no `paid` transition, one attempt,
+  same-vault serialization, independent vaults, and no refunds.
+- `src/lib/nimiq/broadcast.test.ts`: strict send response normalization and
+  timeout/rejection/malformed classification.
 
-**Manual verification:** real payout from a testnet vault to a participant;
-balance confirms.
+**Crash-window strategy:** if the process dies after the prepared row is
+written, replay uses those exact signed bytes and hash. If it dies after
+`broadcast_started_at` is written, replay never sends again, even if the node
+response was lost. V2B.2.8 must observe the stored hash and reconcile the
+outcome. A definite signing/local failure is marked `retryable` without a
+fabricated hash; a timeout, malformed response, or lost post-call persistence
+remains `pending` with an unknown outcome.
 
-**Failure cases:** A–G from §0.3.
+**Manual verification:** deferred. No real NIM or QA-vault transaction is
+allowed before V2B.2.8 reconciliation/finality is complete.
 
-**Acceptance criteria:** automatic payout is chain-confirmed, exact-amount,
-fee-covered, idempotent.
+**Acceptance criteria:** durable attempt exists, exact reward is signed and
+broadcast server-side, same-vault serialization and duplicate-send protection
+are proven, successful broadcast stores a normalized hash and leaves the
+receipt `payout_pending`, and no paid/finality/retry reconciliation is started.
 
-**Commit boundary:** `feat(v2b2): add automatic payout engine`
+**Commit boundary:** `feat(v2b2): broadcast reserved reward payouts`
 **Local Supabase only:** yes. **Hosted-rollout prohibition:** explicit.
 
 ---
 
 ### V2B.2.8 — Payout reconciliation / retry
+
+**Status:** Required follow-up; not started by V2B.2.7.
 
 **Goal:** Reconcile payouts from chain; retry `retryable` receipts with bounded
 attempts; surface `fee_reserve_insufficient` for creator top-up (D9).

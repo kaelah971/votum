@@ -282,6 +282,9 @@ export type Database = {
           max_rewarded_participants: number
           paid_amount_luna: number
           poll_id: string
+          payout_lock_attempt_id: string | null
+          payout_lock_expires_at: string | null
+          payout_lock_token: string | null
           refundable_amount_luna: number
           refundable_excess_luna: number
           refunded_at: string | null
@@ -310,6 +313,9 @@ export type Database = {
           max_rewarded_participants: number
           paid_amount_luna?: number
           poll_id: string
+          payout_lock_attempt_id?: string | null
+          payout_lock_expires_at?: string | null
+          payout_lock_token?: string | null
           refundable_amount_luna?: number
           refundable_excess_luna?: number
           refunded_at?: string | null
@@ -338,6 +344,9 @@ export type Database = {
           max_rewarded_participants?: number
           paid_amount_luna?: number
           poll_id?: string
+          payout_lock_attempt_id?: string | null
+          payout_lock_expires_at?: string | null
+          payout_lock_token?: string | null
           refundable_amount_luna?: number
           refundable_excess_luna?: number
           refunded_at?: string | null
@@ -437,38 +446,65 @@ export type Database = {
       reward_payout_attempts: {
         Row: {
           attempt_number: number
+          amount_luna: number | null
           broadcast_at: string | null
+          broadcast_started_at: string | null
           confirmed_at: string | null
           created_at: string
           error_code: string | null
           id: string
           receipt_id: string
+          fee_luna: number | null
+          network_id: number | null
+          prepared_at: string | null
+          prepared_transaction_hex: string | null
+          recipient_address_hex: string | null
+          sender_address_hex: string | null
           status: string
           transaction_hash: string | null
+          validity_start_height: number | null
           updated_at: string
         }
         Insert: {
           attempt_number: number
+          amount_luna?: number | null
           broadcast_at?: string | null
+          broadcast_started_at?: string | null
           confirmed_at?: string | null
           created_at?: string
           error_code?: string | null
           id?: string
           receipt_id: string
+          fee_luna?: number | null
+          network_id?: number | null
+          prepared_at?: string | null
+          prepared_transaction_hex?: string | null
+          recipient_address_hex?: string | null
+          sender_address_hex?: string | null
           status?: string
           transaction_hash?: string | null
+          validity_start_height?: number | null
           updated_at?: string
         }
         Update: {
           attempt_number?: number
+          amount_luna?: number | null
           broadcast_at?: string | null
+          broadcast_started_at?: string | null
           confirmed_at?: string | null
           created_at?: string
           error_code?: string | null
           id?: string
           receipt_id?: string
+          fee_luna?: number | null
+          network_id?: number | null
+          prepared_at?: string | null
+          prepared_transaction_hex?: string | null
+          recipient_address_hex?: string | null
+          sender_address_hex?: string | null
           status?: string
           transaction_hash?: string | null
+          validity_start_height?: number | null
           updated_at?: string
         }
         Relationships: [
@@ -691,6 +727,76 @@ export type Database = {
         Args: {
           _campaign_id: string
           _participation_id: string
+        }
+        Returns: Json
+      }
+      /** Atomically claim or replay one reserved reward payout attempt. */
+      begin_reward_payout_atomic: {
+        Args: {
+          _campaign_id: string
+          _receipt_id: string
+        }
+        Returns: Json
+      }
+      /** Persist the exact signed payout transaction before broadcast. */
+      prepare_reward_payout_atomic: {
+        Args: {
+          _amount_luna: number
+          _attempt_id: string
+          _fee_luna: number
+          _network_id: number
+          _prepared_transaction_hex: string
+          _recipient_address_hex: string
+          _sender_address_hex: string
+          _transaction_hash: string
+          _validity_start_height: number
+        }
+        Returns: Json
+      }
+      /** Mark the irreversible network call as started. */
+      mark_reward_payout_broadcast_starting: {
+        Args: { _attempt_id: string }
+        Returns: Json
+      }
+      /** Persist the normalized broadcast callback without marking paid. */
+      mark_reward_payout_broadcast_atomic: {
+        Args: {
+          _attempt_id: string
+          _transaction_hash: string
+        }
+        Returns: Json
+      }
+      /** Classify a definite pre-broadcast failure as retryable. */
+      record_reward_payout_failure_atomic: {
+        Args: {
+          _attempt_id: string
+          _error_code: string
+        }
+        Returns: Json
+      }
+      /** Record an unknown broadcast outcome while retaining pending state. */
+      record_reward_payout_unknown_atomic: {
+        Args: {
+          _attempt_id: string
+          _error_code: string
+        }
+        Returns: Json
+      }
+      /** Acquire the campaign-scoped lease held across signing/broadcast. */
+      acquire_reward_payout_vault_lock_atomic: {
+        Args: {
+          _attempt_id: string
+          _campaign_id: string
+          _lease_seconds?: number
+          _lock_token: string
+        }
+        Returns: Json
+      }
+      /** Release the campaign-scoped payout lease. */
+      release_reward_payout_vault_lock_atomic: {
+        Args: {
+          _campaign_id: string
+          _lock_token: string
         }
         Returns: Json
       }
