@@ -1,7 +1,8 @@
 # V2B.2 — Creator-Funded Rewarded Participation (Implementation Plan)
 
 **Status:** V2B.2.8 complete locally; V2B.2.11 Phase A (pure closure/refund
-policy) complete locally; physical payout QA and later V2B.2 surface checkpoints
+policy) and Phase B (atomic refund preparation/freeze) complete locally; refund
+HTTP surface, chain execution, physical payout QA, and later V2B.2 checkpoints
 remain pending.
 **Date:** 2026-08-22
 **Branch:** `feat/v2-participation-record`
@@ -59,7 +60,7 @@ a financial transition with naïve read-then-write.
 | 4 | **Payout chain confirmation** `confirm_reward_payout_atomic` | receipt lock | payout hash partial-unique; guarded `payout_pending → paid` | Mark paid + increment `paid_amount_luna` only on confirmed hash |
 | 5 | **Payout retry creation** `retry_reward_payout_atomic` | receipt lock | `UNIQUE(receipt_id, attempt_number)` | New attempt from `retryable`; bounded attempts |
 | 6 | **Campaign close** `close_reward_campaign_atomic` | campaign lock | state guard | Only when poll closed; finalize eligibility window |
-| 7 | **Refund reservation** `initiate_reward_refund_atomic` | campaign lock | one active refund per campaign; requires no unresolved reserved/payout_pending (D4) | Compute remainder (principal + fee reserve + excess); freeze refundable amount |
+| 7 | **Refund preparation** `begin_reward_refund_atomic` | campaign lock | one durable refund intent per campaign; requires no unresolved reserved/payout_pending/retryable (D4) | Compute remainder (principal + fee reserve + excess); freeze refundable amount |
 | 8 | **Refund confirmation** `confirm_reward_refund_atomic` | campaign lock | refund hash partial-unique; guarded `pending → confirmed` | Mark refunded; final state |
 
 Every one of these is a `SECURITY DEFINER` function with `SET search_path = ''`,
@@ -571,9 +572,10 @@ phase defines the closure/refund policy only. It does not add RPCs, routes,
 database mutations, signing, broadcasting, chain observation, or Campaign
 implementation.
 
-- `src/lib/rewards/refund-policy.ts` classifies every non-`paid` receipt before
-  refund calculation. Reserved, eligible, payout-pending, failed, and retryable
-  obligations block closure; hash-bearing, non-final, broadcast-started, or
+- `src/lib/rewards/refund-policy.ts` classifies payout-bearing receipts before
+  refund calculation. Reserved, payout-pending, and retryable obligations block
+  closure; eligible or terminal failed receipts without payout evidence can
+  settle into the remainder. Hash-bearing, non-final, broadcast-started, or
   manual-review payout attempts require reconciliation before funds can be
   released.
 - Campaign closure requires a closed participation window and a valid
@@ -588,9 +590,19 @@ implementation.
   obligation blocking, payout reconciliation gates, cancellation boundaries,
   exact accounting, vault caps, zero refunds, integer arithmetic, idempotency,
   and option independence.
-- Phase B remains pending for close/refund reservation/confirmation RPCs,
-  creator-authenticated routes, chain observation, and refund execution. No
-  refund row, transaction, or Campaign surface was created.
+- **Phase B status (2026-09-12):** Complete locally; no chain execution or
+  hosted rollout. `supabase/migrations/20260912040000_v2b2_prepare_reward_refund.sql`
+  adds the service-role-only `begin_reward_refund_atomic` boundary, creator
+  session authorization via persisted session hash, exact integer-Luna ledger
+  checks, one durable campaign refund intent, confirmed-fee accounting, and
+  post-freeze campaign/receipt/payout/refund guards. It creates no transaction,
+  signing request, broadcast, or chain observation.
+- `src/lib/rewards/refund-preparation.db.test.ts` contains 32 local integration
+  tests covering closure gates, creator/vault derivation, accounting, fee
+  reconciliation, idempotency, concurrency, cancellation, freeze guards, and
+  no-chain/no-option boundaries.
+- Phase B does not add the HTTP refund route, chain observation, refund
+  confirmation, or refund execution; those remain later checkpoints.
 
 **Likely files/modules:**
 - `src/app/my-polls/[pollId]/rewards/page.tsx` (new) + view component.

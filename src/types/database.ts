@@ -746,6 +746,14 @@ export type Database = {
         }
         Returns: Json
       }
+      /** Atomically prepare and freeze one creator refund intent. */
+      begin_reward_refund_atomic: {
+        Args: {
+          _campaign_id: string
+          _session_token_hash: string
+        }
+        Returns: Json
+      }
       /** Atomically reserve one reward for a committed poll participation. */
       claim_reward_receipt_atomic: {
         Args: {

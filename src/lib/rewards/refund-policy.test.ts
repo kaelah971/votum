@@ -296,8 +296,29 @@ describe("reward closure and refund policy", () => {
       ],
     }).receipts);
 
-    expect(summary.unresolvedReceiptCount).toBe(3);
-    expect(summary.unresolvedAmountLuna).toBe(BigInt(3000));
+    expect(summary.unresolvedReceiptCount).toBe(1);
+    expect(summary.unresolvedAmountLuna).toBe(BigInt(1000));
     expect(summary.reasonCode).toBe("unresolved_reward_obligations");
+  });
+
+  it("requires reconciliation for terminal failure with payout evidence", () => {
+    const summary = classifyRewardObligations(makeInput({
+      receipts: [{
+        status: "failed",
+        amountLuna: BigInt(1000),
+        payoutAttempts: [{
+          status: "failed",
+          transactionHash: HASH,
+          broadcastStartedAt: "2026-09-12T00:00:00.000Z",
+          broadcastAt: null,
+          chainStatus: "unknown",
+          manualReviewRequired: false,
+        }],
+      }],
+    }).receipts);
+
+    expect(summary.unresolvedReceiptCount).toBe(0);
+    expect(summary.reconciliationRequiredReceiptCount).toBe(1);
+    expect(summary.reasonCode).toBe("payout_reconciliation_required");
   });
 });

@@ -30,11 +30,14 @@ export function generateToken(): string {
  *  3. Session not revoked
  *  4. Session not expired
  *
- * Returns `{ address }` on success, `null` otherwise.
+ * Returns the verified wallet address and its internal persisted session
+ * identifier on success. The identifier stays server-side and is only used
+ * when a security-definer RPC needs to enforce session ownership.
  * Updates `last_seen_at` as a fire-and-forget side-effect.
  */
 export async function getVerifiedWalletSession(): Promise<{
   address: string;
+  tokenHash: string;
 } | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
@@ -64,7 +67,7 @@ export async function getVerifiedWalletSession(): Promise<{
         /* intentionally no-op */
       });
 
-    return { address: data.wallet_address };
+    return { address: data.wallet_address, tokenHash: hashed };
   } catch {
     return null;
   }

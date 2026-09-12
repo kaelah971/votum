@@ -143,7 +143,7 @@ function isNonNegativeLuna(value: bigint): boolean {
 }
 
 function isUnresolvedReceipt(status: RewardReceiptState): boolean {
-  return status !== "paid";
+  return status === "reserved" || status === "payout_pending" || status === "retryable";
 }
 
 function hasReconciliationEvidence(
@@ -171,17 +171,20 @@ export function classifyRewardObligations(
   let invalidReceiptAmountCount = 0;
 
   for (const receipt of receipts) {
-    if (!isUnresolvedReceipt(receipt.status)) continue;
-
-    unresolvedReceiptCount += 1;
+    const unresolved = isUnresolvedReceipt(receipt.status);
     const amountIsValid = isNonNegativeLuna(receipt.amountLuna);
-    if (!amountIsValid) {
+    if (receipt.status !== "paid" && !amountIsValid) {
       invalidReceiptAmountCount += 1;
-    } else {
+    }
+
+    if (unresolved) {
+      unresolvedReceiptCount += 1;
+    }
+    if (unresolved && amountIsValid) {
       unresolvedAmountLuna += receipt.amountLuna;
     }
 
-    if (receipt.payoutAttempts.some(hasReconciliationEvidence)) {
+    if (receipt.status !== "paid" && receipt.payoutAttempts.some(hasReconciliationEvidence)) {
       reconciliationRequiredReceiptCount += 1;
       if (amountIsValid) {
         reconciliationRequiredAmountLuna += receipt.amountLuna;
