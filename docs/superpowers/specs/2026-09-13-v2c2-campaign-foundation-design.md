@@ -7,7 +7,7 @@ discovery, NIM transfers, deployment, or creator management.
 
 **Branch:** `feat/v2-participation-record`
 
-**Reviewed commit:** `394ba62 docs(v2c2): design campaign foundation and settlement root`
+**Reviewed commit:** `433c8eb docs(v2c2): tighten Campaign foundation migration scope`
 
 **Design date:** 2026-09-13
 
@@ -20,6 +20,9 @@ discovery, NIM transfers, deployment, or creator management.
 - `src/app/api/wallet-proof/challenge/route.ts`
 - `src/app/api/wallet-proof/verify/route.ts`
 - `src/app/api/polls/publish/route.ts`
+- `src/lib/rewards/vault-key.ts`
+- `src/lib/rewards/vault-service.ts`
+- `supabase/migrations/20260822120000_v2b2_reward_campaign_vaults.sql`
 - `supabase/migrations/0001_votum_poll_foundation.sql`
 - `supabase/migrations/0002_wallet_proof_sessions.sql`
 - `supabase/migrations/20260822000000_v2b2_rewarded_participation.sql`
@@ -63,8 +66,8 @@ Poll-shaped:
 
 | Record | Current shape | V2C.2 treatment |
 |---|---|---|
-| `reward_campaigns` | One Poll reward offer; `poll_id uuid NOT NULL UNIQUE REFERENCES polls(id)`; terms, balances, status, and payout lease | Remains the Poll reward adapter. It is not renamed into the Campaign product entity. |
-| `reward_campaign_vaults` | One encrypted private vault per `reward_campaigns.id`; service-role only | Remains the single custody record. It receives an additive settlement reference; no key material moves into the root or Campaign table. |
+| `reward_campaigns` | One Poll reward offer; `poll_id uuid NOT NULL UNIQUE REFERENCES polls(id)`; terms, balances, status, payout lease, and legacy nullable `vault_wallet`/`vault_key_ref` fields | Remains the Poll reward adapter. It is not renamed into the Campaign product entity. Its legacy vault fields are frozen/deprecated and never become vault authority. |
+| `reward_campaign_vaults` | One encrypted private vault per `reward_campaigns.id`; `campaign_id` is the required primary key/FK; service-role only | Becomes the single settlement-rooted custody record. `settlement_id` becomes the primary identity at cutover; nullable `campaign_id` remains only as a Poll compatibility FK. |
 | `reward_funding_transactions` | Funding intent, hash binding, amount/terms snapshot, observation and confirmation fields | Reused by settlement root. Add a settlement reference before cutover; do not immediately rename the existing Poll column. |
 | `reward_receipts` | One reward entitlement per campaign and participant wallet, with `poll_id` | Remains the single entitlement ledger. Add a settlement reference; keep the Poll compatibility column temporarily. |
 | `reward_payout_attempts` | Durable attempt, signed bytes/hash, broadcast markers, retry state, and finality evidence | Remains attached through the receipt. No second attempt table and no direct source-specific root. |
@@ -74,6 +77,34 @@ The relevant current database authority is service-role-only and security-
 definer. Existing atomic functions lock and reload their own authoritative rows.
 The current lower boundary includes funding initiation/confirmation, reservation,
 payout preparation/reconciliation/retry, and refund preparation/reconciliation.
+
+The current vault cryptographic contract is also fixed by repository behavior:
+
+- `VAULT_ENVELOPE_VERSION` and `VAULT_ENVELOPE_PURPOSE` are both
+  `votum:reward-vault:v1`.
+- `encryptVaultKey` and `decryptVaultKey` use AES-256-GCM, a random 12-byte IV,
+  base64 envelope fields, and a 16-byte authentication tag.
+- `buildVaultAad` returns the UTF-8 bytes of exactly
+  `votum:reward-vault:v1\0<campaignId>\0<vaultAddressHex>`.
+- `vault-service.ts` supplies the persisted campaign UUID and canonical vault
+  address to that AAD, both when encrypting and decrypting.
+- The current envelope has no separate AAD version or algorithm-specific label
+  beyond the existing purpose string.
+
+V2C.2 preserves those AAD bytes for existing Poll vaults. Because each Poll
+`settlement_id` is the same UUID as its existing `reward_campaigns.id`, the
+generic settlement vault service must pass the same lowercase, hyphenated UUID
+text and the same lowercase vault address to `buildVaultAad`. It must not add a
+prefix, change UUID serialization, or re-encrypt existing ciphertext. A new
+standalone Campaign uses the same byte format with its settlement UUID.
+
+The existing nullable `reward_campaigns.vault_wallet` and `vault_key_ref` columns
+are not copied into the settlement root, Campaign product, or new vault rows.
+They remain historical/deprecated Poll fields and are not valid vault lookup or
+key-authority sources after cutover. The existing
+`reward_funding_transactions.vault_wallet` is a durable funding-intent snapshot;
+it must continue to equal the settlement vault address for the same intent while
+the actual vault address is reloaded from the settlement-rooted vault record.
 
 ### 1.3 V2C.1 status
 
@@ -142,6 +173,8 @@ secrets, allowlists, event data, or product presentation.
 - Poll and Campaign never share a nullable product mega-row.
 - Poll and Campaign use one funding, receipt, payout, reconciliation, vault,
   closure, and refund engine.
+- `reward_campaign_vaults` is rooted by `settlement_id` after cutover; its
+  `campaign_id` is nullable compatibility data for Poll rows only.
 - Existing Poll IDs, vote IDs, receipt IDs, funding IDs, payout IDs, refund IDs,
   transaction hashes, and public response aliases remain stable.
 - Campaign type literals exist in configuration, but unsupported types cannot be
@@ -164,6 +197,10 @@ lifecycle boundaries.
 **Continuously dual-write old and new financial tables:** rejected. A
 compatibility projection may remain physically for a transition, but it is
 historical/read-only after cutover and never an independently mutable ledger.
+
+**Keep vault authority on `reward_campaigns`:** rejected. It would require a
+standalone Campaign to create a fake Poll reward row and would leave signing,
+funding, and refund vault resolution on the wrong product identity.
 
 ## 3. Exact Schema Diff
 
@@ -298,11 +335,96 @@ CREATE INDEX idx_reward_settlements_status_updated
     ON public.reward_settlements (status, updated_at);
 ```
 
-The root has no vault address or private key reference. The vault relationship is
-resolved through the existing private vault table after its additive settlement
-reference is validated.
+The root has no vault address, private key reference, ciphertext, IV, or
+authentication tag. Its isolated vault relationship is the settlement-rooted
+`reward_campaign_vaults.settlement_id` relationship described below.
 
-### 3.3 `participation_campaigns`
+### 3.3 `reward_campaign_vaults` settlement-rooted custody
+
+The existing table is migrated in place without deleting rows or changing any
+encryption field. The final authority shape is:
+
+```sql
+-- Final logical shape after V2C.2E. The staged migration reaches this shape
+-- only after settlement_id coverage and vault/campaign consistency are proven.
+CREATE TABLE public.reward_campaign_vaults (
+    settlement_id                    uuid PRIMARY KEY
+        REFERENCES public.reward_settlements(id),
+    campaign_id                      uuid
+        REFERENCES public.reward_campaigns(id),
+    vault_address_hex                text NOT NULL,
+    envelope_version                 text NOT NULL,
+    encryption_algorithm             text NOT NULL,
+    encrypted_private_key_ciphertext text NOT NULL,
+    encryption_iv                    text NOT NULL,
+    authentication_tag               text NOT NULL,
+    created_at                       timestamptz NOT NULL DEFAULT now(),
+    updated_at                       timestamptz NOT NULL DEFAULT now(),
+
+    CONSTRAINT reward_campaign_vaults_address_hex CHECK (
+        vault_address_hex ~ '^[0-9a-f]{40}$'
+    ),
+    CONSTRAINT reward_campaign_vaults_version CHECK (
+        envelope_version = 'votum:reward-vault:v1'
+    ),
+    CONSTRAINT reward_campaign_vaults_algorithm CHECK (
+        encryption_algorithm = 'aes-256-gcm'
+    )
+);
+
+CREATE UNIQUE INDEX idx_reward_campaign_vaults_campaign_compat
+    ON public.reward_campaign_vaults (campaign_id)
+    WHERE campaign_id IS NOT NULL;
+```
+
+The target invariants are:
+
+- `settlement_id` is `NOT NULL`, the primary key, and the only vault lookup
+  identity after Phase D.
+- There is exactly one vault per settlement.
+- `campaign_id` is nullable, remains a real FK to `reward_campaigns(id)`, and is
+  unique only when present.
+- Existing Poll rows retain `settlement_id = campaign_id` and
+  `campaign_id = the existing reward_campaigns.id`.
+- A standalone Campaign row uses
+  `settlement_id = participation_campaigns.settlement_id` and
+  `campaign_id IS NULL`; it never creates a `reward_campaigns` row.
+- A server/database consistency guard rejects a non-null Poll `campaign_id`
+  unless the Poll source binding names the same settlement and source row.
+- All ciphertext, IVs, authentication tags, envelope version, algorithm, and
+  vault addresses remain byte-for-byte/value-for-value unchanged during the
+  backfill and authority transition.
+
+Before V2C.2E, `campaign_id` remains the physical primary key and runtime
+authority for existing Poll vault rows. V2C.2E performs a validated constraint
+swap: `settlement_id` becomes the primary key, `campaign_id` drops `NOT NULL`
+and its primary-key role, and the partial unique compatibility index is added.
+This is an in-place metadata/constraint transition, not a destructive table
+rewrite. No private material is copied into `reward_settlements` or
+`participation_campaigns`.
+
+#### 3.3.1 Existing AAD compatibility
+
+The existing AAD bytes are authoritative and require no migration:
+
+```text
+UTF-8(
+  "votum:reward-vault:v1"
+  + NUL
+  + settlement UUID rendered as the existing campaign UUID text
+  + NUL
+  + lowercase vault_address_hex
+)
+```
+
+For a backfilled Poll, settlement UUID text is exactly the preserved
+`reward_campaigns.id` value, so decrypting with settlement-rooted code produces
+the same AAD bytes as the old campaign-rooted code. New generic code may rename
+the context field from `campaignId` to `settlementId`, but it must preserve the
+byte format and the existing `VAULT_ENVELOPE_VERSION`; V2C.2 adds no `aad_version`
+and performs no mass re-encryption.
+
+### 3.4 `participation_campaigns`
 
 Create the Campaign product/configuration entity. It contains no financial
 balances, settlement state, vault fields, receipts, payout hashes, or claim
@@ -380,7 +502,7 @@ CREATE INDEX idx_participation_campaigns_public_window
 The owner must match the settlement owner through a server-authoritative atomic
 write. There is no stored `claimable` column.
 
-### 3.4 `settlement_source_bindings`
+### 3.5 `settlement_source_bindings`
 
 Create a narrow source relationship. The final shape uses two nullable source
 FKs only because PostgreSQL needs real foreign keys for the two distinct source
@@ -428,7 +550,7 @@ The initial Poll-only migration creates the table with the Poll branch. The
 Campaign branch and its FK are added only after `participation_campaigns` exists
 in the V2C.2C migration.
 
-### 3.5 Additive changes to existing tables
+### 3.6 Additive changes to existing tables
 
 These are staged references, not immediate in-place renames:
 
@@ -449,15 +571,42 @@ ALTER TABLE public.reward_campaign_vaults
   ADD COLUMN settlement_id uuid REFERENCES public.reward_settlements(id);
 ```
 
-The implementation must then:
+For `reward_funding_transactions`, `reward_receipts`, and `reward_refunds`, the
+implementation must then:
 
 1. Backfill each new column from the Poll adapter/root relationship.
 2. Validate 100 percent coverage and exact identity relationships.
 3. Add the required indexes and `NOT NULL` constraints after validation.
-4. Switch services and RPCs to the new settlement columns.
-5. Retain old `campaign_id` columns temporarily only as frozen Poll compatibility
+4. Keep existing `campaign_id` columns during the transition and validate them
+   against the same settlement root.
+5. Switch services and RPCs to the new settlement columns only during Phase D.
+6. Retain old `campaign_id` columns temporarily only as frozen Poll compatibility
    fields where shipped SQL/read models still need them.
-6. Remove or deprecate old columns only in a later cleanup after full regression.
+7. Remove or deprecate old columns only in a later cleanup after full regression.
+
+`reward_campaign_vaults` has a stricter staged boundary because its current
+`campaign_id` is both `PRIMARY KEY` and runtime authority:
+
+1. Add nullable `settlement_id uuid REFERENCES reward_settlements(id)`.
+2. Backfill every existing Poll vault with `settlement_id = campaign_id`.
+3. Validate 100 percent coverage, exactly one vault per settlement, and the
+   Poll binding/campaign/root relationship.
+4. Preserve `campaign_id` as the primary key and lookup authority for existing
+   Poll vaults through V2C.2B. Do not make it nullable or change the primary key
+   in this slice.
+5. Add only the staging index/FK required to validate the mapping. Do not change
+   ciphertext, IV, authentication tag, envelope version, algorithm, or address.
+6. During V2C.2E, after final resync and consistency checks, make
+   `settlement_id` `NOT NULL` and the primary key, drop `campaign_id`'s primary
+   key/`NOT NULL` role, retain its FK, and add the partial unique index for
+   non-null Poll compatibility values.
+7. After that constraint swap, standalone Campaign settlements may own a vault
+   with `campaign_id IS NULL`; no `reward_campaigns` row is created.
+
+The vault constraint swap is an in-place metadata/constraint change. It must not
+copy, transform, or re-encrypt any envelope field. A consistency trigger or
+security-definer guard must reject a non-null Poll `campaign_id` whose binding
+does not identify the same settlement.
 
 `reward_payout_attempts` continues through `reward_receipts`; it does not need a
 second direct source column. No claim, secret, allowlist, event-proof, or
@@ -514,6 +663,8 @@ participation_campaigns.settlement_id
 
 The Campaign branch of `settlement_source_bindings` records the same IDs. A
 standalone Campaign has no `poll_id` and never creates a `reward_campaigns` row.
+After the settlement-rooted vault transition, its isolated vault is reached by
+the same settlement ID and has `campaign_id IS NULL`.
 
 ### 4.3 Financial child relationship after cutover
 
@@ -526,9 +677,11 @@ reward_settlements
   -> reward_campaign_vaults.settlement_id
 ```
 
-During the additive migration, the old `campaign_id` columns remain for
-compatibility and are checked against the new settlement ID. After the atomic
-authority cutover, new financial writes use only settlement-rooted authority.
+During V2C.2B, old `campaign_id` columns remain for compatibility and are
+checked against the new settlement ID. For vaults specifically, `campaign_id`
+remains the primary/runtime identity until V2C.2E. After the atomic authority
+cutover, all new financial writes, vault loads, signing, and reconciliation use
+settlement-rooted authority only.
 
 ### 4.4 Historical Poll preservation
 
@@ -536,6 +689,12 @@ No historical Poll becomes a Campaign. Existing Poll reward rows receive a root
 with the same UUID and a Poll binding. Existing vote/option records, reward IDs,
 financial hashes, public Poll read shapes, support records, and automatic payout
 semantics remain intact.
+
+Existing Poll vault rows retain their exact `campaign_id`, vault address, and
+encryption envelope values while receiving the equal `settlement_id`. After
+cutover, Poll resolution reaches the same vault by settlement ID and the generic
+service passes the same UUID/address AAD context, so existing ciphertext remains
+decryptable and the signing address remains unchanged.
 
 If a historical wallet value is a valid alternate representation, the preflight
 records its canonical equivalent for root matching but leaves the old source
@@ -826,9 +985,14 @@ draft Campaign + configured root
   -> valid integer-Luna terms
   -> valid owner/funder policy
   -> valid source/root binding
-  -> existing private vault relationship available
+  -> settlement-rooted private vault relationship available
   -> ready for a later funding intent
 ```
+
+For a standalone Campaign, the settlement may own a vault directly with
+`campaign_id IS NULL`; no Poll reward row is created as a vault prerequisite.
+Vault creation remains server-only and does not fund the settlement or enable a
+participant claim.
 
 It does not create a funding intent, call Nimiq Pay, bind a callback hash,
 observe a transaction, confirm funding, or move NIM.
@@ -945,15 +1109,54 @@ Poll-specific rules remain in Poll adapter/compatibility code:
 
 ### 11.3 Vault authority
 
-`reward_campaign_vaults`, or its later settlement-rooted equivalent, is the only
-private vault custody record. It remains service-role-only, encrypted at rest,
+`reward_campaign_vaults` is the only private vault custody record and is rooted
+by `settlement_id` after V2C.2E. It remains service-role-only, encrypted at rest,
 and protected by the current vault signing boundary. `reward_settlements` has no
 `vault_key_ref`, private key, ciphertext, IV, authentication tag, or duplicate
 vault address authority.
 
-The settlement service resolves one vault record by settlement ID and passes key
-material only inside `withCampaignVaultKey`. No Campaign configuration API reads
-or returns vault secrets.
+The current code uses `ensureCampaignVault`, `getCampaignVault`, and
+`withCampaignVaultKey` with a Poll campaign ID. The target internal boundary is
+generic settlement authority:
+
+The current atomic database boundary is
+`ensure_reward_campaign_vault_atomic(_campaign_id, _vault_address_hex,
+_envelope_version, _encryption_algorithm, _ciphertext, _iv, _auth_tag)`. The
+target cutover boundary is the same server-generated envelope contract under a
+generic `ensure_reward_settlement_vault_atomic(_settlement_id, ...)` name. The
+implementation must update the function and generated database types together;
+no client-facing route may supply the settlement ID or any envelope field.
+
+```ts
+interface RewardSettlementVaultService {
+  ensureRewardSettlementVault(
+    settlementId: string,
+  ): Promise<SettlementVaultPublic>;
+  getRewardSettlementVault(
+    settlementId: string,
+  ): Promise<SettlementVaultPublic | null>;
+  withRewardSettlementVaultKey<T>(
+    settlementId: string,
+    callback: (keypair: KeyPair) => T | Promise<T>,
+  ): Promise<T>;
+}
+```
+
+The implementation may update the existing `vault-service.ts` names directly,
+but every generic method must resolve state, vault row, signing, and AAD by
+`settlementId`. It must derive the owner/funder relationship, network, vault
+address, and encrypted envelope server-side. It must never accept client
+`campaign_id`, vault sender, ciphertext, or key material.
+
+For Polls, the resolver path is `pollId -> reward_campaigns -> settlement_source_bindings -> settlementId -> generic vault service`.
+For standalone Campaigns, it is `participation_campaigns -> binding -> settlementId -> generic vault service`;
+the service must not require a `reward_campaigns` row. Key material remains
+transient inside `withRewardSettlementVaultKey`.
+
+The AAD context is renamed conceptually from `campaignId` to `settlementId`, but
+the bytes remain exactly `UTF-8("votum:reward-vault:v1\0<UUID>\0<address>")`.
+Existing Poll settlement UUIDs equal their old campaign UUIDs, so existing
+ciphertext decrypts without re-encryption or a new `aad_version`.
 
 ### 11.4 Campaign participation path is deferred
 
@@ -1017,8 +1220,13 @@ local, ordered, additive where stated, and guarded by explicit backfill tests.
    - add nullable `settlement_id` to funding transactions, receipts, refunds,
      and vaults;
    - backfill each from the validated Poll adapter/root binding;
-   - validate 100 percent coverage, cross-row identity, indexes, and hash safety;
-   - set `NOT NULL` only after proof;
+   - validate 100 percent coverage, cross-row identity, indexes, hash safety,
+     and exactly one vault per settlement;
+   - set non-vault child references `NOT NULL` only after proof;
+   - leave vault `settlement_id` nullable and leave `campaign_id` as the vault
+     primary/runtime identity until V2C.2E;
+   - preserve all vault ciphertext, IV, authentication tag, envelope metadata,
+     and address values byte-for-byte;
    - retain old `campaign_id` columns; do not rename in place.
 4. `20260913083000_v2c2_participation_campaigns.sql`
    - create `participation_campaigns` with product lifecycle, type literals,
@@ -1032,8 +1240,15 @@ local, ordered, additive where stated, and guarded by explicit backfill tests.
 6. `20260913085000_v2c2_financial_root_cutover.sql`
    - perform the Phase C root resync immediately before authority switch;
    - update all current funding, reservation, payout, reconciliation, closure,
-     refund, and vault-lock RPCs to read/write `reward_settlements` and additive
-     `settlement_id` fields only;
+     refund, vault-creation, vault-lock, and vault-load/signing RPCs to read/write
+     `reward_settlements` and settlement-rooted child fields only;
+   - final-check every vault's settlement mapping and Poll compatibility mapping;
+   - swap `reward_campaign_vaults` primary identity from `campaign_id` to
+     `settlement_id`, make settlement ID `NOT NULL`, make `campaign_id` nullable,
+     retain its Poll FK, and add the partial unique compatibility index;
+   - permit standalone Campaign vault rows with `campaign_id IS NULL` without a
+     `reward_campaigns` row;
+   - preserve the existing AAD byte contract and reject any envelope mutation;
    - preserve physical old IDs, hashes, Poll compatibility aliases, and route
      response fields;
    - atomically switch the financial authority under a write-maintenance gate;
@@ -1059,31 +1274,55 @@ value as authoritative yet.
 
 **Phase B - verify:** prove one-to-one root/adapter/binding coverage, canonical
 identity mapping, vault mapping, child settlement coverage, transaction hash
-uniqueness, and all financial accounting invariants.
+uniqueness, exactly one vault per settlement, unchanged vault envelope values,
+and all financial accounting invariants. Vault `campaign_id` remains the Poll
+compatibility/runtime identity in this phase.
 
 **Phase C - resync:** immediately before cutover, while financial writes are
 blocked by the deployment/migration gate, lock and resync every root snapshot
 from the current authoritative `reward_campaigns` row and validate again. Do not
 use a stale Phase A snapshot.
 
-**Phase D - switch:** in one reviewed cutover, change RPCs/services/readers to
-`reward_settlements` and additive settlement references as the only financial
-authority. A request must not observe mixed old/new mutation authority.
+**Phase D - switch:** in one reviewed cutover, change RPCs/services/readers and
+vault creation/loading/signing to `reward_settlements` and settlement references
+as the only financial authority. Swap the vault constraints so settlement ID is
+the primary identity and `campaign_id` is nullable Poll compatibility data. A
+request must not observe mixed old/new mutation authority.
 
 **Phase E - freeze:** retain old `reward_campaigns` financial columns only for
 historical/read compatibility where necessary. They are not written, refreshed,
 or treated as a second ledger. Existing Poll compatibility reads move to the
-root/binding.
+root/binding. The vault `campaign_id` remains readable for Poll compatibility but
+is never the vault identity after the cutover; standalone Campaign vaults have
+`campaign_id IS NULL`.
 
 ### 13.3 Backfill failure policy
 
 - Invalid or ambiguous wallet identity blocks backfill; it is never guessed.
 - Normalization collisions block backfill; they are never merged silently.
 - Owner, funder, Poll, vault, child-row, or hash mismatch blocks backfill.
+- Any vault ciphertext, IV, authentication tag, envelope metadata, or address
+  change blocks the migration.
+- A vault missing settlement coverage, with duplicate settlement coverage, or
+  with a mismatched Poll campaign/settlement binding blocks cutover.
 - Missing root/adapter/binding coverage blocks cutover.
 - Failed pre-cutover migration is rolled back transactionally.
 - After cutover, correction uses a forward migration, not destructive reset or
   rollback to dual authority.
+
+### 13.4 Local migration safety
+
+All schema and integration work is local-only. The implementation and its test
+harness must not run `supabase db reset`, `supabase db push`, `supabase link`,
+`--linked`, any hosted Supabase operation, migration repair, or fake migration
+registration. Existing local migration drift is evidence to report, not a
+reason to fabricate history or repair migration metadata.
+
+Migration tests must use the repository's existing local Supabase guard,
+`assertLocalSupabaseForTests()`, and apply/test the ordered migrations without a
+destructive reset. If the local service is unavailable, the DB gate is reported
+as skipped rather than redirected to a hosted database. Stop the local Supabase
+service after the DB gates complete.
 
 ## 14. API and Service Contract
 
@@ -1135,6 +1374,13 @@ execution remains the later generic financial release gate.
   funding/payout/refund loaders
   - use settlement ID/root authority after Phase D;
   - retain Poll compatibility aliases only at the outer adapter boundary.
+- `src/lib/rewards/vault-service.ts`
+  - replace campaign-keyed state/row/AAD lookup with settlement-keyed lookup;
+  - expose only safe settlement/vault public metadata;
+  - keep key material transient inside the signing callback.
+- `src/lib/rewards/vault-key.ts`
+  - preserve AES-256-GCM envelope fields and the exact existing AAD byte format;
+  - rename only the conceptual context identity to settlement ID.
 
 No Campaign claim adapter or eligibility implementation belongs in these modules
 for V2C.2.
@@ -1150,7 +1396,9 @@ for V2C.2.
 | Client economics forgery | Root derives reward amount, cap, fee, total, funder, vault relationship, and refund policy. |
 | Unauthorized Campaign ownership | Owner derives from verified session and is checked against Campaign/root owner on every mutation. |
 | Configuration mutation after publication | Product publication lock and `first_reservation_at` financial freeze are server/database authority. |
-| Vault key exposure | Existing encrypted vault table and `withCampaignVaultKey`; no root `vault_key_ref` or private key material. |
+| Vault key exposure | Settlement-rooted existing encrypted vault table and `withRewardSettlementVaultKey`; no root `vault_key_ref` or private key material. |
+| Vault AAD/envelope incompatibility | Preserve `votum:reward-vault:v1`, AES-256-GCM fields, UUID text bytes, and vault address bytes; decrypt every existing Poll vault after cutover before release. |
+| Vault identity confusion | Settlement primary key, one vault per settlement, Poll `campaign_id` partial unique compatibility FK, and exact binding consistency guard. |
 | Cross-settlement child access | Additive settlement FKs, 100 percent validation, root-scoped loaders, and mismatch rejection. |
 | Duplicate funding hash | Existing cross-ledger hash locks and unique indexes remain required after cutover. |
 | Duplicate payout send | Existing durable signed bytes/hash, broadcast marker, vault lease, unknown-outcome, and bounded retry rules remain required. |
@@ -1195,10 +1443,13 @@ initial binding store.
 - `reward_campaigns.poll_id` remains required, unique, and FK-enforced.
 - Every root has exactly one Poll source binding at the end of the backfill.
 - No financial service reads the snapshot as authority before cutover.
+- No vault primary key, vault RPC, vault service lookup, ciphertext, or
+  encryption metadata changes in this slice.
 - Public roles cannot read root/binding rows.
 
 **GREEN work:** create root snapshots and Poll bindings without changing
-financial authority, Poll routes, Poll response shapes, or NIM behavior.
+financial authority, Poll routes, Poll response shapes, vault authority, or NIM
+behavior.
 
 **Commands:**
 
@@ -1219,30 +1470,41 @@ npm run lint
 - Update generated `src/types/database.ts` from local schema.
 - Add `src/lib/rewards/settlement-child-compatibility.test.ts`.
 - Add `src/lib/rewards/settlement-child-compatibility.db.test.ts`.
+- Add `src/lib/rewards/vault-settlement-compatibility.db.test.ts`.
 - Extend existing funding, reservation, payout, refund, and vault DB tests.
 
 **Symbols:** `backfillSettlementReferences`,
-`validateSettlementChildCoverage`, and root-scoped child loaders.
+`validateSettlementChildCoverage`, root-scoped child loaders, and the existing
+campaign-keyed vault service/RPC as the still-active Poll compatibility boundary.
 
 **RED assertions:**
 
 - Nullable `settlement_id` references are additive and initially preserve old
   Poll `campaign_id` columns.
 - Funding, receipt, refund, and vault rows have 100 percent settlement coverage.
+- Every existing Poll vault has `settlement_id = campaign_id` and exactly one
+  vault maps to each settlement.
 - Every settlement child agrees with its Poll adapter/root binding.
 - Cross-settlement receipt, attempt, funding, refund, and vault lookup fails.
 - Existing IDs, hashes, Poll `poll_id`, and compatibility aliases remain stable.
+- Existing vault ciphertext, IV, authentication tag, envelope version,
+  algorithm, and address are unchanged after the backfill.
+- Existing Poll vaults still decrypt through `withCampaignVaultKey` while
+  `campaign_id` remains the primary/runtime lookup identity.
 - No child column is renamed or dropped in this slice.
 - No migration creates claim/secret/allowlist/event/community tables.
 
-**GREEN work:** add, backfill, index, validate, and then constrain new settlement
-references. Do not change the active financial authority.
+**GREEN work:** add, backfill, index, validate, and then constrain new
+non-vault settlement references. Add and validate the vault settlement reference
+while preserving the campaign-keyed runtime authority. Do not change the active
+financial or vault authority.
 
 **Commands:**
 
 ```text
 npm test -- src/lib/rewards/settlement-child-compatibility.test.ts
 npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/rewards/settlement-child-compatibility.db.test.ts
+npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/rewards/vault-settlement-compatibility.db.test.ts
 npx tsc --noEmit
 npm run lint
 ```
@@ -1297,6 +1559,8 @@ npm run lint
 - Add `src/lib/campaigns/configuration.ts`.
 - Add `src/lib/campaigns/configuration.test.ts`.
 - Add `src/lib/campaigns/configuration.db.test.ts`.
+- Add the planned creator route handlers under `src/app/api/campaigns/` and
+  route-level authorization tests.
 - Add configuration route tests for the planned routes only.
 - Reuse `src/lib/rewards/config.ts`, constants, and settlement-root stores.
 
@@ -1309,16 +1573,24 @@ npm run lint
 - Owner derives only from the verified session.
 - Draft configuration validates title, description, type, visibility, and window.
 - NIM amount input derives integer-Luna terms through existing reward config.
-- Principal, fee reserve, total, funding wallet, refund policy, root, and vault
-  are server-authoritative.
+- Principal, fee reserve, total, funding wallet, refund policy, root, settlement,
+  and vault relationship are server-authoritative.
+- Campaign creation never creates a `reward_campaigns` row and never accepts a
+  client-selected `campaign_id` for a vault.
 - Drafts may change; published configuration cannot change in place.
+- Funding readiness resolves a settlement-rooted vault relationship; it does not
+  treat a missing vault as permission to create a fake Poll reward row.
 - Funding readiness does not create a funding intent or move NIM.
 - Unsupported types remain non-publishable/non-claimable.
 - No claim, strategy, secret, allowlist, event, community, discovery, or UI path
   is added.
 
-**GREEN work:** add configuration-only server boundaries. Do not add creator
-financial management, closure/refund management, or participant behavior.
+**GREEN work:** add configuration-only server boundaries and server-derived
+settlement/economics inputs. Do not add creator financial management,
+closure/refund management, vault authority cutover, or participant behavior.
+The settlement-rooted vault creation/read/signing implementation is owned by
+V2C.2E; before that slice, readiness must not falsely advertise a Campaign vault
+as Poll-backed or claim that a Poll row exists.
 
 **Commands:**
 
@@ -1340,8 +1612,41 @@ npm run lint
 - Modify `src/lib/rewards/settlement.ts` and `settlement-root.ts`.
 - Modify reservation, funding, payout, reconciliation, closure, refund, and
   vault loaders to use settlement-rooted fields.
+- Modify `src/lib/rewards/vault-key.ts` only to rename the conceptual AAD
+  context from campaign ID to settlement ID while preserving the exact existing
+  AAD bytes and `VAULT_ENVELOPE_VERSION`.
+- Modify `src/lib/rewards/vault-service.ts` to implement the generic settlement
+  vault boundary and update all internal callers; preserve public Poll response
+  aliases at route adapters.
+- Update the actual campaign-rooted callers in
+  `src/lib/rewards/settlement.ts`, `reservation-service.ts`, `funding.ts`,
+  `funding-confirmation.ts`, `payout.ts`, `payout-reconciliation.ts`,
+  `refund.ts`, `refund-reconciliation.ts`, `poll-participation-adapter.ts`,
+  `poll-closure-adapter.ts`, and `vault-signing.ts`.
+- Update Poll compatibility readers/writers in
+  `src/app/api/polls/publish/route.ts`,
+  `src/app/api/polls/[pollId]/reward/config/route.ts`,
+  `src/app/api/polls/[pollId]/reward/funding/intents/route.ts`, and
+  `src/app/api/me/polls/route.ts` without changing public route shapes.
+- Update public reward loaders in `src/lib/data/public-polls.ts` and
+  `src/lib/data/explore-queries.ts` so `get_public_reward_campaign` reads the
+  Poll adapter/binding/root while returning the existing allowlisted shape.
 - Update Poll route/service tests without changing public Poll paths.
 - Add `src/lib/rewards/financial-authority-cutover.db.test.ts`.
+- Add/update vault cutover tests covering decrypt, address, signing, isolation,
+  and standalone settlement-only ownership.
+
+The migration must replace the current campaign-rooted functions and every
+direct child lookup in the current RPC set, including
+`begin_reward_funding_atomic`, `bind_reward_funding_transaction_atomic`,
+`confirm_reward_funding_atomic`, `claim_reward_receipt_atomic` for the existing
+Poll path, `begin_reward_payout_atomic`, `prepare_reward_payout_atomic`,
+`retry_reward_payout_atomic`, `confirm_reward_payout_atomic`,
+`release_reward_payout_vault_lock_atomic`, `begin_reward_refund_atomic`,
+`prepare_reward_refund_transaction_atomic`, and
+`confirm_reward_refund_atomic`. Existing RPC names may remain compatibility
+names only where their public callers require them; their authoritative reads
+and writes must use settlement IDs after the switch.
 
 **RED assertions:**
 
@@ -1350,6 +1655,19 @@ npm run lint
 - Root and child settlement accounting matches at cutover.
 - All financial RPCs/services use root fields as the only mutable authority after
   the switch.
+- The vault constraint swap makes `settlement_id` the `NOT NULL` primary identity,
+  makes `campaign_id` nullable with a partial unique Poll compatibility index,
+  and rejects a mismatched Poll campaign/settlement pair.
+- Every existing Poll vault has equal campaign and settlement UUIDs, unchanged
+  address/envelope values, and decrypts through the settlement-rooted service
+  using the original AAD bytes.
+- A standalone Campaign settlement can create/load/sign through a vault row with
+  `campaign_id IS NULL` and no `reward_campaigns` row.
+- Settlement A cannot load or sign with Settlement B's vault, and one settlement
+  cannot own two vault rows.
+- Existing `reward_campaigns.vault_wallet`/`vault_key_ref` fields are frozen
+  compatibility data and cannot be used as vault authority; funding intent
+  `vault_wallet` snapshots still match the settlement vault address.
 - Old `reward_campaigns` financial columns are not refreshed or independently
   mutated after the switch.
 - Poll binding still resolves the correct root, never a Poll ID as root ID.
@@ -1358,14 +1676,19 @@ npm run lint
 - Fee advancement, hash safety, finality, retry, vault lease, closure freeze,
   and refund proof boundaries remain intact.
 
-**GREEN work:** execute the guarded Phase C/D/E cutover and move Poll reads to
-root/binding. Do not create any Campaign participant flow.
+**GREEN work:** execute the guarded Phase C/D/E cutover, move Poll reads to
+root/binding, and switch vault creation/loading/signing to settlement authority.
+Preserve Poll ciphertext, AAD bytes, vault address, funding authorization,
+exact observation/finality, payout/refund signing, lease, retry, and accounting
+behavior. Do not create any Campaign participant flow or NIM transfer.
 
 **Commands:**
 
 ```text
 npm test -- src/lib/rewards/settlement.test.ts src/lib/rewards/reservation-service.test.ts src/lib/rewards/closure.test.ts src/lib/rewards/v2c1-compatibility.test.ts
+npm test -- src/lib/rewards/vault-key.test.ts src/lib/rewards/vault-service.test.ts
 npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/rewards/financial-authority-cutover.db.test.ts src/lib/rewards/reservation.db.test.ts src/lib/rewards/funding-confirmation.db.test.ts src/lib/rewards/payout.db.test.ts src/lib/rewards/refund-preparation.db.test.ts src/lib/rewards/refund-reconciliation.db.test.ts
+npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/rewards/vault-settlement-compatibility.db.test.ts
 npx tsc --noEmit
 npm run lint
 ```
@@ -1377,6 +1700,8 @@ npm run lint
 **Files:**
 
 - Add `src/lib/campaigns/v2c2-foundation.test.ts`.
+- Add/update `src/lib/rewards/vault-settlement-compatibility.db.test.ts` and
+  `src/lib/rewards/financial-authority-cutover.db.test.ts`.
 - Add/update only focused compatibility, schema, migration, and Poll route tests
   for demonstrated assertion gaps.
 
@@ -1392,6 +1717,16 @@ npm run lint
 - No old/new financial dual-write remains after cutover.
 - Poll history and response behavior remain compatible.
 - Root/backfill/canonical-wallet/child coverage is 100 percent.
+- Every Poll vault maps `settlement_id = campaign_id` before cutover and retains
+  unchanged ciphertext, IV, tag, envelope metadata, and address.
+- Every Poll vault decrypts after cutover with the original AAD bytes and remains
+  usable for payout/refund signing.
+- A standalone Campaign settlement owns exactly one vault with
+  `campaign_id IS NULL` and no `reward_campaigns` row.
+- A mismatched Poll campaign/settlement vault row, duplicate settlement vault,
+  or cross-settlement vault load fails closed.
+- Public/authenticated roles cannot read vault material.
+- No private key material enters Campaign product rows.
 
 **Commands:**
 
@@ -1403,6 +1738,7 @@ npm run build
 npx tsx src/lib/api/v2b2-schema-test.ts
 npx tsx src/lib/api/v2b2-config-test.ts
 npx tsx src/lib/api/v2b2-funding-test.ts
+npx tsx src/lib/api/v2b2-vault-test.ts
 npx tsx src/lib/api/v2b1-backward-test.ts
 npx tsx src/lib/api/publish-test.ts
 ```
@@ -1445,13 +1781,34 @@ V2C.2 must retain and rerun the V2C.1 baseline:
 ### 17.3 Additive child migration acceptance
 
 - New settlement references are nullable only during the staged backfill.
-- 100 percent of funding, receipts, refunds, and vaults have validated root IDs
-  before `NOT NULL`/FK enforcement.
+- 100 percent of funding, receipts, and refunds have validated root IDs before
+  their final `NOT NULL`/FK enforcement; vault `settlement_id` is staged with
+  its FK before backfill and reaches final `NOT NULL`/primary-key enforcement
+  only during V2C.2E.
 - Old `campaign_id` columns remain stable during the additive phase.
 - No child UUID, hash, Poll compatibility field, or proof data is rewritten.
 - `reward_payout_attempts` remains reached through receipts.
 - Cross-settlement child access fails closed.
 - Child hash reuse protections remain cross-ledger safe.
+
+Vault-specific acceptance is mandatory:
+
+1. Every existing Poll vault gets `settlement_id = campaign_id`.
+2. No existing vault ciphertext changes during backfill.
+3. Every existing Poll vault decrypts after root cutover.
+4. Every existing Poll vault address remains unchanged.
+5. Poll payout and refund signing continue to use the same vault address/key.
+6. A standalone Campaign settlement can own a vault with `campaign_id IS NULL`.
+7. A vault cannot reference mismatched Poll campaign and settlement IDs.
+8. One settlement cannot have two vault rows.
+9. A vault for settlement A cannot be loaded through settlement B.
+10. Public and authenticated roles cannot read vault material.
+11. Generic vault service operation does not require a Poll row for a standalone
+    Campaign settlement.
+12. No private key material enters Campaign product rows.
+13. No participant claim or payout is enabled by the vault transition.
+14. Legacy `reward_campaigns.vault_wallet`/`vault_key_ref` values are never used
+    as post-cutover vault authority.
 
 ### 17.4 Authority cutover acceptance
 
@@ -1460,6 +1817,11 @@ V2C.2 must retain and rerun the V2C.1 baseline:
 - Phase C resyncs root from current `reward_campaigns` under the cutover gate.
 - Phase D switches RPC/service writes to root only.
 - Phase E freezes old financial columns; no continuous dual-write remains.
+- Phase E switches vault creation, load, decrypt, signing, and reconciliation to
+  settlement ID; `campaign_id` is nullable Poll compatibility only.
+- Existing Poll envelopes remain decryptable with the original AAD bytes and no
+  re-encryption.
+- Standalone Campaign vault rows require no `reward_campaigns` parent.
 - Poll compatibility reads resolve through adapter/binding/root.
 - No request can observe mixed mutable financial authority.
 
@@ -1493,6 +1855,8 @@ V2C.2 must retain and rerun the V2C.1 baseline:
 - Generic settlement root is defined and backfilled for Poll reward rows.
 - Poll/source bindings are explicit and validated.
 - Financial child references are migrated additively before cutover.
+- Isolated vault custody is settlement-rooted; existing Poll vault envelopes are
+  preserved and standalone Campaign settlements can own vaults without Poll rows.
 - Root becomes the sole mutable financial authority through a guarded switch.
 - Old Poll financial columns are frozen/deprecated compatibility fields only.
 - Creator draft/configuration and NIM funding-readiness boundaries are defined,
@@ -1561,7 +1925,8 @@ product/root foundation for that later flow.
 ### Final design verdict
 
 V2C.2 is limited to `participation_campaigns`, `reward_settlements`, explicit
-Poll/Campaign source bindings, additive child settlement references, creator
-draft/configuration, NIM economics/readiness, Poll compatibility, and a guarded
-financial-root cutover. Claim identity, eligibility strategies, strategy storage,
-participant flows, creator financial management, and NIM movement remain deferred.
+Poll/Campaign source bindings, additive child settlement references including the
+settlement-rooted vault transition, creator draft/configuration, NIM
+economics/readiness, Poll compatibility, and a guarded financial-root cutover.
+Claim identity, eligibility strategies, strategy storage, participant flows,
+creator financial management, and NIM movement remain deferred.
