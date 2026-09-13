@@ -1,4 +1,4 @@
-﻿export type Json =
+export type Json =
   | string
   | number
   | boolean
@@ -7,13 +7,202 @@
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.15"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
+      nim_contributions: {
+        Row: {
+          amount_luna: number
+          block_number: number | null
+          confirmed_at: string
+          created_at: string
+          id: string
+          intent_id: string
+          option_id: string
+          poll_id: string
+          recipient_wallet: string
+          supporter_wallet: string
+          transaction_hash: string
+          transaction_timestamp: string | null
+        }
+        Insert: {
+          amount_luna: number
+          block_number?: number | null
+          confirmed_at?: string
+          created_at?: string
+          id?: string
+          intent_id: string
+          option_id: string
+          poll_id: string
+          recipient_wallet: string
+          supporter_wallet: string
+          transaction_hash: string
+          transaction_timestamp?: string | null
+        }
+        Update: {
+          amount_luna?: number
+          block_number?: number | null
+          confirmed_at?: string
+          created_at?: string
+          id?: string
+          intent_id?: string
+          option_id?: string
+          poll_id?: string
+          recipient_wallet?: string
+          supporter_wallet?: string
+          transaction_hash?: string
+          transaction_timestamp?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nim_contributions_intent_id_fkey"
+            columns: ["intent_id"]
+            isOneToOne: true
+            referencedRelation: "nim_support_intents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "nim_contributions_option_id_fkey"
+            columns: ["option_id"]
+            isOneToOne: false
+            referencedRelation: "poll_options"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "nim_contributions_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      nim_support_intents: {
+        Row: {
+          amount_luna: number
+          confirmation_deadline: string | null
+          confirmed_contribution_id: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          initiator_wallet: string
+          memo: string
+          option_id: string
+          poll_id: string
+          recipient_wallet: string
+          reference: string
+          status: string
+          submitted_at: string | null
+          submitted_transaction_hash: string | null
+          supporter_wallet: string
+          updated_at: string
+        }
+        Insert: {
+          amount_luna: number
+          confirmation_deadline?: string | null
+          confirmed_contribution_id?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          initiator_wallet: string
+          memo: string
+          option_id: string
+          poll_id: string
+          recipient_wallet: string
+          reference: string
+          status?: string
+          submitted_at?: string | null
+          submitted_transaction_hash?: string | null
+          supporter_wallet: string
+          updated_at?: string
+        }
+        Update: {
+          amount_luna?: number
+          confirmation_deadline?: string | null
+          confirmed_contribution_id?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          initiator_wallet?: string
+          memo?: string
+          option_id?: string
+          poll_id?: string
+          recipient_wallet?: string
+          reference?: string
+          status?: string
+          submitted_at?: string | null
+          submitted_transaction_hash?: string | null
+          supporter_wallet?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nim_support_intents_option_id_fkey"
+            columns: ["option_id"]
+            isOneToOne: false
+            referencedRelation: "poll_options"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "nim_support_intents_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      participant_profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          handle: string | null
+          updated_at: string
+          verified_at: string
+          wallet_address: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          handle?: string | null
+          updated_at?: string
+          verified_at?: string
+          wallet_address: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          handle?: string | null
+          updated_at?: string
+          verified_at?: string
+          wallet_address?: string
+        }
+        Relationships: []
+      }
       poll_options: {
         Row: {
           created_at: string
@@ -112,158 +301,118 @@ export type Database = {
           },
         ]
       }
-      participant_profiles: {
-        Row: {
-          wallet_address: string
-          display_name: string | null
-          handle: string | null
-          verified_at: string
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          wallet_address: string
-          display_name?: string | null
-          handle?: string | null
-          verified_at?: string
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          wallet_address?: string
-          display_name?: string | null
-          handle?: string | null
-          verified_at?: string
-          created_at?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
       polls: {
         Row: {
-          category: "sports" | "entertainment" | "brands_products" | "communities" | "other"
+          category: string
           created_at: string
           creator_wallet: string
           description: string | null
           destination_purpose: string | null
           destination_wallet: string | null
-          economic_model: "legacy_support" | "reward_first"
+          economic_model: string
           ends_at: string
           fairness_mode: string
-          format: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
+          format: string
           id: string
           is_public: boolean
           min_nim_luna: number | null
           mode: string | null
           published_at: string | null
           question: string
-          reward_mode: "free" | "rewarded" | null
+          reward_mode: string | null
           starts_at: string | null
           status: string
           updated_at: string
         }
         Insert: {
-          category?: "sports" | "entertainment" | "brands_products" | "communities" | "other"
+          category?: string
           created_at?: string
           creator_wallet: string
           description?: string | null
           destination_purpose?: string | null
           destination_wallet?: string | null
-          economic_model?: "legacy_support" | "reward_first"
+          economic_model?: string
           ends_at: string
           fairness_mode?: string
-          format?: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
+          format?: string
           id?: string
           is_public?: boolean
           min_nim_luna?: number | null
           mode?: string | null
           published_at?: string | null
           question: string
-          reward_mode?: "free" | "rewarded" | null
+          reward_mode?: string | null
           starts_at?: string | null
           status?: string
           updated_at?: string
         }
         Update: {
-          category?: "sports" | "entertainment" | "brands_products" | "communities" | "other"
+          category?: string
           created_at?: string
           creator_wallet?: string
           description?: string | null
           destination_purpose?: string | null
           destination_wallet?: string | null
-          economic_model?: "legacy_support" | "reward_first"
+          economic_model?: string
           ends_at?: string
           fairness_mode?: string
-          format?: "decision" | "prediction" | "fan_vote" | "ranking" | "nomination" | "audience_choice"
+          format?: string
           id?: string
           is_public?: boolean
           min_nim_luna?: number | null
           mode?: string | null
           published_at?: string | null
           question?: string
-          reward_mode?: "free" | "rewarded" | null
+          reward_mode?: string | null
           starts_at?: string | null
           status?: string
           updated_at?: string
         }
         Relationships: []
       }
-      wallet_challenges: {
+      reward_campaign_vaults: {
         Row: {
+          authentication_tag: string
+          campaign_id: string
           created_at: string
-          expires_at: string
-          id: string
-          message: string
-          origin: string
-          used_at: string | null
-          wallet_address: string
+          encrypted_private_key_ciphertext: string
+          encryption_algorithm: string
+          encryption_iv: string
+          envelope_version: string
+          updated_at: string
+          vault_address_hex: string
         }
         Insert: {
+          authentication_tag: string
+          campaign_id: string
           created_at?: string
-          expires_at: string
-          id?: string
-          message: string
-          origin: string
-          used_at?: string | null
-          wallet_address: string
+          encrypted_private_key_ciphertext: string
+          encryption_algorithm: string
+          encryption_iv: string
+          envelope_version: string
+          updated_at?: string
+          vault_address_hex: string
         }
         Update: {
+          authentication_tag?: string
+          campaign_id?: string
           created_at?: string
-          expires_at?: string
-          id?: string
-          message?: string
-          origin?: string
-          used_at?: string | null
-          wallet_address?: string
+          encrypted_private_key_ciphertext?: string
+          encryption_algorithm?: string
+          encryption_iv?: string
+          envelope_version?: string
+          updated_at?: string
+          vault_address_hex?: string
         }
-        Relationships: []
-      }
-      wallet_sessions: {
-        Row: {
-          created_at: string
-          expires_at: string
-          last_seen_at: string | null
-          revoked_at: string | null
-          token_hash: string
-          wallet_address: string
-        }
-        Insert: {
-          created_at?: string
-          expires_at: string
-          last_seen_at?: string | null
-          revoked_at?: string | null
-          token_hash: string
-          wallet_address: string
-        }
-        Update: {
-          created_at?: string
-          expires_at?: string
-          last_seen_at?: string | null
-          revoked_at?: string | null
-          token_hash?: string
-          wallet_address?: string
-        }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "reward_campaign_vaults_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: true
+            referencedRelation: "reward_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reward_campaigns: {
         Row: {
@@ -274,23 +423,24 @@ export type Database = {
           fee_reserve_luna: number
           fee_spent_luna: number
           first_reservation_at: string | null
-          funding_mode: "creator" | "community"
-          funding_wallet: string
           funded_amount_luna: number
           funded_at: string | null
+          funding_mode: string
+          funding_wallet: string
           id: string
           max_rewarded_participants: number
           paid_amount_luna: number
-          poll_id: string
           payout_lock_attempt_id: string | null
           payout_lock_expires_at: string | null
           payout_lock_token: string | null
+          poll_id: string
           refundable_amount_luna: number
           refundable_excess_luna: number
           refunded_at: string | null
           reward_per_participant_luna: number
           reward_principal_luna: number
           rewarded_participant_count: number
+          settlement_id: string | null
           status: string
           total_budget_luna: number
           updated_at: string
@@ -305,23 +455,24 @@ export type Database = {
           fee_reserve_luna?: number
           fee_spent_luna?: number
           first_reservation_at?: string | null
-          funding_mode?: "creator" | "community"
-          funding_wallet: string
           funded_amount_luna?: number
           funded_at?: string | null
+          funding_mode?: string
+          funding_wallet: string
           id?: string
           max_rewarded_participants: number
           paid_amount_luna?: number
-          poll_id: string
           payout_lock_attempt_id?: string | null
           payout_lock_expires_at?: string | null
           payout_lock_token?: string | null
+          poll_id: string
           refundable_amount_luna?: number
           refundable_excess_luna?: number
           refunded_at?: string | null
           reward_per_participant_luna: number
           reward_principal_luna: number
           rewarded_participant_count?: number
+          settlement_id?: string | null
           status?: string
           total_budget_luna: number
           updated_at?: string
@@ -336,23 +487,24 @@ export type Database = {
           fee_reserve_luna?: number
           fee_spent_luna?: number
           first_reservation_at?: string | null
-          funding_mode?: "creator" | "community"
-          funding_wallet?: string
           funded_amount_luna?: number
           funded_at?: string | null
+          funding_mode?: string
+          funding_wallet?: string
           id?: string
           max_rewarded_participants?: number
           paid_amount_luna?: number
-          poll_id?: string
           payout_lock_attempt_id?: string | null
           payout_lock_expires_at?: string | null
           payout_lock_token?: string | null
+          poll_id?: string
           refundable_amount_luna?: number
           refundable_excess_luna?: number
           refunded_at?: string | null
           reward_per_participant_luna?: number
           reward_principal_luna?: number
           rewarded_participant_count?: number
+          settlement_id?: string | null
           status?: string
           total_budget_luna?: number
           updated_at?: string
@@ -367,6 +519,13 @@ export type Database = {
             referencedRelation: "polls"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "reward_campaigns_settlement_id_fkey"
+            columns: ["settlement_id"]
+            isOneToOne: false
+            referencedRelation: "reward_settlements"
+            referencedColumns: ["id"]
+          },
         ]
       }
       reward_funding_transactions: {
@@ -374,19 +533,19 @@ export type Database = {
           amount_luna: number
           block_number: number | null
           campaign_id: string
+          confirmation_deadline: string | null
           confirmed_at: string | null
           confirmed_transaction_hash: string | null
-          confirmation_deadline: string | null
           created_at: string
           creator_wallet: string
-          id: string
           fee_reserve_luna: number | null
           funder_wallet: string
+          id: string
           reference: string
           reward_principal_luna: number | null
           status: string
-          submitted_transaction_hash: string | null
           submitted_at: string | null
+          submitted_transaction_hash: string | null
           transaction_timestamp: string | null
           updated_at: string
           vault_wallet: string | null
@@ -395,9 +554,9 @@ export type Database = {
           amount_luna: number
           block_number?: number | null
           campaign_id: string
+          confirmation_deadline?: string | null
           confirmed_at?: string | null
           confirmed_transaction_hash?: string | null
-          confirmation_deadline?: string | null
           created_at?: string
           creator_wallet: string
           fee_reserve_luna?: number | null
@@ -406,8 +565,8 @@ export type Database = {
           reference: string
           reward_principal_luna?: number | null
           status?: string
-          submitted_transaction_hash?: string | null
           submitted_at?: string | null
+          submitted_transaction_hash?: string | null
           transaction_timestamp?: string | null
           updated_at?: string
           vault_wallet?: string | null
@@ -416,9 +575,9 @@ export type Database = {
           amount_luna?: number
           block_number?: number | null
           campaign_id?: string
+          confirmation_deadline?: string | null
           confirmed_at?: string | null
           confirmed_transaction_hash?: string | null
-          confirmation_deadline?: string | null
           created_at?: string
           creator_wallet?: string
           fee_reserve_luna?: number | null
@@ -427,8 +586,8 @@ export type Database = {
           reference?: string
           reward_principal_luna?: number | null
           status?: string
-          submitted_transaction_hash?: string | null
           submitted_at?: string | null
+          submitted_transaction_hash?: string | null
           transaction_timestamp?: string | null
           updated_at?: string
           vault_wallet?: string | null
@@ -445,8 +604,8 @@ export type Database = {
       }
       reward_payout_attempts: {
         Row: {
-          attempt_number: number
           amount_luna: number | null
+          attempt_number: number
           broadcast_at: string | null
           broadcast_started_at: string | null
           confirmed_at: string | null
@@ -460,22 +619,22 @@ export type Database = {
           confirmed_transaction_timestamp: string | null
           created_at: string
           error_code: string | null
-          id: string
-          receipt_id: string
           fee_luna: number | null
+          id: string
           network_id: number | null
           prepared_at: string | null
           prepared_transaction_hex: string | null
+          receipt_id: string
           recipient_address_hex: string | null
           sender_address_hex: string | null
           status: string
           transaction_hash: string | null
-          validity_start_height: number | null
           updated_at: string
+          validity_start_height: number | null
         }
         Insert: {
-          attempt_number: number
           amount_luna?: number | null
+          attempt_number: number
           broadcast_at?: string | null
           broadcast_started_at?: string | null
           confirmed_at?: string | null
@@ -489,22 +648,22 @@ export type Database = {
           confirmed_transaction_timestamp?: string | null
           created_at?: string
           error_code?: string | null
-          id?: string
-          receipt_id: string
           fee_luna?: number | null
+          id?: string
           network_id?: number | null
           prepared_at?: string | null
           prepared_transaction_hex?: string | null
+          receipt_id: string
           recipient_address_hex?: string | null
           sender_address_hex?: string | null
           status?: string
           transaction_hash?: string | null
-          validity_start_height?: number | null
           updated_at?: string
+          validity_start_height?: number | null
         }
         Update: {
-          attempt_number?: number
           amount_luna?: number | null
+          attempt_number?: number
           broadcast_at?: string | null
           broadcast_started_at?: string | null
           confirmed_at?: string | null
@@ -518,18 +677,18 @@ export type Database = {
           confirmed_transaction_timestamp?: string | null
           created_at?: string
           error_code?: string | null
-          id?: string
-          receipt_id?: string
           fee_luna?: number | null
+          id?: string
           network_id?: number | null
           prepared_at?: string | null
           prepared_transaction_hex?: string | null
+          receipt_id?: string
           recipient_address_hex?: string | null
           sender_address_hex?: string | null
           status?: string
           transaction_hash?: string | null
-          validity_start_height?: number | null
           updated_at?: string
+          validity_start_height?: number | null
         }
         Relationships: [
           {
@@ -599,8 +758,8 @@ export type Database = {
           broadcast_at: string | null
           broadcast_started_at: string | null
           campaign_id: string
-          confirmed_batch_number: number | null
           confirmed_at: string | null
+          confirmed_batch_number: number | null
           confirmed_canonical_block_hash: string | null
           confirmed_finalizing_macro_block_hash: string | null
           confirmed_finalizing_macro_block_height: number | null
@@ -620,8 +779,8 @@ export type Database = {
           status: string
           transaction_hash: string | null
           transaction_timestamp: string | null
-          validity_start_height: number | null
           updated_at: string
+          validity_start_height: number | null
         }
         Insert: {
           amount_luna: number
@@ -629,8 +788,8 @@ export type Database = {
           broadcast_at?: string | null
           broadcast_started_at?: string | null
           campaign_id: string
-          confirmed_batch_number?: number | null
           confirmed_at?: string | null
+          confirmed_batch_number?: number | null
           confirmed_canonical_block_hash?: string | null
           confirmed_finalizing_macro_block_hash?: string | null
           confirmed_finalizing_macro_block_height?: number | null
@@ -650,8 +809,8 @@ export type Database = {
           status?: string
           transaction_hash?: string | null
           transaction_timestamp?: string | null
-          validity_start_height?: number | null
           updated_at?: string
+          validity_start_height?: number | null
         }
         Update: {
           amount_luna?: number
@@ -659,8 +818,8 @@ export type Database = {
           broadcast_at?: string | null
           broadcast_started_at?: string | null
           campaign_id?: string
-          confirmed_batch_number?: number | null
           confirmed_at?: string | null
+          confirmed_batch_number?: number | null
           confirmed_canonical_block_hash?: string | null
           confirmed_finalizing_macro_block_hash?: string | null
           confirmed_finalizing_macro_block_height?: number | null
@@ -680,8 +839,8 @@ export type Database = {
           status?: string
           transaction_hash?: string | null
           transaction_timestamp?: string | null
-          validity_start_height?: number | null
           updated_at?: string
+          validity_start_height?: number | null
         }
         Relationships: [
           {
@@ -693,233 +852,194 @@ export type Database = {
           },
         ]
       }
-      reward_campaign_vaults: {
+      reward_settlements: {
         Row: {
-          authentication_tag: string
-          campaign_id: string
+          asset: string
+          closed_at: string | null
           created_at: string
-          encrypted_private_key_ciphertext: string
-          encryption_algorithm: string
-          encryption_iv: string
-          envelope_version: string
+          fee_reserve_luna: number
+          fee_spent_luna: number
+          first_reservation_at: string | null
+          funded_amount_luna: number
+          funded_at: string | null
+          funding_mode: string
+          funding_wallet: string
+          id: string
+          max_rewarded_participants: number
+          owner_wallet: string
+          paid_amount_luna: number
+          payout_lock_attempt_id: string | null
+          payout_lock_expires_at: string | null
+          payout_lock_token: string | null
+          refund_recipient_wallet: string
+          refundable_amount_luna: number
+          refundable_excess_luna: number
+          refunded_at: string | null
+          reward_per_participant_luna: number
+          reward_principal_luna: number
+          rewarded_participant_count: number
+          status: string
+          total_budget_luna: number
           updated_at: string
-          vault_address_hex: string
         }
         Insert: {
-          authentication_tag: string
-          campaign_id: string
+          asset?: string
+          closed_at?: string | null
           created_at?: string
-          encrypted_private_key_ciphertext: string
-          encryption_algorithm: string
-          encryption_iv: string
-          envelope_version: string
+          fee_reserve_luna?: number
+          fee_spent_luna?: number
+          first_reservation_at?: string | null
+          funded_amount_luna?: number
+          funded_at?: string | null
+          funding_mode?: string
+          funding_wallet: string
+          id?: string
+          max_rewarded_participants: number
+          owner_wallet: string
+          paid_amount_luna?: number
+          payout_lock_attempt_id?: string | null
+          payout_lock_expires_at?: string | null
+          payout_lock_token?: string | null
+          refund_recipient_wallet: string
+          refundable_amount_luna?: number
+          refundable_excess_luna?: number
+          refunded_at?: string | null
+          reward_per_participant_luna: number
+          reward_principal_luna: number
+          rewarded_participant_count?: number
+          status?: string
+          total_budget_luna: number
           updated_at?: string
-          vault_address_hex: string
         }
         Update: {
-          authentication_tag?: string
-          campaign_id?: string
+          asset?: string
+          closed_at?: string | null
           created_at?: string
-          encrypted_private_key_ciphertext?: string
-          encryption_algorithm?: string
-          encryption_iv?: string
-          envelope_version?: string
+          fee_reserve_luna?: number
+          fee_spent_luna?: number
+          first_reservation_at?: string | null
+          funded_amount_luna?: number
+          funded_at?: string | null
+          funding_mode?: string
+          funding_wallet?: string
+          id?: string
+          max_rewarded_participants?: number
+          owner_wallet?: string
+          paid_amount_luna?: number
+          payout_lock_attempt_id?: string | null
+          payout_lock_expires_at?: string | null
+          payout_lock_token?: string | null
+          refund_recipient_wallet?: string
+          refundable_amount_luna?: number
+          refundable_excess_luna?: number
+          refunded_at?: string | null
+          reward_per_participant_luna?: number
+          reward_principal_luna?: number
+          rewarded_participant_count?: number
+          status?: string
+          total_budget_luna?: number
           updated_at?: string
-          vault_address_hex?: string
+        }
+        Relationships: []
+      }
+      settlement_source_bindings: {
+        Row: {
+          created_at: string
+          reward_campaign_id: string
+          settlement_id: string
+          source_type: string
+        }
+        Insert: {
+          created_at?: string
+          reward_campaign_id: string
+          settlement_id: string
+          source_type: string
+        }
+        Update: {
+          created_at?: string
+          reward_campaign_id?: string
+          settlement_id?: string
+          source_type?: string
         }
         Relationships: [
           {
-            foreignKeyName: "reward_campaign_vaults_campaign_id_fkey"
-            columns: ["campaign_id"]
+            foreignKeyName: "settlement_source_bindings_reward_campaign_id_fkey"
+            columns: ["reward_campaign_id"]
             isOneToOne: true
             referencedRelation: "reward_campaigns"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "settlement_source_bindings_settlement_id_fkey"
+            columns: ["settlement_id"]
+            isOneToOne: true
+            referencedRelation: "reward_settlements"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      wallet_challenges: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          message: string
+          origin: string
+          used_at: string | null
+          wallet_address: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          message: string
+          origin: string
+          used_at?: string | null
+          wallet_address: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          message?: string
+          origin?: string
+          used_at?: string | null
+          wallet_address?: string
+        }
+        Relationships: []
+      }
+      wallet_sessions: {
+        Row: {
+          created_at: string
+          expires_at: string
+          last_seen_at: string | null
+          revoked_at: string | null
+          token_hash: string
+          wallet_address: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          last_seen_at?: string | null
+          revoked_at?: string | null
+          token_hash: string
+          wallet_address: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          last_seen_at?: string | null
+          revoked_at?: string | null
+          token_hash?: string
+          wallet_address?: string
+        }
+        Relationships: []
       }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      cast_poll_vote_atomic: {
-        Args: Record<string, unknown>
-        Returns: Json
-      }
-      get_public_poll_results: {
-        Args: Record<string, unknown>
-        Returns: Json
-      }
-      /** Atomic poll publication — returns { id, status, result_kind } */
-      publish_poll_atomic: {
-        Args: Record<string, unknown>
-        Returns: Json
-      }
-      /** Public participant profile + derived stats + recent activity */
-      get_participant_public_profile: {
-        Args: { _wallet: string }
-        Returns: Json
-      }
-      /** Public participant profile resolved by canonical handle */
-      get_participant_public_profile_by_handle: {
-        Args: { _handle: string }
-        Returns: Json
-      }
-      /** Public reward-campaign surface (D7 allowlist) */
-      get_public_reward_campaign: {
-        Args: { _poll_id: string }
-        Returns: Json
-      }
-      /** Atomic campaign-vault creation (server-only) */
-      ensure_reward_campaign_vault_atomic: {
-        Args: Record<string, unknown>
-        Returns: Json
-      }
-      /** Atomically create/reuse one active campaign funding intent. */
-      begin_reward_funding_atomic: {
-        Args: Record<string, unknown>
-        Returns: Json
-      }
-      /** Atomically bind a creator-submitted transaction hash to an intent. */
-      bind_reward_funding_transaction_atomic: {
-        Args: Record<string, unknown>
-        Returns: Json
-      }
-      /** Atomically confirm server-observed finalized reward funding. */
-      confirm_reward_funding_atomic: {
-        Args: {
-          _block_number?: number | null
-          _campaign_id: string
-          _intent_id: string
-          _observed_amount_luna: number
-          _transaction_hash: string
-          _transaction_timestamp?: string | null
-        }
-        Returns: Json
-      }
-      /** Atomically prepare and freeze one creator refund intent. */
-      begin_reward_refund_atomic: {
-        Args: {
-          _campaign_id: string
-          _session_token_hash: string
-        }
-        Returns: Json
-      }
-      /** Atomically reserve one reward for a committed poll participation. */
-      claim_reward_receipt_atomic: {
-        Args: {
-          _campaign_id: string
-          _participation_id: string
-        }
-        Returns: Json
-      }
-      /** Atomically claim or replay one reserved reward payout attempt. */
-      begin_reward_payout_atomic: {
-        Args: {
-          _campaign_id: string
-          _receipt_id: string
-        }
-        Returns: Json
-      }
-      /** Acquire the shared campaign-vault lease for a refund operation. */
-      acquire_reward_refund_vault_lock_atomic: {
-        Args: {
-          _campaign_id: string
-          _lease_seconds?: number
-          _lock_token: string
-          _refund_id: string
-        }
-        Returns: Json
-      }
-      /** Persist the exact signed refund transaction before broadcast. */
-      prepare_reward_refund_transaction_atomic: {
-        Args: {
-          _amount_luna: number
-          _fee_luna: number
-          _network_id: number
-          _prepared_transaction_hash: string
-          _prepared_transaction_hex: string
-          _recipient_address_hex: string
-          _refund_id: string
-          _sender_address_hex: string
-          _validity_start_height: number
-        }
-        Returns: Json
-      }
-      /** Mark the irreversible refund network call as started. */
-      mark_reward_refund_broadcast_starting_atomic: {
-        Args: { _refund_id: string }
-        Returns: Json
-      }
-      /** Persist the normalized refund broadcast callback hash. */
-      mark_reward_refund_broadcast_atomic: {
-        Args: {
-          _refund_id: string
-          _transaction_hash: string
-        }
-        Returns: Json
-      }
-      /** Classify a definite pre-broadcast refund failure as retryable. */
-      record_reward_refund_failure_atomic: {
-        Args: {
-          _error_code: string
-          _refund_id: string
-        }
-        Returns: Json
-      }
-      /** Record an unknown refund broadcast outcome while retaining pending. */
-      record_reward_refund_unknown_atomic: {
-        Args: {
-          _error_code: string
-          _refund_id: string
-        }
-        Returns: Json
-      }
-      /** Persist the exact signed payout transaction before broadcast. */
-      prepare_reward_payout_atomic: {
-        Args: {
-          _amount_luna: number
-          _attempt_id: string
-          _fee_luna: number
-          _network_id: number
-          _prepared_transaction_hex: string
-          _recipient_address_hex: string
-          _sender_address_hex: string
-          _transaction_hash: string
-          _validity_start_height: number
-        }
-        Returns: Json
-      }
-      /** Mark the irreversible network call as started. */
-      mark_reward_payout_broadcast_starting: {
-        Args: { _attempt_id: string }
-        Returns: Json
-      }
-      /** Persist the normalized broadcast callback without marking paid. */
-      mark_reward_payout_broadcast_atomic: {
-        Args: {
-          _attempt_id: string
-          _transaction_hash: string
-        }
-        Returns: Json
-      }
-      /** Classify a definite pre-broadcast failure as retryable. */
-      record_reward_payout_failure_atomic: {
-        Args: {
-          _attempt_id: string
-          _error_code: string
-        }
-        Returns: Json
-      }
-      /** Record an unknown broadcast outcome while retaining pending state. */
-      record_reward_payout_unknown_atomic: {
-        Args: {
-          _attempt_id: string
-          _error_code: string
-        }
-        Returns: Json
-      }
-      /** Acquire the campaign-scoped lease held across signing/broadcast. */
       acquire_reward_payout_vault_lock_atomic: {
         Args: {
           _attempt_id: string
@@ -929,15 +1049,78 @@ export type Database = {
         }
         Returns: Json
       }
-      /** Release the campaign-scoped payout lease. */
-      release_reward_payout_vault_lock_atomic: {
+      acquire_reward_refund_vault_lock_atomic: {
         Args: {
           _campaign_id: string
+          _lease_seconds?: number
           _lock_token: string
+          _refund_id: string
         }
         Returns: Json
       }
-      /** Atomically settle a server-observed canonical/final payout. */
+      begin_reward_funding_atomic: {
+        Args: {
+          _campaign_id: string
+          _confirmation_horizon_minutes?: number
+          _funder_wallet: string
+        }
+        Returns: Json
+      }
+      begin_reward_payout_atomic: {
+        Args: { _campaign_id: string; _receipt_id: string }
+        Returns: Json
+      }
+      begin_reward_refund_atomic: {
+        Args: { _campaign_id: string; _session_token_hash: string }
+        Returns: Json
+      }
+      bind_nim_support_transaction_atomic: {
+        Args: {
+          _confirmation_horizon_hours?: number
+          _intent_id: string
+          _supporter_wallet: string
+          _transaction_hash: string
+        }
+        Returns: Json
+      }
+      bind_reward_funding_transaction_atomic: {
+        Args: {
+          _campaign_id: string
+          _funder_wallet: string
+          _intent_id: string
+          _transaction_hash: string
+        }
+        Returns: Json
+      }
+      cast_poll_vote_atomic: {
+        Args: { _option_id: string; _poll_id: string; _voter_wallet: string }
+        Returns: Json
+      }
+      claim_reward_receipt_atomic: {
+        Args: { _campaign_id: string; _participation_id: string }
+        Returns: Json
+      }
+      confirm_nim_contribution_atomic: {
+        Args: {
+          _block_number: number
+          _intent_id: string
+          _transaction_hash: string
+          _transaction_ts: string
+          _tx_sender?: string
+        }
+        Returns: Json
+      }
+      confirm_reward_funding_atomic: {
+        Args: {
+          _block_number?: number
+          _campaign_id: string
+          _intent_id: string
+          _observed_amount_luna: number
+          _transaction_hash: string
+          _transaction_timestamp?: string
+        }
+        Returns: Json
+      }
       confirm_reward_payout_atomic: {
         Args: {
           _attempt_id: string
@@ -953,13 +1136,12 @@ export type Database = {
           _observed_recipient: string
           _observed_sender: string
           _receipt_id: string
-          _transaction_block_hash: string | null
+          _transaction_block_hash: string
           _transaction_hash: string
-          _transaction_timestamp: string | null
+          _transaction_timestamp: string
         }
         Returns: Json
       }
-      /** Atomically settle a server-observed canonical/final refund. */
       confirm_reward_refund_atomic: {
         Args: {
           _batch_number: number
@@ -974,18 +1156,126 @@ export type Database = {
           _observed_recipient: string
           _observed_sender: string
           _refund_id: string
-          _transaction_block_hash: string | null
+          _transaction_block_hash: string
           _transaction_hash: string
-          _transaction_timestamp: string | null
+          _transaction_timestamp: string
         }
         Returns: Json
       }
-      /** Create a new payout attempt only after a hashless pre-broadcast failure. */
-      retry_reward_payout_atomic: {
+      ensure_reward_campaign_vault_atomic: {
         Args: {
+          _auth_tag: string
           _campaign_id: string
-          _receipt_id: string
+          _ciphertext: string
+          _encryption_algorithm: string
+          _envelope_version: string
+          _iv: string
+          _vault_address_hex: string
         }
+        Returns: Json
+      }
+      get_creator_intelligence: {
+        Args: { _creator_wallet: string }
+        Returns: Json
+      }
+      get_participant_public_profile: {
+        Args: { _wallet: string }
+        Returns: Json
+      }
+      get_participant_public_profile_by_handle: {
+        Args: { _handle: string }
+        Returns: Json
+      }
+      get_public_poll_results: { Args: { _poll_id: string }; Returns: Json }
+      get_public_reward_campaign: { Args: { _poll_id: string }; Returns: Json }
+      get_public_support_results: { Args: { _poll_id: string }; Returns: Json }
+      mark_reward_payout_broadcast_atomic: {
+        Args: { _attempt_id: string; _transaction_hash: string }
+        Returns: Json
+      }
+      mark_reward_payout_broadcast_starting: {
+        Args: { _attempt_id: string }
+        Returns: Json
+      }
+      mark_reward_refund_broadcast_atomic: {
+        Args: { _refund_id: string; _transaction_hash: string }
+        Returns: Json
+      }
+      mark_reward_refund_broadcast_starting_atomic: {
+        Args: { _refund_id: string }
+        Returns: Json
+      }
+      prepare_reward_payout_atomic: {
+        Args: {
+          _amount_luna: number
+          _attempt_id: string
+          _fee_luna: number
+          _network_id: number
+          _prepared_transaction_hex: string
+          _recipient_address_hex: string
+          _sender_address_hex: string
+          _transaction_hash: string
+          _validity_start_height: number
+        }
+        Returns: Json
+      }
+      prepare_reward_refund_transaction_atomic: {
+        Args: {
+          _amount_luna: number
+          _fee_luna: number
+          _network_id: number
+          _prepared_transaction_hash: string
+          _prepared_transaction_hex: string
+          _recipient_address_hex: string
+          _refund_id: string
+          _sender_address_hex: string
+          _validity_start_height: number
+        }
+        Returns: Json
+      }
+      publish_poll_atomic: {
+        Args: {
+          _category?: string
+          _creator_wallet: string
+          _description: string
+          _destination_purpose: string
+          _destination_wallet: string
+          _economic_model?: string
+          _ends_at: string
+          _fairness_mode: string
+          _format?: string
+          _idempotency_key: string
+          _min_nim_luna: number
+          _mode: string
+          _options: string[]
+          _question: string
+          _request_fingerprint: string
+          _reward_mode?: string
+        }
+        Returns: Json
+      }
+      record_reward_payout_failure_atomic: {
+        Args: { _attempt_id: string; _error_code: string }
+        Returns: Json
+      }
+      record_reward_payout_unknown_atomic: {
+        Args: { _attempt_id: string; _error_code: string }
+        Returns: Json
+      }
+      record_reward_refund_failure_atomic: {
+        Args: { _error_code: string; _refund_id: string }
+        Returns: Json
+      }
+      record_reward_refund_unknown_atomic: {
+        Args: { _error_code: string; _refund_id: string }
+        Returns: Json
+      }
+      release_reward_payout_vault_lock_atomic: {
+        Args: { _campaign_id: string; _lock_token: string }
+        Returns: Json
+      }
+      retry_reward_payout_atomic: {
+        Args: { _campaign_id: string; _receipt_id: string }
         Returns: Json
       }
     }
@@ -1116,6 +1406,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },
