@@ -3,14 +3,14 @@ import { getVerifiedWalletSession } from "@/lib/api/session";
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 import {
-  createDefaultPayoutReconciliationDependencies,
-  loadPayoutReconciliationContext,
-  reconcilePayoutAttempt,
-} from "@/lib/rewards/payout-reconciliation";
+  createRewardSettlementService,
+  resolvePollRewardSettlement,
+  type RewardSettlementService,
+} from "@/lib/rewards/settlement";
 
 export const runtime = "nodejs";
 
-function statusForResult(result: Awaited<ReturnType<typeof reconcilePayoutAttempt>>): number {
+function statusForResult(result: Awaited<ReturnType<RewardSettlementService["reconcilePayout"]>>): number {
   if (result.kind === "confirmed" || result.kind === "replay") return 200;
   if (result.kind === "reconciled") {
     if (result.decision.status === "retryable") return 503;
@@ -19,6 +19,8 @@ function statusForResult(result: Awaited<ReturnType<typeof reconcilePayoutAttemp
   }
   if (result.kind === "busy") return 409;
   if (result.kind === "not_confirmable") return 409;
+  if (result.kind === "forbidden") return 403;
+  if (result.kind === "not_found") return 404;
   return 500;
 }
 
@@ -57,23 +59,26 @@ export async function POST(
     );
   }
 
-  const loaded = await loadPayoutReconciliationContext(admin, pollId, attemptId, viewerWallet);
-  if (loaded.kind !== "ok") {
-    const status = loaded.kind === "forbidden"
-      ? 403
-      : loaded.kind === "not_found"
-        ? 404
-        : 500;
+  const settlement = await resolvePollRewardSettlement(admin, pollId);
+  if (settlement.kind !== "ok") {
     return NextResponse.json(
-      { error: loaded.kind === "error" ? loaded.reasonCode : loaded.kind },
-      { status },
+      { error: settlement.kind === "not_found" ? "campaign_not_found" : "database_read_failed" },
+      { status: settlement.kind === "not_found" ? 404 : 500 },
     );
   }
 
-  const result = await reconcilePayoutAttempt(
-    loaded.context,
-    createDefaultPayoutReconciliationDependencies(admin),
+  const result = await createRewardSettlementService(admin).reconcilePayout(
+    settlement.settlementId,
+    attemptId,
+    viewerWallet,
   );
+  if (result.kind === "forbidden" || result.kind === "not_found" || result.kind === "error") {
+    return NextResponse.json(
+      { error: result.kind === "error" ? result.reasonCode : result.kind },
+      { status: statusForResult(result) },
+    );
+  }
+
   return NextResponse.json(
     { reconciliation: result },
     { status: statusForResult(result) },

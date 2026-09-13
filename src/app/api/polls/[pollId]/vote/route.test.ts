@@ -12,11 +12,12 @@ const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
   resolveParticipation: vi.fn(),
   reserve: vi.fn(),
-  payout: vi.fn(),
+  executePayout: vi.fn(),
   adapterFactory: vi.fn(),
   adapterStoreFactory: vi.fn(),
   reservationServiceFactory: vi.fn(),
   reservationStoreFactory: vi.fn(),
+  settlementServiceFactory: vi.fn(),
   context: {
     source: { type: "poll_vote", id: "vote-1" },
     participantWallet: "01" + "a".repeat(38),
@@ -52,8 +53,8 @@ vi.mock("@/lib/rewards/reservation-service", () => ({
   createSupabaseRewardReservationStore: mocks.reservationStoreFactory,
 }));
 
-vi.mock("@/lib/rewards/payout", () => ({
-  executeReservedRewardPayout: mocks.payout,
+vi.mock("@/lib/rewards/settlement", () => ({
+  createRewardSettlementService: mocks.settlementServiceFactory,
 }));
 
 import { POST } from "@/app/api/polls/[pollId]/vote/route";
@@ -68,11 +69,12 @@ beforeEach(() => {
   mocks.rpc.mockReset();
   mocks.resolveParticipation.mockReset();
   mocks.reserve.mockReset();
-  mocks.payout.mockReset();
+  mocks.executePayout.mockReset();
   mocks.adapterFactory.mockReset();
   mocks.adapterStoreFactory.mockReset();
   mocks.reservationServiceFactory.mockReset();
   mocks.reservationStoreFactory.mockReset();
+  mocks.settlementServiceFactory.mockReset();
 
   mocks.rpc.mockImplementation(async () => ({ data: mocks.voteResult, error: null }));
   mocks.resolveParticipation.mockResolvedValue({ kind: "eligible", context: mocks.context });
@@ -81,9 +83,10 @@ beforeEach(() => {
     reasonCode: "reservation_failed",
     sourceId: "vote-1",
   });
-  mocks.payout.mockResolvedValue({ kind: "broadcasted", attemptId: "attempt-1", transactionHash: "a".repeat(64) });
+  mocks.executePayout.mockResolvedValue({ kind: "broadcasted", attemptId: "attempt-1", transactionHash: "a".repeat(64) });
   mocks.adapterFactory.mockReturnValue({ resolveParticipation: mocks.resolveParticipation });
   mocks.reservationServiceFactory.mockReturnValue({ reserve: mocks.reserve });
+  mocks.settlementServiceFactory.mockReturnValue({ executePayout: mocks.executePayout });
   mocks.adapterStoreFactory.mockReturnValue({});
   mocks.reservationStoreFactory.mockReturnValue({});
 });
@@ -115,7 +118,7 @@ describe("POST /api/polls/[pollId]/vote compatibility boundary", () => {
       verifiedSession: { address: VOTER },
     });
     expect(mocks.reserve).toHaveBeenCalledWith(mocks.context);
-    expect(mocks.payout).not.toHaveBeenCalled();
+    expect(mocks.executePayout).not.toHaveBeenCalled();
   });
 
   it("automatically pays only a reserved or replayed receipt using its settlement ID", async () => {
@@ -131,7 +134,7 @@ describe("POST /api/polls/[pollId]/vote compatibility boundary", () => {
     });
 
     expect(response.status).toBe(201);
-    expect(mocks.payout).toHaveBeenCalledWith(expect.anything(), "receipt-1", "campaign-1");
+    expect(mocks.executePayout).toHaveBeenCalledWith("campaign-1", "receipt-1");
   });
 
   it("preserves replay vote behavior and attempts payout for a replay receipt", async () => {
@@ -152,7 +155,7 @@ describe("POST /api/polls/[pollId]/vote compatibility boundary", () => {
       resultKind: "replay",
       vote: { id: "vote-1", pollId: "poll-1", optionId: "option-a" },
     });
-    expect(mocks.payout).toHaveBeenCalledWith(expect.anything(), "receipt-1", "campaign-1");
+    expect(mocks.executePayout).toHaveBeenCalledWith("campaign-1", "receipt-1");
   });
 
   it("does no reservation work when the adapter excludes a free Poll", async () => {
@@ -168,7 +171,7 @@ describe("POST /api/polls/[pollId]/vote compatibility boundary", () => {
 
     expect(response.status).toBe(201);
     expect(mocks.reserve).not.toHaveBeenCalled();
-    expect(mocks.payout).not.toHaveBeenCalled();
+    expect(mocks.executePayout).not.toHaveBeenCalled();
   });
 
   it("does not pass client option, amount, owner, recipient, capacity, or vault fields to reward work", async () => {

@@ -119,7 +119,7 @@ function toAuthoritativeReplay(
 
 export async function loadFundingConfirmationContext(
   admin: AdminClient,
-  pollId: string,
+  settlementId: string,
   intentId: string,
   funderWallet: string,
 ): Promise<FundingContextLoadResult> {
@@ -128,7 +128,7 @@ export async function loadFundingConfirmationContext(
     .select(
       "id, funding_wallet, status, total_budget_luna, funded_amount_luna, refundable_excess_luna, funded_at",
     )
-    .eq("poll_id", pollId)
+    .eq("id", settlementId)
     .maybeSingle();
   if (campaignError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!campaign) return { kind: "not_found", reasonCode: "campaign_not_found" };

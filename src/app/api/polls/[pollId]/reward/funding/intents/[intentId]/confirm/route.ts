@@ -3,14 +3,14 @@ import { getVerifiedWalletSession } from "@/lib/api/session";
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 import {
-  createDefaultFundingConfirmationDependencies,
-  loadFundingConfirmationContext,
-  reconcileFundingIntent,
-} from "@/lib/rewards/funding-confirmation";
+  createRewardSettlementService,
+  resolvePollRewardSettlement,
+  type RewardSettlementService,
+} from "@/lib/rewards/settlement";
 
 export const runtime = "nodejs";
 
-function statusForResult(result: Awaited<ReturnType<typeof reconcileFundingIntent>>): number {
+function statusForResult(result: Awaited<ReturnType<RewardSettlementService["confirmFunding"]>>): number {
   if (result.kind === "confirmed" || result.kind === "replay") return 200;
   if (result.kind === "reconciled") {
     if (result.decision.status === "retryable") return 503;
@@ -18,6 +18,8 @@ function statusForResult(result: Awaited<ReturnType<typeof reconcileFundingInten
     return 200;
   }
   if (result.kind === "not_confirmable") return 409;
+  if (result.kind === "forbidden") return 403;
+  if (result.kind === "not_found") return 404;
   return 500;
 }
 
@@ -56,23 +58,26 @@ export async function POST(
     );
   }
 
-  const loaded = await loadFundingConfirmationContext(admin, pollId, intentId, funderWallet);
-  if (loaded.kind !== "ok") {
-    const status = loaded.kind === "forbidden"
-      ? 403
-      : loaded.kind === "not_found"
-        ? 404
-        : 500;
+  const settlement = await resolvePollRewardSettlement(admin, pollId);
+  if (settlement.kind !== "ok") {
     return NextResponse.json(
-      { error: loaded.kind === "error" ? loaded.reasonCode : loaded.kind },
-      { status },
+      { error: settlement.kind === "not_found" ? "campaign_not_found" : "database_read_failed" },
+      { status: settlement.kind === "not_found" ? 404 : 500 },
     );
   }
 
-  const result = await reconcileFundingIntent(
-    loaded.context,
-    createDefaultFundingConfirmationDependencies(admin),
+  const result = await createRewardSettlementService(admin).confirmFunding(
+    settlement.settlementId,
+    intentId,
+    funderWallet,
   );
+  if (result.kind === "forbidden" || result.kind === "not_found" || result.kind === "error") {
+    return NextResponse.json(
+      { error: result.kind === "error" ? result.reasonCode : result.kind },
+      { status: statusForResult(result) },
+    );
+  }
+
   return NextResponse.json(
     { confirmation: result },
     { status: statusForResult(result) },

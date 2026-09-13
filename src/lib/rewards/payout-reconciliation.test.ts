@@ -383,4 +383,16 @@ describe("server payout reconciliation boundary", () => {
     expect(source).toContain("preparedTransactionHex");
     expect(source).toContain("recordUnknownOutcome");
   });
+
+  it("loads reconciliation authority by settlement ID without reading Poll/source lifecycle", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/rewards/payout-reconciliation.ts"), "utf8");
+    const loaderStart = source.indexOf("export async function loadPayoutReconciliationContext");
+    const loaderEnd = source.indexOf("function toPayoutExpected");
+    const loaderSource = source.slice(loaderStart, loaderEnd);
+
+    expect(loaderSource).toContain("settlementId");
+    expect(loaderSource).toContain('.eq("id", settlementId)');
+    expect(loaderSource).not.toContain('.from("polls")');
+    expect(loaderSource).not.toContain("poll_id !==");
+  });
 });

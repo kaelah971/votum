@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { getVerifiedWalletSession } from "@/lib/api/session";
-import { executeReservedRewardPayout } from "@/lib/rewards/payout";
 import {
   createPollRewardParticipationAdapter,
   createSupabasePollRewardParticipationStore,
@@ -10,6 +9,7 @@ import {
   createRewardReservationService,
   createSupabaseRewardReservationStore,
 } from "@/lib/rewards/reservation-service";
+import { createRewardSettlementService } from "@/lib/rewards/settlement";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -36,6 +36,7 @@ async function reserveRewardAfterVote(
     const reservationService = createRewardReservationService(
       createSupabaseRewardReservationStore(admin),
     );
+    const settlementService = createRewardSettlementService(admin);
     const participation = await adapter.resolveParticipation({
       pollId,
       participationId,
@@ -71,10 +72,9 @@ async function reserveRewardAfterVote(
       (reservation.kind === "reserved" || reservation.kind === "replay") &&
       (reservation.receiptStatus === "reserved" || reservation.receiptStatus === "payout_pending")
     ) {
-      const payout = await executeReservedRewardPayout(
-        admin,
-        reservation.receiptId,
+      const payout = await settlementService.executePayout(
         reservation.settlementId,
+        reservation.receiptId,
       );
       log("reward_payout", {
         requestId,

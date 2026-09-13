@@ -3,7 +3,10 @@ import { randomBytes } from "node:crypto";
 import { getVerifiedWalletSession } from "@/lib/api/session";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
-import { mapFundingIntentResult } from "@/lib/rewards/funding";
+import {
+  createRewardSettlementService,
+  resolvePollRewardSettlement,
+} from "@/lib/rewards/settlement";
 
 export const runtime = "nodejs";
 
@@ -91,63 +94,40 @@ export async function POST(
     );
   }
 
-  const { data: campaign, error: campaignErr } = await admin
-    .from("reward_campaigns")
-    .select("id, poll_id, funding_wallet")
-    .eq("poll_id", pollId)
-    .maybeSingle();
-  if (campaignErr || !campaign) {
+  const settlement = await resolvePollRewardSettlement(admin, pollId);
+  if (settlement.kind !== "ok") {
     return NextResponse.json(
-      { error: "campaign_not_found", stage: "campaign", requestId, message: "Reward campaign not found." },
-      { status: 404 },
-    );
-  }
-  if (campaign.funding_wallet.toLowerCase() !== funderWallet.toLowerCase()) {
-    log("not_authorized_funder", { requestId, status: 403 });
-    return NextResponse.json(
-      { error: "forbidden", stage: "funding_wallet", requestId, message: "Only the designated funding wallet can fund this campaign." },
-      { status: 403 },
+      {
+        error: settlement.kind === "not_found" ? "campaign_not_found" : "funding_intent_failed",
+        stage: "settlement",
+        requestId,
+        message: settlement.kind === "not_found"
+          ? "Reward campaign not found."
+          : "Could not resolve the reward settlement.",
+      },
+      { status: settlement.kind === "not_found" ? 404 : 500 },
     );
   }
 
-  const { data: rawResult, error: rpcErr } = await admin.rpc("begin_reward_funding_atomic", {
-    _campaign_id: campaign.id,
-    _funder_wallet: funderWallet,
-  });
-  if (rpcErr) {
-    log("begin_rpc_failed", { requestId, status: 500, code: rpcErr.code, message: rpcErr.message });
-    return NextResponse.json(
-      { error: "funding_intent_failed", stage: "atomic_begin", requestId, message: "Could not create a funding intent." },
-      { status: 500 },
-    );
-  }
-
-  const result = rawResult as Record<string, unknown>;
-  const resultKind = typeof result.result_kind === "string" ? result.result_kind : "";
-  if (resultKind !== "created" && resultKind !== "replay") {
-    const mapped = resultError(resultKind, requestId);
+  const result = await createRewardSettlementService(admin).beginFunding(
+    settlement.settlementId,
+    funderWallet,
+  );
+  if (result.kind === "error") {
+    const mapped = resultError(result.reasonCode, requestId);
     return NextResponse.json(
       { error: mapped.error, stage: "atomic_begin", requestId, message: mapped.message },
       { status: mapped.status },
     );
   }
 
-  const fundingIntent = mapFundingIntentResult(result);
-  if (!fundingIntent) {
-    log("invalid_rpc_shape", { requestId, status: 500 });
-    return NextResponse.json(
-      { error: "funding_intent_failed", stage: "response", requestId, message: "Funding intent response was invalid." },
-      { status: 500 },
-    );
-  }
-
-  log("intent_ready", { requestId, status: resultKind === "created" ? 201 : 200 });
+  log("intent_ready", { requestId, status: result.kind === "created" ? 201 : 200 });
   return NextResponse.json(
     {
-      fundingIntent,
+      fundingIntent: result.fundingIntent,
       campaignState: "funding_pending",
-      resultKind,
+      resultKind: result.kind,
     },
-    { status: resultKind === "created" ? 201 : 200 },
+    { status: result.kind === "created" ? 201 : 200 },
   );
 }

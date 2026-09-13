@@ -1,6 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { randomBytes } from "node:crypto";
+import { loadFundingConfirmationContext } from "@/lib/rewards/funding-confirmation";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -182,6 +183,15 @@ afterAll(async () => {
 });
 
 describe("confirm_reward_funding_atomic", () => {
+  it("loads funding authority by settlement ID and rejects a Poll ID as settlement identity", async () => {
+    const value = await fixture();
+    const loaded = await loadFundingConfirmationContext(admin as never, value.campaignId, value.intentId, "03" + "c".repeat(38));
+    expect(loaded.kind).toBe("forbidden");
+
+    const wrongSettlement = await loadFundingConfirmationContext(admin as never, value.pollId, value.intentId, "03" + "c".repeat(38));
+    expect(wrongSettlement).toMatchObject({ kind: "not_found", reasonCode: "campaign_not_found" });
+  });
+
   it("confirms exact finalized funding atomically", async () => {
     const value = await fixture();
     const result = await confirm(value);

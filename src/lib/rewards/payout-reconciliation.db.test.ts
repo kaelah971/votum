@@ -199,7 +199,7 @@ function finalObservation(fixture: Fixture, overrides: Partial<ObservedFundingTr
 async function contextFor(fixture: Fixture) {
   const loaded = await loadPayoutReconciliationContext(
     admin,
-    fixture.pollId,
+    fixture.campaignId,
     fixture.attemptId,
     fixture.participantWallet,
   );
@@ -238,6 +238,18 @@ beforeAll(() => {
 afterEach(() => cleanup());
 
 describe("V2B.2.8 local payout confirmation RPC", () => {
+  it("does not load an attempt through an unrelated settlement ID", async () => {
+    const fixture = await createFixture();
+    const loaded = await loadPayoutReconciliationContext(
+      admin,
+      randomUUID(),
+      fixture.attemptId,
+      fixture.participantWallet,
+    );
+
+    expect(loaded).toMatchObject({ kind: "not_found", reasonCode: "campaign_not_found" });
+  });
+
   it("marks one exact finalized payout paid and persists finality evidence", async () => {
     const fixture = await createFixture();
     const result = await reconcilePayoutAttempt(await contextFor(fixture), dependencies(fixture));

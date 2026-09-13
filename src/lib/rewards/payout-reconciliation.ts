@@ -126,10 +126,18 @@ function safeDbNumber(value: bigint): number {
 
 export async function loadPayoutReconciliationContext(
   admin: AdminClient,
-  pollId: string,
+  settlementId: string,
   attemptId: string,
   viewerWallet?: string,
 ): Promise<PayoutContextLoadResult> {
+  const { data: campaign, error: campaignError } = await admin
+    .from("reward_campaigns")
+    .select("id")
+    .eq("id", settlementId)
+    .maybeSingle();
+  if (campaignError) return { kind: "error", reasonCode: "database_read_failed" };
+  if (!campaign) return { kind: "not_found", reasonCode: "campaign_not_found" };
+
   const { data: attempt, error: attemptError } = await admin
     .from("reward_payout_attempts")
     .select("id, receipt_id, status, transaction_hash, network_id, broadcast_started_at, broadcast_at, confirmed_at")
@@ -140,24 +148,17 @@ export async function loadPayoutReconciliationContext(
 
   const { data: receipt, error: receiptError } = await admin
     .from("reward_receipts")
-    .select("id, campaign_id, poll_id, participant_wallet, amount_luna, status, paid_at")
+    .select("id, campaign_id, participant_wallet, amount_luna, status, paid_at")
     .eq("id", attempt.receipt_id)
+    .eq("campaign_id", settlementId)
     .maybeSingle();
   if (receiptError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!receipt) return { kind: "not_found", reasonCode: "receipt_not_found" };
 
-  const { data: campaign, error: campaignError } = await admin
-    .from("reward_campaigns")
-    .select("id, poll_id")
-    .eq("id", receipt.campaign_id)
-    .maybeSingle();
-  if (campaignError) return { kind: "error", reasonCode: "database_read_failed" };
-  if (!campaign) return { kind: "not_found", reasonCode: "campaign_not_found" };
-
   const { data: vault, error: vaultError } = await admin
     .from("reward_campaign_vaults")
     .select("vault_address_hex")
-    .eq("campaign_id", campaign.id)
+    .eq("campaign_id", settlementId)
     .maybeSingle();
   if (vaultError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!vault) return { kind: "not_found", reasonCode: "vault_not_found" };
@@ -168,9 +169,8 @@ export async function loadPayoutReconciliationContext(
   const attemptStatus = parseAttemptStatus(attempt.status);
   const receiptStatus = parseReceiptStatus(receipt.status);
   if (
-    receipt.poll_id !== pollId ||
-    campaign.poll_id !== pollId ||
-    campaign.id !== receipt.campaign_id ||
+    campaign.id !== settlementId ||
+    receipt.campaign_id !== settlementId ||
     !participantWallet ||
     !vaultAddress ||
     amountLuna === null ||

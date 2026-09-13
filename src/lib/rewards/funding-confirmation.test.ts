@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  loadFundingConfirmationContext,
   reconcileFundingObservation,
   type FundingConfirmationContext,
 } from "@/lib/rewards/funding-confirmation";
@@ -156,6 +157,19 @@ describe("funding confirmation route boundary", () => {
     expect(source).not.toMatch(/body[\s\S]*confirmed|confirmed[\s\S]*body/);
     expect(source).not.toMatch(/body[\s\S]*amount|amount[\s\S]*body/);
     expect(source).not.toMatch(/body[\s\S]*vault|vault[\s\S]*body/);
-    expect(source).toContain("reconcileFundingIntent");
+    expect(source).toContain("createRewardSettlementService");
+  });
+
+  it("loads funding authority by settlement ID rather than a Poll lookup", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/rewards/funding-confirmation.ts"), "utf8");
+    const loaderStart = source.indexOf("export async function loadFundingConfirmationContext");
+    const loaderEnd = source.indexOf("export async function reconcileFundingObservation");
+    const loaderSource = source.slice(loaderStart, loaderEnd);
+
+    expect(loadFundingConfirmationContext).toBeTypeOf("function");
+    expect(loaderSource).toContain("settlementId");
+    expect(loaderSource).toContain('.eq("id", settlementId)');
+    expect(loaderSource).not.toContain('.eq("poll_id",');
+    expect(loaderSource).not.toContain('.from("polls")');
   });
 });
