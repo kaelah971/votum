@@ -1,89 +1,84 @@
 # V2C.2 Campaign Foundation and Generic Settlement Root Design
 
-**Status:** Design specification only. This document does not modify production
-code, add migrations, add routes, add Campaign UI, start Docker, mutate
-Supabase, send NIM, deploy, or merge `main`.
+**Status:** Design specification only. This review patch does not implement
+production code, migrations, routes, UI, claim flows, eligibility strategies,
+secret storage, allowlist storage, event-proof storage, QR/deep-link behavior,
+discovery, NIM transfers, deployment, or creator management.
 
 **Branch:** `feat/v2-participation-record`
 
+**Reviewed commit:** `394ba62 docs(v2c2): design campaign foundation and settlement root`
+
 **Design date:** 2026-09-13
 
-**Current implementation authority:** The repository at the V2C.1 completion
-commit `677d8c4`, the V2C.0 audit, and the V2C.1 specification and implementation
-plan listed below.
-
-**Primary documents:**
+**Primary evidence:**
 
 - `docs/superpowers/reviews/2026-09-12-v2c0-campaign-integration-readiness-audit.md`
 - `docs/superpowers/specs/2026-09-12-v2c1-shared-nim-participation-engine-design.md`
 - `docs/superpowers/plans/2026-09-13-v2c1-shared-nim-participation-engine-implementation.md`
+- `src/lib/nimiq/server-crypto.ts`
+- `src/app/api/wallet-proof/challenge/route.ts`
+- `src/app/api/wallet-proof/verify/route.ts`
+- `src/app/api/polls/publish/route.ts`
+- `supabase/migrations/0001_votum_poll_foundation.sql`
+- `supabase/migrations/0002_wallet_proof_sessions.sql`
+- `supabase/migrations/20260822000000_v2b2_rewarded_participation.sql`
+- `supabase/migrations/20260831160000_v2b2_reward_first_alignment.sql`
+- V2C.1 completion commit `677d8c4`
 
 ## 1. Current-Code Findings
 
-### 1.1 Product/source records
+### 1.1 Current product/source records
 
-The current product has Polls, not standalone Campaigns. The relevant source
-records are:
+The current product has Polls, not standalone Campaigns:
 
 | Record | Current authority | V2C.2 treatment |
 |---|---|---|
-| `polls` | Question, owner, visibility, status, window, economic discriminator, and reward mode | Remains the Poll product/source record. No Campaign columns are added. |
-| `poll_votes` | Committed verified Poll participation with `poll_id`, `option_id`, and `voter_wallet` | Remains Poll-specific. `option_id` ends at the Poll vote boundary and never enters financial records. |
+| `polls` | Question, owner, visibility, status, window, economic discriminator, reward mode | Remains the Poll product/source record. No Campaign columns are added. |
+| `poll_votes` | Committed verified Poll participation with `poll_id`, `option_id`, and `voter_wallet` | Remains Poll-specific. `option_id` ends at the Poll vote boundary. |
 | `poll_options` | Poll option labels and ordering | Remains entirely outside the reward engine. |
-| `wallet_challenges` | Five-minute wallet-proof challenge and single-use consumption | Remains shared identity infrastructure; Campaign claims require a Campaign-bound purpose and nonce. |
-| `wallet_sessions` | Hashed token, canonical wallet, expiry, and revocation | Remains the server authentication primitive. A session proves wallet control, not Campaign eligibility. |
+| `wallet_challenges` | Generic wallet-proof challenge and single-use consumption | Unchanged in V2C.2. Campaign-bound challenge changes are deferred to V2C.3+. |
+| `wallet_sessions` | Hashed session token, wallet identity, expiry, and revocation | Remains shared wallet authentication infrastructure. |
 
-The Poll vote route is currently:
+The current Poll path is:
 
 ```text
 verified wallet session
   -> cast_poll_vote_atomic
   -> PollRewardParticipationAdapter
   -> RewardReservationService
-  -> claim_reward_receipt_atomic compatibility RPC
+  -> current Poll-compatible reservation RPC
   -> RewardSettlementService
   -> automatic server payout
 ```
 
-The vote is committed before reward work. Reservation and payout failures are
-best-effort follow-up failures and must not turn a valid vote into a failed vote.
+`POST /api/polls/[pollId]/vote` records the vote before reward follow-up work.
+Reservation and payout failures do not invalidate a successful vote. This
+behavior is a V2C.2 compatibility invariant.
 
-### 1.2 Existing financial records
+### 1.2 Current financial records
 
-The V2B.2 tables are real financial records, but they are currently rooted in a
-Poll-shaped `reward_campaigns` row:
+The V2B.2 money engine is safe to reuse, but its physical root is currently
+Poll-shaped:
 
-| Record | Current shape | V2C.2 finding |
+| Record | Current shape | V2C.2 treatment |
 |---|---|---|
-| `reward_campaigns` | One row per Poll reward offer; `poll_id uuid NOT NULL UNIQUE REFERENCES polls(id)`; terms, balances, status, and payout lease | A Poll reward adapter, not the general Campaign product entity. The `poll_id` constraint remains unchanged. |
-| `reward_campaign_vaults` | One private encrypted vault per `reward_campaigns.id`; service-role only | Reused as the custody boundary and re-rooted by settlement identity in the financial cutover. No key material moves into Campaign tables. |
-| `reward_funding_transactions` | Funding intent/hash lifecycle and funding terms snapshot | Reused for the one settlement funding path. It must resolve through `reward_settlements` after root cutover. |
-| `reward_receipts` | One raw-text wallet entitlement per reward campaign, with a Poll FK | Reused as the single entitlement ledger. Canonical uniqueness becomes a database invariant for Campaigns. |
-| `reward_payout_attempts` | Durable signed bytes/hash, broadcast marker, retry state, and finality evidence per receipt | Reused unchanged in safety behavior; lookup becomes settlement-based. |
-| `reward_refunds` | Durable creator refund intent, signing/broadcast markers, and finality evidence | Reused for settlement-owner/funder policy; no arbitrary refund destination is accepted. |
+| `reward_campaigns` | One Poll reward offer; `poll_id uuid NOT NULL UNIQUE REFERENCES polls(id)`; terms, balances, status, and payout lease | Remains the Poll reward adapter. It is not renamed into the Campaign product entity. |
+| `reward_campaign_vaults` | One encrypted private vault per `reward_campaigns.id`; service-role only | Remains the single custody record. It receives an additive settlement reference; no key material moves into the root or Campaign table. |
+| `reward_funding_transactions` | Funding intent, hash binding, amount/terms snapshot, observation and confirmation fields | Reused by settlement root. Add a settlement reference before cutover; do not immediately rename the existing Poll column. |
+| `reward_receipts` | One reward entitlement per campaign and participant wallet, with `poll_id` | Remains the single entitlement ledger. Add a settlement reference; keep the Poll compatibility column temporarily. |
+| `reward_payout_attempts` | Durable attempt, signed bytes/hash, broadcast markers, retry state, and finality evidence | Remains attached through the receipt. No second attempt table and no direct source-specific root. |
+| `reward_refunds` | Durable refund intent, signed/broadcast fields, and finality evidence | Reused by the generic settlement root with immutable owner/funder refund policy. |
 
-The current RPC authority is service-role-only and security-definer. The most
-important existing boundaries are:
+The relevant current database authority is service-role-only and security-
+definer. Existing atomic functions lock and reload their own authoritative rows.
+The current lower boundary includes funding initiation/confirmation, reservation,
+payout preparation/reconciliation/retry, and refund preparation/reconciliation.
 
-- `begin_reward_funding_atomic` and `bind_reward_funding_transaction_atomic`
-  derive terms, vault, reference, and funding authorization from stored rows.
-- `confirm_reward_funding_atomic` confirms only server-observed exact funding
-  with the required recipient, amount, network, execution, and finality.
-- `claim_reward_receipt_atomic` locks the campaign, reloads Poll and vote
-  authority, checks capacity and creator exclusion, inserts the receipt, and
-  advances the counter atomically.
-- `confirm_reward_payout_atomic` requires exact stored hash, sender, recipient,
-  amount, network, successful execution, canonical inclusion, and macro
-  finality before `paid`.
-- `begin_reward_refund_atomic` blocks unresolved obligations, validates
-  accounting, freezes new obligations, and creates one refund intent.
-- `confirm_reward_refund_atomic` requires exact server-observed finality before
-  the terminal `refunded` state.
+### 1.3 V2C.1 status
 
-### 1.3 V2C.1 implementation boundary
-
-V2C.1 is complete. It added these source-neutral application seams without
-adding Campaign storage or changing Poll economics:
+V2C.1 is complete at `677d8c4`. It added code-level seams but deliberately did
+not add Campaign storage:
 
 - `RewardParticipationContext` and `RewardParticipationAdapter` in
   `src/lib/rewards/participation.ts`.
@@ -91,115 +86,129 @@ adding Campaign storage or changing Poll economics:
   `src/lib/rewards/poll-participation-adapter.ts`.
 - `RewardReservationService` in
   `src/lib/rewards/reservation-service.ts`.
-- `RewardSettlementService` and Poll settlement resolution in
+- `RewardSettlementService` in
   `src/lib/rewards/settlement.ts`.
 - `RewardClosureService` and `PollRewardClosureAdapter` in
   `src/lib/rewards/closure.ts` and
   `src/lib/rewards/poll-closure-adapter.ts`.
 
-The current V2C.1 settlement ID is the physical `reward_campaigns.id`. It is a
-compatibility name, not yet a standalone financial root. V2C.2 introduces the
-generic root and makes that distinction durable.
+V2C.1 currently treats the physical `reward_campaigns.id` as a compatibility
+settlement ID. V2C.2 makes the generic settlement root explicit without
+changing the Poll source identity.
 
-### 1.4 Actual readiness conclusion
+### 1.4 Safe reuse boundary
 
-The safe reuse boundary is below product/source eligibility:
+The intended architecture is:
 
 ```text
 Poll vote or future Campaign claim
-  -> source adapter and durable eligibility evidence
+  -> source-specific participation/eligibility boundary
   -> generic settlement reservation
   -> one reward receipt
   -> generic payout/finality
   -> generic closure/refund/finality
 ```
 
-The shared engine must never read `poll_options`, secret plaintext, allowlist
-membership, QR contents, or browser-provided economics. It receives only a
-server-produced source identity, canonical participant wallet, owner identity,
-settlement binding, and durable evidence identity. All money values are reloaded
-from the locked settlement row.
+V2C.2 implements only the Campaign product/foundation side of this boundary.
+It does not implement the future Campaign claim side.
 
 ## 2. Architecture Decision
 
-### 2.1 Decision
+### 2.1 Locked architecture
 
-Adopt a first-class `participation_campaigns` product entity and a single
-generic `reward_settlements` financial root:
+Use one first-class Campaign product entity and one generic financial root:
 
 ```text
-polls
-  -> reward_campaigns              Poll financial/product adapter
-  -> reward_settlements            shared financial root
-  -> reward_funding_transactions
-  -> reward_receipts
-  -> reward_payout_attempts
-  -> reward_refunds
-
 participation_campaigns
-  -> reward_settlements            same shared financial root
-  -> reward_funding_transactions
-  -> reward_receipts
-  -> reward_payout_attempts
-  -> reward_refunds
+  -> reward_settlements
+  -> shared funding/reservation/payout/refund engine
+
+polls
+  -> reward_campaigns
+  -> reward_settlements
+  -> the same shared funding/reservation/payout/refund engine
 ```
 
-`settlement_source_bindings` records the source-to-root relationship and
-enforces that exactly one source adapter owns a settlement. It contains no
-financial terms, eligibility configuration, secrets, or product presentation.
+`settlement_source_bindings` is a narrow source-to-root relationship record. It
+contains no financial terms, balances, vault material, eligibility evidence,
+secrets, allowlists, event data, or product presentation.
 
-`reward_campaigns` remains the explicit Poll adapter. It is not renamed into
-`participation_campaigns`, and its `poll_id NOT NULL UNIQUE` relationship is not
-weakened. Existing Poll rows keep their IDs and their existing Poll semantics.
+### 2.2 Decisions
 
-### 2.2 Why this decision
+- `participation_campaigns` is the Campaign product/configuration entity.
+- `reward_settlements` is the only mutable financial authority after cutover.
+- `reward_campaigns` remains the explicit Poll adapter.
+- `reward_campaigns.poll_id` remains `NOT NULL`, `UNIQUE`, and FK-enforced.
+- Poll and Campaign never share a nullable product mega-row.
+- Poll and Campaign use one funding, receipt, payout, reconciliation, vault,
+  closure, and refund engine.
+- Existing Poll IDs, vote IDs, receipt IDs, funding IDs, payout IDs, refund IDs,
+  transaction hashes, and public response aliases remain stable.
+- Campaign type literals exist in configuration, but unsupported types cannot be
+  published as claimable or enter a participant flow.
+- Configuration and funding readiness do not move NIM.
 
-This structure avoids both unsafe alternatives:
+### 2.3 Rejected alternatives
 
-- **No direct generalization of `reward_campaigns`:** `poll_id` remains a real
-  FK and cannot become nullable. Poll-only constraints do not become branches in
-  every financial RPC.
-- **No duplicate Campaign engine:** funding, vault custody, payout signing,
-  broadcast, observation, finality, retry, receipts, and refunds remain one
-  auditable financial path.
-- **No nullable polymorphic financial row:** source-specific configuration and
-  proof records live in their own tables. The narrow binding table contains only
-  a controlled source relationship and has a two-branch check with real FKs.
-- **No Poll migration for product naming:** a Poll remains a Poll. The root
-  backfill preserves the existing reward campaign ID, transaction hashes,
-  receipt IDs, attempt IDs, refund IDs, and Poll response aliases.
+**Generalize `reward_campaigns` directly:** rejected. Making `poll_id` nullable
+would weaken the existing FK and turn Poll-specific checks into nullable branches
+through every financial function.
 
-### 2.3 Authority split
+**Duplicate the Campaign financial engine:** rejected. Two ledgers would split
+hash-reuse, signing, retry, finality, vault, and refund fixes.
 
-The authority layers are:
+**Use a nullable Poll/Campaign mega-table:** rejected. Product configuration,
+source evidence, and financial settlement have different authorities and
+lifecycle boundaries.
 
-1. `wallet_sessions` proves control of a canonical wallet or authenticated
-   operator.
-2. A source adapter proves source-specific participation and eligibility from
-   durable source data.
-3. `settlement_source_bindings` proves which financial root belongs to that
-   source adapter.
-4. `reward_settlements` owns terms, balances, financial state, capacity, and
-   closure freeze under lock.
-5. Financial child rows own durable intent, receipt, attempt, and refund proof.
-6. Service-role-only security-definer RPCs own atomic state transitions.
-7. The Nimiq observation adapter owns chain observation and finality evidence.
-
-No TypeScript interface, Campaign row, or client request is a financial
-authority. Every irreversible or terminal transition reloads current rows.
+**Continuously dual-write old and new financial tables:** rejected. A
+compatibility projection may remain physically for a transition, but it is
+historical/read-only after cutover and never an independently mutable ledger.
 
 ## 3. Exact Schema Diff
 
-This is the target schema, not an executable migration. The implementation must
-split it into the ordered migrations in Section 13 and update generated types
-from the resulting local schema. All wallet fields below mean canonical
-lowercase trimmed Nimiq address strings using the existing server normalization
-path. The database must enforce the normalized shape for new Campaign rows.
+This section defines only the V2C.2 schema. It does not create future claim or
+eligibility tables. The implementation must split the target into the ordered
+migrations in Section 13.
 
-### 3.1 `reward_settlements`
+### 3.1 Verified wallet representation
 
-Create one generic financial root per funded-capable offer. It is the only
-authority for shared terms, balances, capacity, and financial lifecycle.
+The repository evidence establishes the canonical representation for new root
+and Campaign fields:
+
+- `normalizeAddress()` accepts user-friendly NQ input or hex input and returns
+  `Address.toHex()`.
+- The wallet challenge route stores the normalized result in
+  `wallet_challenges.wallet_address`.
+- The wallet verify route stores the signer-derived canonical value in
+  `wallet_sessions.wallet_address`.
+- The Poll publish route normalizes the verified session before storing
+  `polls.creator_wallet`.
+- The Poll vote route passes the verified session address to the vote RPC.
+- Current reward/vault fixtures generate `"01" + randomBytes(19).toString("hex")`,
+  which is 40 lowercase hexadecimal characters.
+- `src/lib/rewards/vault-key.test.ts` explicitly asserts
+  `/^[0-9a-f]{40}$/` for a generated canonical vault address.
+
+Therefore, the canonical representation produced by the production path is a
+lowercase 40-character hexadecimal Nimiq address. However, the existing database
+schemas for `polls`, `poll_votes`, `wallet_sessions`, and reward wallet columns
+mostly enforce only non-empty `text`. Direct service-role fixtures can therefore
+contain historical values that are not database-enforced canonical values.
+
+V2C.2 must not silently rewrite those historical columns. Before root backfill,
+an application-side preflight runs `normalizeAddress()` over every relevant
+historical identity and checks owner, participant, funder, refund, and vault
+relationships. Valid NQ/case/whitespace variants produce a canonical root
+snapshot without altering the old source row. Invalid addresses, canonical
+collisions, or relationship mismatches block the migration for explicit manual
+repair. New root and Campaign rows use the verified lowercase 40-hex invariant.
+
+### 3.2 `reward_settlements`
+
+Create one generic financial root per reward offer. It owns shared terms,
+balances, capacity, financial status, payout lease, and accounting after Phase D
+cutover. It does not store private vault material or `vault_key_ref`.
 
 ```sql
 CREATE TABLE public.reward_settlements (
@@ -225,7 +234,6 @@ CREATE TABLE public.reward_settlements (
     payout_lock_attempt_id       uuid,
     payout_lock_expires_at       timestamptz,
     payout_lock_token            text,
-    vault_key_ref                text,
     created_at                   timestamptz NOT NULL DEFAULT now(),
     funded_at                    timestamptz,
     closed_at                    timestamptz,
@@ -286,39 +294,41 @@ CREATE INDEX idx_reward_settlements_owner
     ON public.reward_settlements (owner_wallet);
 CREATE INDEX idx_reward_settlements_status
     ON public.reward_settlements (status);
-CREATE INDEX idx_reward_settlements_updated
+CREATE INDEX idx_reward_settlements_status_updated
     ON public.reward_settlements (status, updated_at);
 ```
 
-The existing state vocabulary is deliberately reused. Product lifecycle values
-such as `published` and `expired` do not enter this table.
+The root has no vault address or private key reference. The vault relationship is
+resolved through the existing private vault table after its additive settlement
+reference is validated.
 
-### 3.2 `participation_campaigns`
+### 3.3 `participation_campaigns`
 
-Create the product entity. It contains presentation and configuration metadata,
-not financial balances, vault fields, receipts, or transaction hashes.
+Create the Campaign product/configuration entity. It contains no financial
+balances, settlement state, vault fields, receipts, payout hashes, or claim
+records.
 
 ```sql
 CREATE TABLE public.participation_campaigns (
-    id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    settlement_id              uuid NOT NULL UNIQUE
+    id                              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    settlement_id                   uuid NOT NULL UNIQUE
         REFERENCES public.reward_settlements(id),
-    owner_wallet               text NOT NULL,
-    campaign_type              text NOT NULL,
-    visibility                 text NOT NULL DEFAULT 'unlisted',
-    title                      text NOT NULL,
-    description                text,
-    status                     text NOT NULL DEFAULT 'draft',
-    configuration_version      integer NOT NULL DEFAULT 1,
+    owner_wallet                    text NOT NULL,
+    campaign_type                   text NOT NULL,
+    visibility                      text NOT NULL DEFAULT 'unlisted',
+    title                           text NOT NULL,
+    description                     text,
+    status                          text NOT NULL DEFAULT 'draft',
+    configuration_version           integer NOT NULL DEFAULT 1,
     published_configuration_version integer,
-    starts_at                  timestamptz,
-    ends_at                    timestamptz,
-    close_reason               text,
-    configuration_locked_at    timestamptz,
-    published_at               timestamptz,
-    closed_at                  timestamptz,
-    created_at                 timestamptz NOT NULL DEFAULT now(),
-    updated_at                 timestamptz NOT NULL DEFAULT now(),
+    starts_at                       timestamptz,
+    ends_at                         timestamptz,
+    close_reason                    text,
+    configuration_locked_at         timestamptz,
+    published_at                    timestamptz,
+    closed_at                       timestamptz,
+    created_at                      timestamptz NOT NULL DEFAULT now(),
+    updated_at                      timestamptz NOT NULL DEFAULT now(),
 
     CONSTRAINT participation_campaigns_owner_wallet_shape CHECK (
         owner_wallet = lower(trim(owner_wallet))
@@ -366,222 +376,16 @@ CREATE INDEX idx_participation_campaigns_public_window
     ON public.participation_campaigns (visibility, status, ends_at);
 ```
 
-`settlement_id` is created with the product row and cannot be changed after the
-Campaign is published. The owner must match the settlement owner through an
-atomic server-side transition; a client cannot supply a different settlement.
+`settlement_id` is created with the Campaign and cannot change after publication.
+The owner must match the settlement owner through a server-authoritative atomic
+write. There is no stored `claimable` column.
 
-### 3.3 `campaign_claims`
+### 3.4 `settlement_source_bindings`
 
-Create a durable claim-identity and eligibility-proof record. This is not a
-second reward ledger. One row represents a Campaign claim attempt/identity; the
-single reward receipt remains the financial entitlement.
-
-```sql
-CREATE TABLE public.campaign_claims (
-    id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    campaign_id               uuid NOT NULL
-        REFERENCES public.participation_campaigns(id),
-    claimant_wallet            text NOT NULL,
-    claim_nonce_hash           text NOT NULL,
-    challenge_id               uuid NOT NULL UNIQUE
-        REFERENCES public.wallet_challenges(id),
-    evidence_kind              text NOT NULL,
-    evidence_digest            text,
-    strategy_version           integer NOT NULL,
-    status                     text NOT NULL DEFAULT 'issued',
-    issued_at                  timestamptz NOT NULL DEFAULT now(),
-    expires_at                 timestamptz NOT NULL,
-    verified_at                timestamptz,
-    consumed_at                timestamptz,
-    reward_receipt_id          uuid,
-    created_at                 timestamptz NOT NULL DEFAULT now(),
-    updated_at                 timestamptz NOT NULL DEFAULT now(),
-
-    CONSTRAINT campaign_claims_wallet_shape CHECK (
-        claimant_wallet = lower(trim(claimant_wallet))
-        AND claimant_wallet ~ '^[0-9a-f]{40}$'
-    ),
-    CONSTRAINT campaign_claims_nonce_not_empty CHECK (length(trim(claim_nonce_hash)) > 0),
-    CONSTRAINT campaign_claims_evidence_kind CHECK (
-        evidence_kind IN ('verified_wallet', 'secret', 'allowlist',
-                          'event_proof', 'community_membership')
-    ),
-    CONSTRAINT campaign_claims_evidence_digest_required CHECK (
-        evidence_kind = 'verified_wallet'
-        OR (evidence_digest IS NOT NULL AND length(trim(evidence_digest)) > 0)
-    ),
-    CONSTRAINT campaign_claims_strategy_version_positive CHECK (strategy_version > 0),
-    CONSTRAINT campaign_claims_status CHECK (
-        status IN ('issued', 'eligible', 'consumed', 'expired', 'rejected')
-    ),
-    CONSTRAINT campaign_claims_expiry_after_issue CHECK (expires_at > issued_at)
-);
-
-CREATE UNIQUE INDEX idx_campaign_claims_campaign_wallet
-    ON public.campaign_claims (campaign_id, claimant_wallet);
-CREATE UNIQUE INDEX idx_campaign_claims_campaign_nonce
-    ON public.campaign_claims (campaign_id, claim_nonce_hash);
-CREATE INDEX idx_campaign_claims_expiry
-    ON public.campaign_claims (campaign_id, status, expires_at);
-```
-
-`reward_receipt_id` is populated only by the shared reservation transition after
-the financial schema has been re-rooted. It is never accepted from a browser.
-The implementation must add its FK in the migration phase where the generic
-receipt relationship exists, avoiding a circular-creation failure.
-The claim-write function must also verify that `challenge_id` points to a
-`wallet_challenges` row with `purpose = 'campaign_claim'`, the same Campaign ID,
-the same nonce hash, and the same canonical wallet; this cross-table invariant
-cannot be expressed by the table check constraints alone.
-
-### 3.4 `campaign_allowlist_entries`
-
-Use one versioned, canonical-address table for Private Drop and the initial
-internal Community Reward membership set. It is private and service-role
-managed.
-
-```sql
-CREATE TABLE public.campaign_allowlist_entries (
-    id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    campaign_id               uuid NOT NULL
-        REFERENCES public.participation_campaigns(id),
-    entry_kind                 text NOT NULL,
-    configuration_version      integer NOT NULL,
-    wallet_address             text NOT NULL,
-    created_at                 timestamptz NOT NULL DEFAULT now(),
-    revoked_at                 timestamptz,
-
-    CONSTRAINT campaign_allowlist_kind CHECK (
-        entry_kind IN ('private_allowlist', 'community_member')
-    ),
-    CONSTRAINT campaign_allowlist_version_positive CHECK (configuration_version > 0),
-    CONSTRAINT campaign_allowlist_wallet_shape CHECK (
-        wallet_address = lower(trim(wallet_address))
-        AND wallet_address ~ '^[0-9a-f]{40}$'
-    ),
-    CONSTRAINT campaign_allowlist_revocation_order CHECK (
-        revoked_at IS NULL OR revoked_at >= created_at
-    )
-);
-
-CREATE UNIQUE INDEX idx_campaign_allowlist_unique_wallet
-    ON public.campaign_allowlist_entries
-       (campaign_id, entry_kind, configuration_version, wallet_address);
-CREATE INDEX idx_campaign_allowlist_lookup
-    ON public.campaign_allowlist_entries
-       (campaign_id, entry_kind, configuration_version, wallet_address)
-    WHERE revoked_at IS NULL;
-```
-
-Published configuration versions are immutable. A replacement import creates a
-new version, and the Campaign selects that version before publication. Direct
-updates/deletes of an activated version are rejected by a trigger or security-
-definer write function.
-
-### 3.5 `campaign_secrets`
-
-Store only a strong verifier. A raw secret, code, QR payload, or plaintext
-token is never stored.
-
-```sql
-CREATE TABLE public.campaign_secrets (
-    id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    campaign_id               uuid NOT NULL
-        REFERENCES public.participation_campaigns(id),
-    configuration_version      integer NOT NULL,
-    digest_scheme              text NOT NULL DEFAULT 'argon2id-v1',
-    secret_digest              text NOT NULL,
-    max_uses                   integer NOT NULL DEFAULT 1,
-    consumed_uses              integer NOT NULL DEFAULT 0,
-    status                     text NOT NULL DEFAULT 'active',
-    expires_at                 timestamptz,
-    created_at                 timestamptz NOT NULL DEFAULT now(),
-    revoked_at                 timestamptz,
-    updated_at                 timestamptz NOT NULL DEFAULT now(),
-
-    CONSTRAINT campaign_secrets_scheme CHECK (digest_scheme = 'argon2id-v1'),
-    CONSTRAINT campaign_secrets_digest_not_empty CHECK (length(trim(secret_digest)) > 0),
-    CONSTRAINT campaign_secrets_version_positive CHECK (configuration_version > 0),
-    CONSTRAINT campaign_secrets_use_range CHECK (
-        max_uses > 0 AND consumed_uses >= 0 AND consumed_uses <= max_uses
-    ),
-    CONSTRAINT campaign_secrets_status CHECK (
-        status IN ('active', 'exhausted', 'revoked', 'expired')
-    ),
-    CONSTRAINT campaign_secrets_revocation_order CHECK (
-        revoked_at IS NULL OR revoked_at >= created_at
-    )
-);
-
-CREATE UNIQUE INDEX idx_campaign_secrets_digest
-    ON public.campaign_secrets (campaign_id, configuration_version, secret_digest);
-CREATE INDEX idx_campaign_secrets_active
-    ON public.campaign_secrets (campaign_id, configuration_version, status, expires_at);
-```
-
-The strategy service performs a constant-time verifier comparison and atomically
-consumes usage. It applies wallet, Campaign, and IP rate limits outside the
-financial RPC. Invalid secret responses are generic and do not reveal whether a
-Campaign, code, or wallet exists.
-
-### 3.6 `campaign_event_proofs`
-
-Model an opaque event activation value for Event Drop. QR and deep-link
-transport is a presentation mechanism; the stored value is still a hash.
-
-```sql
-CREATE TABLE public.campaign_event_proofs (
-    id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    campaign_id               uuid NOT NULL
-        REFERENCES public.participation_campaigns(id),
-    configuration_version      integer NOT NULL,
-    proof_kind                 text NOT NULL,
-    proof_digest               text NOT NULL,
-    max_uses                   integer NOT NULL DEFAULT 1,
-    consumed_uses              integer NOT NULL DEFAULT 0,
-    status                     text NOT NULL DEFAULT 'active',
-    starts_at                  timestamptz,
-    expires_at                 timestamptz,
-    created_at                 timestamptz NOT NULL DEFAULT now(),
-    revoked_at                 timestamptz,
-    updated_at                 timestamptz NOT NULL DEFAULT now(),
-
-    CONSTRAINT campaign_event_proofs_kind CHECK (
-        proof_kind IN ('event_code', 'opaque_link', 'qr_payload')
-    ),
-    CONSTRAINT campaign_event_proofs_digest_not_empty CHECK (
-        length(trim(proof_digest)) > 0
-    ),
-    CONSTRAINT campaign_event_proofs_version_positive CHECK (configuration_version > 0),
-    CONSTRAINT campaign_event_proofs_use_range CHECK (
-        max_uses > 0 AND consumed_uses >= 0 AND consumed_uses <= max_uses
-    ),
-    CONSTRAINT campaign_event_proofs_status CHECK (
-        status IN ('active', 'exhausted', 'revoked', 'expired')
-    ),
-    CONSTRAINT campaign_event_proofs_window_valid CHECK (
-        (starts_at IS NULL OR expires_at IS NULL OR expires_at > starts_at)
-        AND (revoked_at IS NULL OR revoked_at >= created_at)
-    )
-);
-
-CREATE UNIQUE INDEX idx_campaign_event_proofs_digest
-    ON public.campaign_event_proofs
-       (campaign_id, configuration_version, proof_digest);
-CREATE INDEX idx_campaign_event_proofs_active
-    ON public.campaign_event_proofs
-       (campaign_id, configuration_version, status, expires_at);
-```
-
-No native scanner API is assumed. Device behavior for Nimiq Pay deep links must
-be proven separately before Event Drop is physically QA-ready.
-
-### 3.7 `settlement_source_bindings`
-
-Use a narrow controlled binding table. It is not a Campaign/ Poll mega-table:
-it has no title, type configuration, eligibility fields, balances, vault data,
-or transaction data. Its two nullable source FKs are constrained so exactly one
-real adapter is present.
+Create a narrow source relationship. The final shape uses two nullable source
+FKs only because PostgreSQL needs real foreign keys for the two distinct source
+tables; a check constraint permits exactly one branch. This table is not a
+polymorphic product/financial mega-table.
 
 ```sql
 CREATE TABLE public.settlement_source_bindings (
@@ -609,103 +413,72 @@ CREATE TABLE public.settlement_source_bindings (
 );
 ```
 
-Add a security-definer consistency trigger or write function enforcing:
+The binding write path additionally enforces:
 
-- `reward_campaigns.settlement_id = settlement_source_bindings.settlement_id`
-  for Poll adapters;
-- `participation_campaigns.settlement_id = settlement_source_bindings.settlement_id`
-  for standalone Campaigns;
-- the source owner equals the root owner at creation and publication;
-- a binding cannot be changed after the settlement has a funding intent or a
-  reservation.
+- Poll adapter `reward_campaigns.settlement_id` equals the binding
+  `settlement_id`.
+- Campaign `participation_campaigns.settlement_id` equals the binding
+  `settlement_id`.
+- Source owner equals root owner under canonical address comparison.
+- A binding cannot change after funding intent, reservation, or any financial
+  child row exists.
+- A root has exactly one binding and cannot be both a Poll and Campaign source.
 
-### 3.8 Changes to existing reward tables
+The initial Poll-only migration creates the table with the Poll branch. The
+Campaign branch and its FK are added only after `participation_campaigns` exists
+in the V2C.2C migration.
 
-The financial root cutover is part of V2C.2 design even though it is not
-implemented by this document:
+### 3.5 Additive changes to existing tables
 
-- Add `reward_campaigns.settlement_id uuid REFERENCES reward_settlements(id)`
-  as a nullable staging column before the backfill, then set it `NOT NULL` and
-  `UNIQUE` only after every existing row is populated. Existing `poll_id uuid
-  NOT NULL UNIQUE REFERENCES polls(id)` remains exactly as-is.
-- Backfill one `reward_settlements` row for every existing
-  `reward_campaigns` row, preserving the existing UUID as the settlement UUID.
-  This keeps all shipped Poll `campaignId` aliases stable.
-- Re-root `reward_funding_transactions.campaign_id` as
-  `settlement_id REFERENCES reward_settlements(id)` without changing intent
-  UUIDs, references, hashes, or status values.
-- Re-root `reward_receipts.campaign_id` as
-  `settlement_id REFERENCES reward_settlements(id)`. Retain `poll_id` as a
-  nullable Poll compatibility projection during the first cutover; generic
-  services do not use it. A later read-model migration may remove it only after
-  all Poll proof consumers are moved to the binding.
-- Re-root `reward_refunds.campaign_id` as
-  `settlement_id REFERENCES reward_settlements(id)` without changing refund
-  UUIDs or chain proof.
-- Re-root `reward_campaign_vaults.campaign_id` as
-  `settlement_id REFERENCES reward_settlements(id)`. Retain the physical table
-  name until all server loaders are migrated; its ciphertext, IV, auth tag, and
-  private access rules do not change.
-- Resolve `reward_payout_attempts` through the re-rooted receipt. No second
-  payout-attempt table is added.
-- Retain old financial columns on `reward_campaigns` only as a temporary
-  compatibility projection while the RPC and generated-type cutover lands.
-  They are not authoritative, are not writable by new code, and must be
-  transactionally checked against the root until a later cleanup removes them.
-  During the transition, every root financial write refreshes the compatibility
-  projection in the same transaction, and any direct divergent write is rejected
-  by a consistency guard.
-
-The target state has one root ledger. A temporary compatibility projection is
-not a second ledger: every financial mutation is rooted in
-`reward_settlements`, and Poll adapter reads are resolved through the root.
-
-### 3.9 Wallet challenge extension required for claims
-
-The current wallet challenge cannot prove a Campaign claim because it has no
-Campaign purpose or claim nonce. Before a Campaign claim endpoint exists, add
-these fields to `wallet_challenges`:
+These are staged references, not immediate in-place renames:
 
 ```sql
-ALTER TABLE public.wallet_challenges
-  ADD COLUMN purpose text NOT NULL DEFAULT 'wallet_session',
-  ADD COLUMN campaign_id uuid REFERENCES public.participation_campaigns(id),
-  ADD COLUMN claim_nonce_hash text;
+ALTER TABLE public.reward_campaigns
+  ADD COLUMN settlement_id uuid REFERENCES public.reward_settlements(id);
 
-ALTER TABLE public.wallet_challenges
-  ADD CONSTRAINT wallet_challenges_campaign_purpose CHECK (
-  (purpose = 'wallet_session'
-   AND campaign_id IS NULL
-   AND claim_nonce_hash IS NULL)
-  OR
-  (purpose = 'campaign_claim'
-   AND campaign_id IS NOT NULL
-   AND claim_nonce_hash IS NOT NULL
-   AND length(trim(claim_nonce_hash)) > 0)
-  );
+ALTER TABLE public.reward_funding_transactions
+  ADD COLUMN settlement_id uuid REFERENCES public.reward_settlements(id);
+
+ALTER TABLE public.reward_receipts
+  ADD COLUMN settlement_id uuid REFERENCES public.reward_settlements(id);
+
+ALTER TABLE public.reward_refunds
+  ADD COLUMN settlement_id uuid REFERENCES public.reward_settlements(id);
+
+ALTER TABLE public.reward_campaign_vaults
+  ADD COLUMN settlement_id uuid REFERENCES public.reward_settlements(id);
 ```
 
-The exact constraint name and migration syntax must follow the repository's
-existing migration conventions. Existing wallet-session challenges remain
-valid. Campaign challenge messages bind purpose, Campaign ID, canonical wallet,
-nonce, domain, issue time, and expiry.
+The implementation must then:
+
+1. Backfill each new column from the Poll adapter/root relationship.
+2. Validate 100 percent coverage and exact identity relationships.
+3. Add the required indexes and `NOT NULL` constraints after validation.
+4. Switch services and RPCs to the new settlement columns.
+5. Retain old `campaign_id` columns temporarily only as frozen Poll compatibility
+   fields where shipped SQL/read models still need them.
+6. Remove or deprecate old columns only in a later cleanup after full regression.
+
+`reward_payout_attempts` continues through `reward_receipts`; it does not need a
+second direct source column. No claim, secret, allowlist, event-proof, or
+community-membership table is created in V2C.2.
 
 ## 4. Relationship Model
 
 ### 4.1 Poll relationship
 
-The exact Poll path is:
+The required Poll relationship is:
 
 ```text
 polls.id
   1 -> 0..1 reward_campaigns.poll_id
-  reward_campaigns.id
+reward_campaigns.id
   1 -> 1 reward_campaigns.settlement_id
-  reward_campaigns.settlement_id
+reward_campaigns.settlement_id
   1 -> 1 reward_settlements.id
 ```
 
-The source binding records the same relationship for generic resolution:
+The source binding represents the same relationship:
 
 ```text
 reward_campaigns.id
@@ -714,101 +487,111 @@ settlement_source_bindings.settlement_id
   -> reward_settlements.id
 ```
 
-The Poll resolver must verify all of these identities before returning a
-settlement context:
+The Poll resolver must verify:
 
-1. `poll_votes.poll_id` equals the route Poll ID.
+1. `poll_votes.poll_id` equals the requested Poll ID.
 2. `reward_campaigns.poll_id` equals that Poll ID.
 3. `reward_campaigns.settlement_id` equals the binding settlement ID.
-4. The binding source type is `poll_reward_campaign`.
-5. Poll owner, adapter owner, and settlement owner match canonically.
-6. The Poll is explicitly `economic_model = 'reward_first'` and
-   `reward_mode = 'rewarded'` for the reward path.
+4. Binding type is `poll_reward_campaign`.
+5. Poll owner, adapter owner, and root owner match canonically.
+6. Reward eligibility still requires public Poll,
+   `economic_model = 'reward_first'`, and `reward_mode = 'rewarded'`.
 
-The Poll adapter reads only source identity and the root binding to establish
-eligibility. Amount, capacity, vault, fee, state, and first reservation time are
-loaded by the reservation/settlement services from `reward_settlements`.
+The Poll adapter reads the source relationship and root identity only. It does
+not load root amount, capacity, vault, fee, state, or accounting to establish
+source eligibility.
 
 ### 4.2 Standalone Campaign relationship
 
-The exact standalone path is:
+The required Campaign relationship is:
 
 ```text
 participation_campaigns.id
   1 -> 1 participation_campaigns.settlement_id
-  participation_campaigns.settlement_id
+participation_campaigns.settlement_id
   1 -> 1 reward_settlements.id
 ```
 
-The binding records `source_type = 'participation_campaign'` and the same
-Campaign/root IDs. A Campaign never obtains a Poll ID as a substitute identity.
-There is no `poll_id` column in `participation_campaigns`, and no standalone
-Campaign creates a `reward_campaigns` row.
+The Campaign branch of `settlement_source_bindings` records the same IDs. A
+standalone Campaign has no `poll_id` and never creates a `reward_campaigns` row.
 
-### 4.3 Financial child relationship
-
-After root cutover:
+### 4.3 Financial child relationship after cutover
 
 ```text
 reward_settlements
-  -> reward_funding_transactions
-  -> reward_receipts
-      -> reward_payout_attempts
-  -> reward_refunds
-  -> reward_campaign_vaults (physical compatibility name)
+  -> reward_funding_transactions.settlement_id
+  -> reward_receipts.settlement_id
+       -> reward_payout_attempts.receipt_id
+  -> reward_refunds.settlement_id
+  -> reward_campaign_vaults.settlement_id
 ```
 
-Every child relationship is checked against the requested settlement ID before
-any loaded value is used. A receipt, attempt, funding intent, refund, or vault
-from another settlement must fail closed.
+During the additive migration, the old `campaign_id` columns remain for
+compatibility and are checked against the new settlement ID. After the atomic
+authority cutover, new financial writes use only settlement-rooted authority.
 
 ### 4.4 Historical Poll preservation
 
-No historical Poll is converted into a Campaign. Existing Poll reward campaign
-rows receive a root and binding with stable IDs. Existing Poll votes, options,
-receipts, payout attempts, funding hashes, refund hashes, automatic payout
-behavior, public Poll response shape, and support records remain semantically
-unchanged.
+No historical Poll becomes a Campaign. Existing Poll reward rows receive a root
+with the same UUID and a Poll binding. Existing vote/option records, reward IDs,
+financial hashes, public Poll read shapes, support records, and automatic payout
+semantics remain intact.
 
-The root migration is an identity and authority migration, not a product data
-rewrite. Any row that cannot be backfilled with a valid owner, integer-Luna
-terms, root state, vault relationship, or Poll binding blocks the migration and
-is reported for manual repair; it is never silently guessed.
+If a historical wallet value is a valid alternate representation, the preflight
+records its canonical equivalent for root matching but leaves the old source
+column unchanged. If it is invalid or collides after normalization, backfill
+stops for manual repair instead of guessing or rewriting identity.
 
 ## 5. Campaign Type Configuration
 
-V2C.2 stores configuration for five types. It does not implement claim flows,
-strategy evaluation, Campaign UI, discovery, or payout execution for a
-standalone Campaign.
+V2C.2 retains exactly five type literals in `participation_campaigns.campaign_type`.
+They are selectable/storable product configuration values, not implemented
+eligibility strategies.
 
-| Type | Product configuration | Eligibility record | What unlocks the shared engine |
+| Type | V2C.2 product/configuration state | Deferred capability | V2C.2 readiness |
 |---|---|---|---|
-| `public_giveaway` | Public or unlisted presentation, title/description, window, settlement terms | No extra proof row | Verified wallet, available capacity, and a server-created Campaign claim |
-| `secret_drop` | Secret-drop window and versioned secret configuration | `campaign_secrets.secret_digest`; no plaintext | Verified wallet plus a server-verified, unexpired, unconsumed secret result |
-| `private_drop` | Private visibility and an activated allowlist version | `campaign_allowlist_entries.entry_kind = 'private_allowlist'` | Verified wallet found in the immutable active allowlist version |
-| `event_drop` | Event window and event proof version | `campaign_event_proofs` hash; QR/deep link is opaque transport | Verified wallet plus a Campaign-bound, scoped, unexpired event proof |
-| `community_reward` | Community visibility and internal membership-set version | `campaign_allowlist_entries.entry_kind = 'community_member'` | Verified wallet found in the server-authoritative membership set |
+| `public_giveaway` | Type, title, visibility, window, root terms, and funding readiness | Claim identity, claim route, reservation, payout, proof, and management slice V2C.3 | Product/configuration foundation ready; claim deferred |
+| `secret_drop` | Type can be selected and stored as a draft | Secret verifier/storage and claim flow | Type selectable/storable; strategy deferred |
+| `private_drop` | Type can be selected and stored as a draft | Allowlist storage and claim flow | Type selectable/storable; strategy deferred |
+| `event_drop` | Type can be selected and stored as a draft | Event proof, QR/deep-link transport, and claim flow | Type selectable/storable; strategy deferred |
+| `community_reward` | Type can be selected and stored as a draft | Membership set and claim flow | Type selectable/storable; strategy deferred |
 
-`funding_mode = 'community'` on a settlement means a designated wallet funds
-the budget. It does not mean Community Reward eligibility. The two concepts must
-remain separate in storage, APIs, and authorization.
+Unsupported types remain non-publishable until their future strategy capability
+is registered. They are never treated as claimable merely because their type
+literal is present.
 
-### 5.1 Configuration rules
+### 5.1 Configuration fields
 
-- A Campaign is created with a settlement in `configured` state and product
-  status `draft`.
-- Configuration writes are owner-authorized through a verified session and a
-  server-side Campaign lookup. The body cannot choose owner, settlement ID,
-  vault, current financial state, or balances.
-- Publish validates the type-specific configuration and freezes the selected
-  `configuration_version`. Published strategy records are immutable.
-- Settlement terms are integer Luna and are created through the shared financial
-  configuration boundary. The client cannot submit a trusted principal, fee,
-  total, capacity, or refund recipient.
-- Campaign type is immutable after publication. Changing type requires a new
-  Campaign and a new settlement.
-- Unsupported or incomplete types remain drafts. They are not represented as
-  claimable or funded Campaigns.
+V2C.2 configuration includes:
+
+- owner wallet derived from the verified session;
+- type literal;
+- title and description;
+- public/unlisted/private visibility;
+- optional start and end window;
+- version and publication lock markers;
+- settlement reward amount, participant cap, fee reserve, and total budget;
+- designated funding mode and funding wallet;
+- deterministic funding readiness, including a valid root, binding, vault
+  relationship, and valid integer-Luna terms.
+
+It does not include a strategy-specific secret, allowlist, event proof, QR value,
+community member list, claim nonce, claim status, receipt, or participant.
+
+### 5.2 NIM economics configuration
+
+Reuse the current reward economics from `src/lib/rewards/config.ts` and
+`src/lib/rewards/constants.ts`:
+
+```text
+reward_principal_luna = reward_per_participant_luna * max_participants
+fee_reserve_luna      = estimated_fee * max_participants * safety_multiplier
+```
+
+The current constants are integer Luna, a 1,000 Luna minimum reward, a 4,000
+Luna estimated transaction fee, and a 2x safety multiplier. V2C.2 does not
+change that policy. The server derives all values with BigInt; the client cannot
+author principal, fee, total, cap, or refund destination.
 
 ## 6. Lifecycle State Model
 
@@ -822,368 +605,294 @@ draft -> published -> closed
                     \-> cancelled
 ```
 
-- `draft`: configuration may change; no public claim surface exists.
-- `published`: configuration is frozen; public/unlisted/private presentation is
-  allowed, but claims remain blocked unless the settlement is funded and the
-  Campaign-specific strategy is implemented.
-- `closed`: owner or source policy closed the Campaign.
-- `expired`: the configured Campaign window elapsed and the source adapter
-  produced an `expired`/`elapsed` closure reason.
-- `cancelled`: owner-authorized cancellation policy completed at the product
-  layer; financial refund remains independently observable.
+- `draft`: configuration can change; no participant flow exists.
+- `published`: configuration is frozen, subject to funding and future strategy
+  gates.
+- `closed`: an explicit product/source closure was recorded.
+- `expired`: the configured product window elapsed.
+- `cancelled`: an owner-authorized product cancellation was recorded.
 
-Product state never substitutes for financial state. `published` does not mean
-funded, and `closed` does not mean refunded.
+There is deliberately no stored `claimable` product state and no product
+`active` state that duplicates financial status.
 
 ### 6.2 Financial lifecycle
 
-`reward_settlements.status` retains the existing V2B.2 vocabulary:
+`reward_settlements.status` retains the current financial vocabulary:
 
 ```text
 configured -> funding_pending -> funded -> rewarding -> exhausted
                                        \-> closed -> refunding -> refunded
-configured/funded -> cancelled (only through an explicit policy)
+configured/funded -> cancelled (explicit policy only)
 ```
 
-Rules:
+Product and financial transitions remain separate:
 
-- Funding intent is allowed only for a configured root and a designated funder.
-- Funding confirmation is the only transition to `funded` and requires chain
-  observation/finality.
-- First reservation sets `first_reservation_at` exactly once and changes
-  `funded` to `rewarding` or `exhausted` under the root lock.
-- `rewarding` and `exhausted` are financial states, not Campaign product
-  statuses. A product may remain published while a root is exhausted, but no
-  new receipt can be created.
-- A close trigger freezes new obligations before refund preparation. A closed
-  or refunding root cannot accept a new reservation.
-- `refunded` requires confirmed refund proof. A product `closed` or `expired`
-  row may temporarily point at a root in `closed`, `refunding`, or
-  `refunded`.
-- Financial attempt states (`submitted`, `pending`, `retryable`, `confirmed`)
-  remain on their child rows and are not copied into product Campaign status.
+- `published` does not mean funded.
+- `funded` does not mean claimable.
+- `closed` does not mean refunded.
+- `refunded` requires final chain proof.
+- Attempt states remain on funding/payout/refund child rows, not on the product
+  Campaign state.
 
-### 6.3 First-reservation configuration freeze
+### 6.3 Derived claimability model
+
+The conceptual future read-model predicate is:
+
+```text
+claimable =
+  product status = published
+  AND supported strategy is implemented
+  AND current product window permits participation
+  AND settlement status is funded or rewarding
+  AND settlement capacity remains
+```
+
+V2C.2 evaluates this predicate as false for every standalone Campaign because
+no Campaign participant claim path or supported strategy is implemented. The
+predicate is never persisted as a mutable product state.
+
+### 6.4 Configuration freeze
 
 The existing `first_reservation_at` boundary remains the one-time financial
-freeze. No Campaign term that affects principal, capacity, fee reserve, refund
-policy, owner, funder, type, or strategy version may be changed after it is set.
-The database transition, not a browser or stale service snapshot, enforces this.
+freeze. Before that boundary, configuration may be edited only within the
+allowed product/settlement state. After it, no term affecting owner, funder,
+reward amount, cap, fee reserve, refund policy, type, or strategy version can
+change. V2C.2 does not implement claims that set this boundary.
 
-## 7. Claim Identity and Replay Safety
+## 7. Deferred Claim Identity and Replay Safety
 
-### 7.1 Claim identity
+This section is a future design note only. It does not create
+`campaign_claims`, modify `wallet_challenges`, add a claim nonce, or enable a
+participant flow in V2C.2.
 
-The identity boundary is:
+### 7.1 Public Giveaway next slice
+
+V2C.3 must define the first claim identity as:
 
 ```text
 Campaign ID
   + canonical claimant wallet
-  + server-generated random claim nonce
+  + server-generated random nonce
   + Campaign-bound wallet challenge
-  + strategy-specific durable evidence
+  + durable server eligibility decision
 ```
 
-`campaign_claims` stores the canonical wallet, a hash of the claim nonce, the
-one-time challenge ID, evidence kind/digest, strategy version, and claim state.
-It never stores a raw secret, QR payload, browser wallet assertion, reward
-amount, vault address, or settlement balance.
+The future claim record must enforce one canonical wallet claim per Campaign and
+must bind challenge purpose, Campaign ID, wallet, nonce, issue time, and expiry.
+It must store hashes or opaque identifiers, not raw nonce material.
 
-The unique financial/product boundary is:
+### 7.2 Replay requirements
 
-```text
-UNIQUE (campaign_id, claimant_wallet)
-```
+Before any claim release, future work must prove:
 
-This means one canonical wallet can claim once per Campaign. It does not claim
-that a wallet is a unique human or defeat Sybil behavior beyond the declared
-one-wallet boundary.
+- nonce consumption is atomic and single-use;
+- cross-Campaign, cross-wallet, expired, and malformed replay fails closed;
+- replay returns no second receipt or payout attempt;
+- duplicate wallet checks happen before capacity can be consumed;
+- claim identity is not treated as unique-human identity;
+- the reservation service receives only a server-produced minimal participation
+  context.
 
-### 7.2 Challenge protocol
+No one of these requirements is implemented by V2C.2.
 
-The existing generic wallet proof challenge is not reused unchanged. A future
-Campaign claim challenge must bind:
+### 7.3 Wallet challenge extension
 
-```text
-purpose = campaign_claim
-campaign_id
-canonical claimant wallet
-random nonce
-issue time
-expiry
-same-origin domain
-```
+The current wallet challenge remains unchanged in V2C.2. Its current message is
+for ordinary wallet verification and has no Campaign ID or claim purpose. A
+future claim slice may extend the challenge model or add a separate Campaign-
+bound challenge record, but must not overload the existing message semantics
+without a dedicated migration and regression gate.
 
-The server creates the nonce, stores only its hash, and creates a challenge
-message from those server values. Verification checks the session wallet,
-canonical address, public-key-derived address, signature, challenge purpose,
-Campaign ID, nonce hash, expiry, and single-use state. Challenge consumption
-and claim eligibility transition are atomic.
+## 8. Deferred Eligibility Strategy Boundary
 
-### 7.3 Replay behavior
-
-- Replaying a consumed nonce returns a generic safe replay result and performs no
-  financial mutation.
-- Replaying a consumed Campaign claim returns the original safe claim/receipt
-  identity only to the same verified wallet where product policy permits; it does
-  not create another receipt or payout attempt.
-- A second canonical wallet claim is rejected before capacity is evaluated for
-  that wallet, preserving replay semantics even after the final slot is taken.
-- A stale, expired, cross-Campaign, cross-wallet, malformed, or already-used
-  proof fails closed with a non-enumerating error.
-- An adapter cannot mark a claim eligible by returning a browser boolean. It
-  must create or resolve a durable server claim row.
-
-## 8. Eligibility Strategy Boundary
-
-Each strategy implements a server-only adapter boundary:
-
-```text
-verified session wallet
-  + Campaign ID
-  + untrusted opaque evidence
-  -> source-specific validation
-  -> durable campaign_claims row
-  -> generic RewardParticipationContext
-  -> generic reservation
-```
+This section records future boundaries without adding their tables or code.
 
 ### 8.1 Public Giveaway
 
-No secret or allowlist is read. The adapter checks that the Campaign is
-published, the window permits a claim, the settlement binding is valid, and the
-wallet is verified. The reservation RPC remains the capacity and duplicate
-wallet authority.
+The future adapter will use verified wallet identity, Campaign window, settlement
+binding, and remaining capacity. The root reservation RPC remains the authority
+for amount, capacity, owner, recipient, receipt, and lifecycle transition.
 
 ### 8.2 Secret Drop
 
-The browser submits an opaque code. The strategy:
-
-- applies request-size and syntax limits;
-- hashes/verifies against `campaign_secrets.secret_digest` using the configured
-  strong verifier;
-- binds the code to the Campaign, active configuration version, wallet,
-  expiry, and usage policy;
-- increments usage or creates the claim atomically;
-- returns one generic invalid result for missing, invalid, expired, exhausted,
-  or cross-Campaign codes;
-- applies wallet, IP, and Campaign rate limits with monitoring.
-
-The code does not choose an amount, recipient, capacity, or settlement.
+Future work will add a hash-only secret verifier, generic invalid responses,
+Campaign/wallet/IP rate limits, expiry, and replay-safe consumption. No secret
+plaintext or verifier storage exists in V2C.2.
 
 ### 8.3 Private Drop
 
-The strategy canonicalizes the verified wallet and looks up only the active
-immutable allowlist version. Imports and writes are service-role-only. Duplicate
-addresses are rejected or deterministically deduplicated before activation.
-Responses do not reveal whether another wallet is listed.
+Future work will add canonical allowlist import, privacy-safe lookup,
+versioning/activation immutability, duplicate handling, and claim integration.
+No allowlist storage exists in V2C.2.
 
 ### 8.4 Event Drop
 
-The browser submits an opaque code/link value. The strategy verifies its hashed
-proof, Campaign scope, configuration version, time window, use count, and
-replay policy. A QR or deep link contains no financial data and is not treated as
-chain proof. Device/Nimiq Pay behavior must be validated separately; no browser
-native scanner API is assumed.
+Future work will add scoped event proofs, expiry/replay handling, and validated
+opaque QR/deep-link transport. No event-proof storage or scanner behavior exists
+in V2C.2.
 
 ### 8.5 Community Reward
 
-The initial strategy is an internal, versioned server membership set using
-`campaign_allowlist_entries`. No external contributor integration is invented in
-V2C.2. Contributor status is off-chain eligibility evidence; NIM funding and
-NIM payout remain separate.
+Future work will add an internal server-authoritative membership set. It must
+remain distinct from settlement `funding_mode = 'community'`, which only means
+the designated funding wallet supplies NIM. No membership storage exists in
+V2C.2.
 
 ### 8.6 Shared context restriction
 
-The adapter may return only the existing minimal context shape:
-
-```ts
-{
-  source: { type: "campaign_claim", id: claimId },
-  participantWallet,
-  ownerWallet,
-  eligibility: {
-    evidenceId: claimId,
-    evidenceKind: "verified_wallet_claim",
-    verifiedAt,
-  },
-  settlement: {
-    id: settlementId,
-    binding: {
-      sourceType: "campaign_claim",
-      sourceId: campaignId,
-    },
-  },
-}
-```
-
-The context contains no option, secret, allowlist row, event payload, amount,
-capacity, vault, fee, state, or balance. The financial service reloads all
-financial authority under the settlement lock.
+All future adapters must return the existing minimal
+`RewardParticipationContext` shape. It may contain source identity, canonical
+participant/owner identity, server evidence identity, settlement ID, and source
+binding. It must not contain amount, capacity, vault, fee, state, accounting,
+Poll option data, secret material, allowlist contents, event payloads, or client
+booleans.
 
 ## 9. Wallet, Session, and Authorization
 
-### 9.1 Shared identity reuse
+### 9.1 Actual canonical representation decision
 
-Reuse unchanged where the operation is ordinary wallet authentication:
+New V2C.2 root and Campaign wallet columns use canonical lowercase 40-character
+hex because that is the actual output of `Address.toHex()` used by production
+wallet-proof and Poll publish paths, and it is the representation asserted by
+current vault tests and generated fixtures.
 
-- `normalizeAddress` and `addressesEqual`.
-- Public-key-derived address validation.
-- Nimiq wallet signature verification.
-- Single-use generic wallet challenge consumption.
-- Hashed `wallet_sessions` cookie identity, expiry, and revocation.
-- Connected-wallet mismatch handling in the client provider.
+Existing source columns remain untouched. The preflight described in Section
+3.1 is mandatory because current database constraints do not enforce this shape
+on all historical Poll/reward values.
 
-These prove wallet control and authenticate a server request. They do not prove
-Campaign eligibility without the Campaign-bound claim protocol.
+The preflight must report at least:
 
-### 9.2 Role boundaries
+- source row ID and column;
+- original value classification: canonical hex, alternate valid Nimiq format,
+  or invalid;
+- computed canonical value when valid;
+- normalized collisions;
+- owner/funder/participant mismatch under canonical comparison;
+- whether a root snapshot can safely be created.
 
-- **Participant:** verified wallet session matching the claim wallet. Cannot
-  choose economics, recipient, owner, settlement, or claim outcome.
-- **Campaign owner:** verified wallet matching immutable Campaign and settlement
-  owner. May configure before publication and invoke source-specific management
-  policy.
-- **Designated funder:** verified wallet matching settlement `funding_wallet`.
-  May initiate/bind funding. A participant wallet cannot fund through a claim.
-- **Refund recipient:** immutable server-derived `refund_recipient_wallet`,
-  restricted to the owner or designated funder by settlement policy. It is not a
-  body parameter.
-- **Service role:** only role allowed to read private financial/configuration
-  tables and call atomic financial RPCs.
+No automatic rewrite of historical `polls.creator_wallet`,
+`poll_votes.voter_wallet`, `wallet_sessions.wallet_address`,
+`reward_campaigns` wallet fields, or existing child snapshots is allowed.
 
-Creator self-claim remains excluded by default and is checked both in the source
-adapter and in the root reservation transition. This is defense in depth, not a
-client policy.
+### 9.2 Reused identity primitives
 
-### 9.3 Request restrictions
+Reuse unchanged for ordinary wallet authentication:
 
-No Campaign endpoint accepts authoritative values for:
+- `normalizeAddress` and `addressesEqual`;
+- public-key-derived address validation;
+- Nimiq signed-message verification;
+- single-use generic wallet challenge consumption;
+- hashed `wallet_sessions` token, expiry, and revocation;
+- connected-wallet mismatch handling.
 
-- participant or owner wallet;
-- settlement/root ID without server binding resolution;
-- reward amount, principal, fee, total, capacity, or remaining slots;
-- vault address, key reference, sender, or recipient;
-- `eligible`, claim status, financial state, or finality evidence;
-- Poll option ID or selected-option data;
-- refund amount or refund destination.
+A verified session authenticates a wallet. It does not establish Campaign
+eligibility in V2C.2.
+
+### 9.3 Foundation roles
+
+- **Campaign owner:** verified session wallet matching immutable Campaign/root
+  owner; may create and edit a draft through future configuration APIs.
+- **Designated funder:** root `funding_wallet`; can later fund through the
+  shared funding path. V2C.2 does not initiate or bind a transfer.
+- **Participant:** no participant Campaign role exists in V2C.2.
+- **Service role:** reads private foundation/financial tables and invokes
+  service-role-only atomic functions.
+
+Creator self-claim remains a future reservation rule and must be enforced both
+by a future source adapter and the root reservation transition. V2C.2 creates
+no self-claim path.
+
+### 9.4 Request restrictions
+
+Future Campaign configuration APIs must derive, not accept, these values:
+
+- owner wallet;
+- root/settlement ID;
+- financial owner/funder relationship;
+- reward amount, cap, fee reserve, total, and refund policy;
+- vault address/key material;
+- financial state, claimability, receipt status, or chain evidence.
+
+No participant request is accepted in V2C.2.
 
 ## 10. Funding Economics and Refund Policy
 
-### 10.1 Integer-Luna economics
+### 10.1 Funding readiness, not funding execution
 
-All financial values remain integer Luna in database `bigint` columns. The
-shared root derives:
+V2C.2 may validate funding readiness:
 
 ```text
-reward_principal_luna = reward_per_participant_luna * max_rewarded_participants
-total_budget_luna = reward_principal_luna + fee_reserve_luna
+draft Campaign + configured root
+  -> valid integer-Luna terms
+  -> valid owner/funder policy
+  -> valid source/root binding
+  -> existing private vault relationship available
+  -> ready for a later funding intent
 ```
 
-The server validates safe conversion at JavaScript boundaries and keeps BigInt
-for accounting. The browser may display a formatted value but cannot author it.
+It does not create a funding intent, call Nimiq Pay, bind a callback hash,
+observe a transaction, confirm funding, or move NIM.
 
-### 10.2 Funding
+### 10.2 Root economics
 
-The common funding path is:
+All financial values remain integer Luna in PostgreSQL `bigint` and BigInt in
+server calculations:
+
+```text
+reward_principal_luna = reward_per_participant_luna * max_participants
+total_budget_luna     = reward_principal_luna + fee_reserve_luna
+```
+
+The client can display formatted NIM but cannot author any trusted amount.
+
+### 10.3 Future shared funding path
+
+The root funding path remains:
 
 ```text
 verified designated funder
-  -> settlement funding intent
+  -> root-derived funding intent
   -> Nimiq Pay transfer to isolated vault
-  -> bind callback hash
-  -> server observation
-  -> exact recipient/amount/network/finality policy
-  -> funded root
+  -> stored callback hash
+  -> server observation and finality
+  -> exact amount/recipient/network confirmation
+  -> settlement status funded
 ```
 
-The intent snapshots root terms and vault recipient. Hash binding is idempotent
-and guarded against reuse across funding, support, payout, and refund ledgers.
-Underpayment never activates a root.
+Underpayment cannot activate a root. A single confirmed overpayment remains
+`refundable_excess_luna`. Additional distinct or unsolicited vault funds are not
+credited, spent, or automatically refunded; they require explicit reconciliation
+before a funded Campaign can be called safely closed.
 
-V2C.2 retains the current conservative excess policy:
+### 10.4 Future payout/refund accounting
 
-- A single confirmed funding transaction may overpay; the difference is stored
-  as `refundable_excess_luna`.
-- A second distinct funding transaction after confirmation is not credited to
-  principal or fee reserve. It is an unresolved/unattributed balance and must
-  not be silently spent or automatically promised to a participant.
-- Unsolicited vault inflows are not invented as ledger funding and are not
-  automatically swept into a creator refund.
-- Any unresolved or unobserved balance blocks a production Campaign closure
-  decision until an explicit reconciliation/manual-review policy exists.
-
-### 10.3 Payout accounting
-
-The root payout transition must atomically advance both:
+After root cutover, confirmed payout must atomically advance:
 
 ```text
-paid_amount_luna += confirmed receipt amount
-fee_spent_luna  += confirmed payout fee
+paid_amount_luna += exact confirmed receipt amount
+fee_spent_luna  += exact confirmed payout fee
 ```
 
-The values are updated only from the stored signed attempt and exact confirmed
-chain evidence. A root with mismatched receipt totals, fee totals, or negative
-values is not refundable.
+The existing safety boundaries remain mandatory: persist signed bytes/hash before
+network contact, persist the broadcast-start marker before sending, never blindly
+resend hash-bearing uncertainty, allow only bounded hashless pre-broadcast retry,
+and require exact canonical/macro-final proof before `paid`.
 
-The existing safety rules remain mandatory:
+Future closure/refund must lock the root, block new obligations, block unresolved
+reserved/payout-pending/retryable/manual-review work, validate accounting, derive
+the immutable refund recipient, and require final chain proof before `refunded`.
 
-- signed bytes and hash persist before network contact;
-- `broadcast_started_at` persists before `sendTransaction`;
-- hash-bearing or broadcast-started uncertainty is never blindly resent;
-- only definite hashless pre-broadcast failure may create a bounded retry;
-- `paid` requires exact transfer and canonical macro finality.
-
-### 10.4 Closure and refunds
-
-The source adapter determines whether a Campaign has closed, expired, elapsed,
-or been cancelled. The generic closure service then:
-
-1. revalidates the source binding and owner/funder policy;
-2. locks the root;
-3. blocks new reservations;
-4. blocks refund while any `reserved`, `payout_pending`, `retryable`,
-   hash-bearing unknown, or manual-review obligation remains unresolved;
-5. verifies paid principal and confirmed fee accounting;
-6. computes the conservative ledger-known remainder;
-7. derives the immutable refund recipient from root policy;
-8. creates one refund intent;
-9. signs/broadcasts through the existing isolated vault boundary;
-10. observes exact sender, recipient, amount, network, execution, canonical
-    inclusion, and macro finality;
-11. marks the refund confirmed and root `refunded` atomically.
-
-The initial generic policy stores `refund_recipient_wallet` on the root at
-creation. New Campaigns use owner refund for creator-funded roots and funder
-refund for community-funded roots unless an explicit immutable policy says the
-owner receives the remainder. Existing Poll rows preserve their current
-creator-refund semantics during backfill. No refund destination is selected by
-the browser or by observed chain data.
-
-### 10.5 Fee reserve and excess release gate
-
-No Campaign is called funded, production-ready, or physical-QA-ready unless:
-
-- fee spending is advanced from confirmed payout evidence;
-- unresolved payout/retry/manual-review work blocks refund;
-- the one-funding/excess policy is represented in the root and management
-  surface;
-- the vault-balance treatment for unsolicited funds is conservative and
-  auditable;
-- confirmed refund finality is required before terminal closure.
+Existing Poll refund semantics remain creator-refund semantics during backfill.
+New Campaign refund policy must be selected by server policy from owner/funder
+identity, persisted before funding, and never selected by a browser.
 
 ## 11. Shared Settlement Engine and Poll Adapter
 
-### 11.1 Generic service contracts
+### 11.1 Rooted service boundary
 
-V2C.2 changes the financial root behind the V2C.1 service names. The service
-boundary remains settlement-ID based:
+V2C.2 changes the physical authority behind the V2C.1 service names:
 
 ```ts
-interface RewardReservationService {
-  reserve(context: RewardParticipationContext): Promise<RewardReservationResult>;
-}
-
 interface RewardSettlementService {
   beginFunding(settlementId: string, funderWallet: string): Promise<unknown>;
   bindFunding(
@@ -1204,220 +913,208 @@ interface RewardSettlementService {
     viewerWallet: string,
   ): Promise<unknown>;
 }
-
-interface RewardClosureService {
-  prepareRefund(
-    context: RewardClosureContext,
-    authorization: RewardClosureAuthorization,
-  ): Promise<unknown>;
-  executeRefund(settlementId: string, refundId: string): Promise<unknown>;
-}
 ```
 
-These methods load `reward_settlements`, the private vault, and financial child
-rows from server-side stores. No method accepts a Campaign type, secret,
-allowlist value, option ID, browser economics, or client finality evidence.
+The reservation and closure services retain the V2C.1 context restrictions. All
+financial services reload root and child authority server-side; no Campaign
+configuration or future strategy can supply financial snapshots.
 
-### 11.2 Poll adapter after root cutover
+### 11.2 Poll compatibility path
 
-The Poll path remains:
+After root cutover:
 
 ```text
 POST /api/polls/[pollId]/vote
-  -> existing verified session and cast_poll_vote_atomic
+  -> cast_poll_vote_atomic
   -> PollRewardParticipationAdapter
-  -> Poll binding resolver
-  -> RewardReservationService using root settlement ID
+  -> resolve Poll binding to settlement ID
+  -> RewardReservationService
+  -> root-backed reservation RPC
   -> RewardSettlementService.executePayout
 ```
 
-Poll-specific rules stay in the adapter/SQL compatibility boundary:
+Poll-specific rules remain in Poll adapter/compatibility code:
 
-- only public Polls with `reward_first` and `rewarded` enter the reward path;
-- legacy support Polls remain distinct even if a historical reward row exists;
-- free reward-first Polls create no financial obligation;
-- a creator vote remains a valid vote but is reward-ineligible;
-- option identity is not copied into a claim, receipt, payout, refund, or proof;
-- a committed vote is not rolled back because reward work fails;
-- the route response and automatic payout behavior remain unchanged.
+- public Poll plus `reward_first` plus `rewarded` is required;
+- legacy support Polls remain distinct;
+- free reward-first Polls create no reward obligation;
+- creator votes remain valid votes but are reward-ineligible;
+- Poll option data never enters settlement, receipt, payout, refund, or proof;
+- valid vote response remains successful if reward follow-up fails;
+- automatic payout remains automatic and Claim-free.
 
-### 11.3 Campaign adapter after V2C.2
+### 11.3 Vault authority
 
-V2C.2 defines but does not enable a Campaign claim adapter. A future
-`CampaignRewardParticipationAdapter` may resolve a verified `campaign_claims`
-row into the same minimal context. It must pass the root ID obtained from the
-Campaign binding and never read financial amounts merely to decide eligibility.
+`reward_campaign_vaults`, or its later settlement-rooted equivalent, is the only
+private vault custody record. It remains service-role-only, encrypted at rest,
+and protected by the current vault signing boundary. `reward_settlements` has no
+`vault_key_ref`, private key, ciphertext, IV, authentication tag, or duplicate
+vault address authority.
 
-There is no Campaign claim route, Claim button, or payout execution in this
-design delivery.
+The settlement service resolves one vault record by settlement ID and passes key
+material only inside `withCampaignVaultKey`. No Campaign configuration API reads
+or returns vault secrets.
+
+### 11.4 Campaign participation path is deferred
+
+No Campaign adapter, claim route, receipt reservation, payout execution, or
+participant UI is enabled by V2C.2. Public Giveaway is the next vertical slice
+and must use this same rooted engine rather than create a parallel path.
 
 ## 12. Public/Private Data and RLS
 
-### 12.1 Private tables
+### 12.1 V2C.2 private foundation tables
 
-Enable RLS and revoke all `anon` and `authenticated` access for:
+Enable RLS and revoke `anon` and `authenticated` access for:
 
 - `reward_settlements`;
 - `settlement_source_bindings`;
-- `campaign_claims`;
-- `campaign_allowlist_entries`;
-- `campaign_secrets`;
-- `campaign_event_proofs`;
-- `reward_funding_transactions`;
-- `reward_receipts`;
-- `reward_payout_attempts`;
-- `reward_refunds`;
-- `reward_campaign_vaults`.
+- `participation_campaigns` when returning owner/private configuration;
+- all existing financial tables and `reward_campaign_vaults`.
 
-Grant only the minimum service-role operations required by security-definer
-RPCs and server-side stores. No browser receives a Supabase table grant for a
-private row.
+Grant only minimum service-role access needed by server stores and security-
+definer transitions. No client directly reads root balances, funding rows,
+receipts, attempts, refunds, bindings, or vault rows.
 
-### 12.2 Campaign public read model
+Campaign configuration public reads, if introduced after the foundation, must be
+an explicit server read model. It may expose safe Campaign ID/type/title,
+visibility, window, product status, and policy-approved funding readiness. It
+must not expose private owner management data, root financial internals, vault
+material, or unsupported claimability.
 
-If a public Campaign read is added later, it must be an explicit allowlisted
-security-definer function or server read model. It may expose only:
+### 12.2 Deferred private data
 
-- Campaign ID and type;
-- safe title/description/visibility;
-- product status and configured window;
-- safe settlement offer fields such as integer reward amount and remaining
-  capacity only when the product policy allows it;
-- a truthful funded/available indicator derived from the root.
+`campaign_claims`, `campaign_secrets`, `campaign_allowlist_entries`, and
+`campaign_event_proofs` do not exist in V2C.2. Their future RLS, hashing, privacy,
+and error policy must be designed in their respective vertical slices.
 
-It must not expose:
-
-- secret digests, allowlist membership, event proof digests, claim nonce hashes;
-- vault address when not needed, ciphertext, IV, auth tag, or key reference;
-- wallet sessions, challenges, owner authorization details, or internal errors;
-- selected Poll option data;
-- unsupported chain proof or a claim result for another wallet.
-
-Public reads must not imply that a funded balance proves a claim is eligible or
-that a payout hash is final before observation and macro finality.
-
-### 12.3 Error privacy
-
-Secret, allowlist, event, and Campaign existence failures use safe generic
-reason classes. Logs may contain internal correlation IDs but not plaintext
-secrets, decrypted vault keys, session tokens, or full request bodies.
+No V2C.2 response contains claim nonce material, secret material, allowlist
+membership, event proof data, participant data, signed transaction bytes, or
+financial chain evidence not already covered by existing Poll compatibility
+surfaces.
 
 ## 13. Schema Migration and Backfill Order
 
-The implementation must use local, ordered, reviewable migrations. No hosted
-Supabase operation or production data mutation belongs in V2C.2 development.
+No migration is implemented by this review patch. The future migrations must be
+local, ordered, additive where stated, and guarded by explicit backfill tests.
 
-### 13.1 Migration order
+### 13.1 Required migration order
 
-The proposed migration files and order are:
+1. `20260913080000_v2c2_reward_settlements.sql`
+   - create `reward_settlements` with root terms, state, balance, accounting,
+     owner/funder/refund policy, indexes, RLS, and private grants;
+   - do not alter existing Poll or financial rows.
+2. `20260913081000_v2c2_poll_settlement_backfill.sql`
+   - add nullable staging `reward_campaigns.settlement_id`;
+   - create the initial Poll branch of `settlement_source_bindings`;
+   - run canonical wallet preflight and fail on invalid/colliding identity;
+   - insert one root snapshot per existing `reward_campaigns` row, preserving
+     the existing campaign UUID as the root UUID;
+   - set each Poll adapter's staging settlement ID;
+   - insert and validate exactly one Poll binding per reward campaign;
+   - do not switch financial authority.
+3. `20260913082000_v2c2_settlement_child_references.sql`
+   - add nullable `settlement_id` to funding transactions, receipts, refunds,
+     and vaults;
+   - backfill each from the validated Poll adapter/root binding;
+   - validate 100 percent coverage, cross-row identity, indexes, and hash safety;
+   - set `NOT NULL` only after proof;
+   - retain old `campaign_id` columns; do not rename in place.
+4. `20260913083000_v2c2_participation_campaigns.sql`
+   - create `participation_campaigns` with product lifecycle, type literals,
+     configuration, owner, window, and one-to-one root FK;
+   - add owner/type/window/status indexes and private access controls.
+5. `20260913084000_v2c2_campaign_settlement_binding.sql`
+   - add the Campaign branch and FK to `settlement_source_bindings`;
+   - replace the initial Poll-only check with the final exact-one check;
+   - create the Campaign/root consistency guard;
+   - prove a root cannot bind to both source types.
+6. `20260913085000_v2c2_financial_root_cutover.sql`
+   - perform the Phase C root resync immediately before authority switch;
+   - update all current funding, reservation, payout, reconciliation, closure,
+     refund, and vault-lock RPCs to read/write `reward_settlements` and additive
+     `settlement_id` fields only;
+   - preserve physical old IDs, hashes, Poll compatibility aliases, and route
+     response fields;
+   - atomically switch the financial authority under a write-maintenance gate;
+   - freeze old `reward_campaigns` financial columns as historical/read-only
+     compatibility fields; do not continuously dual-write them.
+7. `20260913086000_v2c2_poll_read_root_cutover.sql`
+   - move Poll public reward reads and Poll settlement resolution through the
+     adapter/binding/root;
+   - keep Poll URL and response shapes unchanged;
+   - do not expose root private data.
 
-1. `20260913080000_v2c2_reward_settlement_root.sql`
-   - create `reward_settlements` with exact terms, state, balance, lease,
-     wallet, asset, and accounting constraints;
-   - create indexes and private grants;
-   - do not alter Poll rows.
-2. `20260913081000_v2c2_campaign_entity.sql`
-   - create `participation_campaigns`;
-   - add a nullable staging `reward_campaigns.settlement_id` root FK;
-   - create owner/type/status/window constraints and indexes.
-3. `20260913082000_v2c2_campaign_eligibility_storage.sql`
-   - create `campaign_allowlist_entries`, `campaign_secrets`, and
-     `campaign_event_proofs`;
-   - add immutable-version and service-role-only guards.
-4. `20260913083000_v2c2_campaign_claim_identity.sql`
-   - extend `wallet_challenges` with Campaign purpose/nonce fields;
-   - create `campaign_claims` and its replay/canonical-wallet indexes;
-   - add the `reward_receipt_id` FK only after the generic receipt target is
-     available, or add it in the root cutover migration.
-5. `20260913084000_v2c2_settlement_source_bindings.sql`
-   - create `settlement_source_bindings` with the two real source FKs and exact-
-     one check;
-   - add binding consistency guards.
-6. `20260913085000_v2c2_poll_settlement_backfill.sql`
-   - lock and scan existing `reward_campaigns` in deterministic ID order;
-   - insert one `reward_settlements` row with the same UUID and copied,
-     validated financial values;
-   - set `reward_campaigns.settlement_id` to its own preserved ID, then enforce
-     `NOT NULL` and `UNIQUE`;
-   - insert one Poll binding per row;
-   - abort on any mismatch, duplicate, missing owner, invalid state, invalid
-     terms, or missing vault relationship;
-   - validate row counts and all root/adapter owner and ID relationships.
-7. `20260913086000_v2c2_financial_child_root_cutover.sql`
-   - re-root funding, receipt, refund, and vault foreign keys to
-     `reward_settlements`;
-   - preserve existing UUIDs, hashes, Poll compatibility `poll_id`, and
-     response aliases;
-   - update the atomic RPCs to lock/read/write the root;
-   - make root accounting, fee advancement, finality, and refund freeze the
-     final authority.
-8. `20260913087000_v2c2_public_read_root_cutover.sql`
-   - update Poll public reward reads and settlement loaders to join through the
-     Poll adapter/binding to the root;
-   - expose no new private data;
-   - retain Poll URL and response shapes.
+No V2C.2 migration creates future claim, secret, allowlist, event-proof, or
+community-membership tables. The future claim challenge migration is not part of
+this sequence.
 
-The exact timestamps may change only if the repository has a newer migration;
-the relative order and one-purpose-per-migration boundary may not change.
+### 13.2 Authority phases
 
-### 13.2 Backfill invariants
+The financial authority transition must be implemented as five explicit phases:
 
-Before commit, the backfill test must prove:
+**Phase A - snapshot:** `reward_campaigns` remains the sole financial authority.
+`reward_settlements` contains backfilled snapshots only. No service reads a root
+value as authoritative yet.
 
-- every existing `reward_campaigns` row has exactly one root and one Poll
-  binding;
-- every root backfilled from a Poll has the same stable UUID as its adapter;
-- `reward_campaigns.poll_id` remains `NOT NULL`, unique, and FK-enforced;
-- no root is bound to both a Poll adapter and a Campaign;
-- all owner/funder/refund-wallet values are canonical and policy-valid;
-- principal, fee, total, count, paid, fee-spent, funded, and refundable
-  accounting passes the root constraints;
-- all existing child hashes and IDs remain unique across the same ledgers;
-- all existing vault rows map to exactly one root and remain private;
-- no historical legacy support or free reward-first Poll becomes eligible;
-- no source binding contains an option, vote payload, secret, or amount.
+**Phase B - verify:** prove one-to-one root/adapter/binding coverage, canonical
+identity mapping, vault mapping, child settlement coverage, transaction hash
+uniqueness, and all financial accounting invariants.
 
-### 13.3 Failure and rollback policy
+**Phase C - resync:** immediately before cutover, while financial writes are
+blocked by the deployment/migration gate, lock and resync every root snapshot
+from the current authoritative `reward_campaigns` row and validate again. Do not
+use a stale Phase A snapshot.
 
-- A failed pre-backfill migration is rolled back by the migration transaction;
-  no partial Campaign root is accepted.
-- A backfill mismatch stops the migration and emits the offending stable IDs for
-  manual repair. It does not fabricate defaults or delete rows.
-- After the financial root cutover, rollback is a forward corrective migration,
-  not a destructive database reset. The implementation must not use `git reset`,
-  destructive Supabase resets, or a hosted target to bypass a mismatch.
-- No Campaign may be published or funded until all root/binding validation and
-  local regression gates pass.
+**Phase D - switch:** in one reviewed cutover, change RPCs/services/readers to
+`reward_settlements` and additive settlement references as the only financial
+authority. A request must not observe mixed old/new mutation authority.
+
+**Phase E - freeze:** retain old `reward_campaigns` financial columns only for
+historical/read compatibility where necessary. They are not written, refreshed,
+or treated as a second ledger. Existing Poll compatibility reads move to the
+root/binding.
+
+### 13.3 Backfill failure policy
+
+- Invalid or ambiguous wallet identity blocks backfill; it is never guessed.
+- Normalization collisions block backfill; they are never merged silently.
+- Owner, funder, Poll, vault, child-row, or hash mismatch blocks backfill.
+- Missing root/adapter/binding coverage blocks cutover.
+- Failed pre-cutover migration is rolled back transactionally.
+- After cutover, correction uses a forward migration, not destructive reset or
+  rollback to dual authority.
 
 ## 14. API and Service Contract
 
-V2C.2 designates configuration-only server surfaces. These are planned
-boundaries, not implemented routes in this document.
+V2C.2 plans configuration-only server surfaces. This review patch adds none.
 
-### 14.1 Configuration routes
-
-Planned server-only routes:
+### 14.1 Planned configuration routes
 
 ```text
 POST /api/campaigns
 PATCH /api/campaigns/[campaignId]
 POST /api/campaigns/[campaignId]/publish
-POST /api/campaigns/[campaignId]/close
+GET /api/campaigns/[campaignId]/funding-readiness
 ```
 
-The first three are configuration surfaces. Close only creates a
-source closure decision and enters the shared closure service after that service
-exists for the generic root; it does not accept refund economics.
+These are future creator configuration/readiness boundaries, not implemented in
+V2C.2 review. They may accept title, description, type, visibility, window, and
+validated NIM display input. They derive owner/root/binding and financial terms
+server-side.
 
-The request may contain title, description, type, visibility, window, and
-type-specific configuration evidence. The server derives owner from the
-verified session and derives or loads the root binding. No request may contain
-settlement balances, vault data, claim eligibility, receipt status, payout hash,
-or refund destination.
+They must not accept or return:
 
-### 14.2 Internal modules
+- claim identity or participant data;
+- secret, allowlist, event, QR, or community membership data;
+- client-selected root ID, owner, funder, vault, recipient, or refund address;
+- trusted amount, cap, fee, capacity, state, or claimability;
+- NIM transfer hashes or chain proof.
 
-Planned symbols and responsibilities:
+No Campaign close/refund management endpoint is part of V2C.2. Closure/refund
+execution remains the later generic financial release gate.
+
+### 14.2 Planned internal modules
 
 - `src/lib/campaigns/types.ts`
   - `ParticipationCampaignType`;
@@ -1428,85 +1125,80 @@ Planned symbols and responsibilities:
   - `createParticipationCampaign`;
   - `updateParticipationCampaignDraft`;
   - `publishParticipationCampaign`;
-  - `closeParticipationCampaign`.
-- `src/lib/campaigns/eligibility-config.ts`
-  - type-specific configuration validation only;
-  - no claim evaluation and no financial mutation.
+  - `loadCampaignFundingReadiness`.
 - `src/lib/rewards/settlement-root.ts`
+  - `auditCanonicalWalletRepresentation`;
   - `loadRewardSettlementContext` rooted in `reward_settlements`;
-  - `resolvePollRewardSettlement` through `reward_campaigns` and binding;
-  - `resolveParticipationCampaignSettlement` through Campaign and binding.
-- `src/lib/rewards/poll-participation-adapter.ts`
-  - retain Poll source rules and use the new binding/root resolver.
-- `src/lib/rewards/participation.ts`
-  - retain the minimal source-neutral context and add no Campaign economics.
-- `src/lib/rewards/settlement.ts`, `closure.ts`, `refund-policy.ts`, and the
-  payout/funding loaders
-  - switch physical financial authority from `reward_campaigns` to the root
-    while preserving compatibility method names and outward Poll aliases.
+  - `resolvePollRewardSettlement` through Poll adapter/binding;
+  - `resolveParticipationCampaignSettlement` through Campaign/binding.
+- `src/lib/rewards/settlement.ts`, `reservation-service.ts`, `closure.ts`, and
+  funding/payout/refund loaders
+  - use settlement ID/root authority after Phase D;
+  - retain Poll compatibility aliases only at the outer adapter boundary.
 
-No `CampaignRewardParticipationAdapter` is enabled in V2C.2. Its implementation
-belongs to the first funded Campaign vertical slice after the release gates.
-
-### 14.3 Response rules
-
-Configuration responses may return safe Campaign product data and a public
-Campaign ID. They must not return claim nonce material, digest material, private
-membership, vault ciphertext, session tokens, signed bytes, or unsupported
-financial proof. Existing Poll funding, voting, payout, refund, and public
-reward response shapes remain compatible.
+No Campaign claim adapter or eligibility implementation belongs in these modules
+for V2C.2.
 
 ## 15. Security Threat Model
 
-| Threat | Required control |
+| Threat | V2C.2 control |
 |---|---|
-| Duplicate wallet claims | Database-enforced canonical `(campaign_id, claimant_wallet)` uniqueness plus root-lock reservation replay. |
-| Claim nonce replay | Campaign-bound challenge, hashed nonce, atomic single-use consumption, expiry, and claim status transition. |
-| Secret brute force | Strong hash-only verifier, generic errors, request limits, wallet/IP/Campaign rate limits, monitoring, and no existence oracle. |
-| Allowlist tampering | Service-role-only writes, canonical unique addresses, immutable activated version, import validation, and audit logging. |
-| QR/deep-link reuse | Hashed proof, Campaign/version scope, expiry, use limit, wallet binding, and explicit replay policy. |
-| Creator self-claim | Immutable root/Campaign owner comparison in both adapter and reservation RPC. |
-| Capacity race | Root row lock, replay-before-capacity, atomic receipt insert/counter/status transition, and final-slot concurrency tests. |
-| Client economics forgery | All amount, fee, capacity, owner, funder, vault, and refund values loaded server-side from root rows. |
-| Settlement confusion | Root ID plus source binding checked on every loader and RPC; Poll ID never substitutes for settlement ID. |
-| Duplicate funding hash | Existing cross-ledger hash locks and partial unique indexes retained after root cutover. |
-| Duplicate payout send | Signed bytes/hash persisted before broadcast, broadcast-start marker, vault lease, no resend after uncertainty, bounded hashless retry. |
-| False payment proof | Sole observation adapter plus exact sender/recipient/amount/network/execution/canonical/macro-finality checks before `paid`. |
-| Refund race | Root closure lock, unresolved-obligation block, accounting validation, refund freeze triggers, and finality-gated terminal state. |
-| Vault key exposure | Existing encrypted-at-rest envelope and `withCampaignVaultKey` transient scope; no Campaign table contains key material. |
-| Private data leak | RLS, revoked public grants, explicit read allowlists, generic errors, and no public strategy rows. |
-| Poll semantic regression | `reward_campaigns.poll_id NOT NULL UNIQUE`, explicit Poll discriminator checks, unchanged vote route, automatic payout, and V2C.1E gate. |
-| Fake product readiness | Draft/incomplete types are not claimable, funded, discoverable as available, or represented by fake UI. |
+| Two mutable financial authorities | Phase A snapshot, Phase B verification, Phase C resync, atomic Phase D switch, Phase E freeze. No continuous dual-write. |
+| Poll/Campaign settlement confusion | Explicit adapter/root IDs, source binding, exact-one check, and cross-row consistency guards. |
+| Poll semantic regression | Preserve `reward_campaigns.poll_id NOT NULL UNIQUE`, Poll discriminator checks, automatic payout, and V2C.1E regression gate. |
+| Historical wallet ambiguity | Application-side `normalizeAddress` preflight, collision detection, explicit block on invalid data, no silent source rewrite. |
+| Client economics forgery | Root derives reward amount, cap, fee, total, funder, vault relationship, and refund policy. |
+| Unauthorized Campaign ownership | Owner derives from verified session and is checked against Campaign/root owner on every mutation. |
+| Configuration mutation after publication | Product publication lock and `first_reservation_at` financial freeze are server/database authority. |
+| Vault key exposure | Existing encrypted vault table and `withCampaignVaultKey`; no root `vault_key_ref` or private key material. |
+| Cross-settlement child access | Additive settlement FKs, 100 percent validation, root-scoped loaders, and mismatch rejection. |
+| Duplicate funding hash | Existing cross-ledger hash locks and unique indexes remain required after cutover. |
+| Duplicate payout send | Existing durable signed bytes/hash, broadcast marker, vault lease, unknown-outcome, and bounded retry rules remain required. |
+| False payment/refund proof | Existing server observation, exact transfer checks, canonical inclusion, macro finality, and atomic terminal transition remain required. |
+| Public financial leak | RLS, revoked public table grants, and explicit safe read models. |
+| Unsupported type presented as usable | Type literals may be stored, but unsupported types cannot publish as claimable or enter participant APIs. |
+
+Deferred future threats include secret brute force, allowlist tampering, event
+proof replay, claim nonce replay, and community membership privacy. Those threats
+must block their respective vertical slices but do not justify speculative V2C.2
+tables.
 
 ## 16. TDD Implementation Slices
 
-Each slice is planned RED -> GREEN -> refactor. The slices below are a future
-implementation plan only. They must not be executed as part of this design-only
-delivery.
+These are future implementation slices only. This review patch does not execute
+them. Each slice uses RED -> GREEN -> refactor and must preserve the current
+Poll behavior.
 
-### 16.1 V2C.2A - Root schema and Poll backfill
+### 16.1 V2C.2A - Settlement root, Poll backfill, and source bindings
 
-**Planned commit:** `feat(v2c2): add generic settlement root and Poll bindings`
+**Planned commit:** `feat(v2c2): add settlement root and Poll source bindings`
 
 **Files:**
 
-- Add the migrations from Section 13.1 steps 1, 5, and 6.
-- Add `src/lib/rewards/settlement-root.ts` and its unit tests.
+- Add `supabase/migrations/20260913080000_v2c2_reward_settlements.sql`.
+- Add `supabase/migrations/20260913081000_v2c2_poll_settlement_backfill.sql`.
+- Add `src/lib/rewards/settlement-root.ts`.
+- Add `src/lib/rewards/settlement-root.test.ts`.
 - Add `src/lib/rewards/settlement-root.db.test.ts`.
-- Add/update generated `src/types/database.ts` only from the local schema
-  generator.
+- Regenerate `src/types/database.ts` only from the local resulting schema.
+
+**Symbols:** `auditCanonicalWalletRepresentation`,
+`loadRewardSettlementContext`, `resolvePollRewardSettlement`, and the Poll-only
+initial binding store.
 
 **RED assertions:**
 
-- Root terms and statuses match the exact constraints.
-- Existing Poll reward campaign IDs backfill one-to-one into roots.
-- `poll_id` remains required and unique.
-- A root cannot have two source bindings or a mismatched adapter owner.
-- A Campaign source cannot bind to a Poll adapter.
-- Public/authenticated roles cannot read root, binding, or financial rows.
+- `normalizeAddress` evidence and canonical output are recorded in the test.
+- Invalid historical wallet values and normalization collisions fail closed.
+- Every existing Poll reward row maps to exactly one root with the same UUID.
+- Root snapshots preserve terms, accounting, owner, funder policy, and state.
+- `reward_campaigns.poll_id` remains required, unique, and FK-enforced.
+- Every root has exactly one Poll source binding at the end of the backfill.
+- No financial service reads the snapshot as authority before cutover.
+- Public roles cannot read root/binding rows.
 
-**GREEN work:** create the root, binding, backfill, guarded resolver, and local
-schema assertions without changing Poll route behavior.
+**GREEN work:** create root snapshots and Poll bindings without changing
+financial authority, Poll routes, Poll response shapes, or NIM behavior.
 
 **Commands:**
 
@@ -1517,32 +1209,116 @@ npx tsc --noEmit
 npm run lint
 ```
 
-### 16.2 V2C.2B - Campaign product/configuration entity
+### 16.2 V2C.2B - Additive settlement child references
 
-**Planned commit:** `feat(v2c2): add Campaign configuration boundary`
+**Planned commit:** `feat(v2c2): add settlement references to financial children`
 
 **Files:**
 
-- Add `src/lib/campaigns/types.ts`.
-- Add `src/lib/campaigns/configuration.ts`.
-- Add `src/lib/campaigns/configuration.test.ts`.
-- Add `src/lib/campaigns/configuration.db.test.ts`.
-- Add configuration route tests only if configuration routes are implemented.
-- Add the migration from Section 13.1 step 2.
+- Add `supabase/migrations/20260913082000_v2c2_settlement_child_references.sql`.
+- Update generated `src/types/database.ts` from local schema.
+- Add `src/lib/rewards/settlement-child-compatibility.test.ts`.
+- Add `src/lib/rewards/settlement-child-compatibility.db.test.ts`.
+- Extend existing funding, reservation, payout, refund, and vault DB tests.
+
+**Symbols:** `backfillSettlementReferences`,
+`validateSettlementChildCoverage`, and root-scoped child loaders.
 
 **RED assertions:**
 
-- Owner comes only from the verified session.
-- Exactly five type literals are accepted.
-- Type, owner, and settlement binding become immutable at publication.
-- Window, visibility, title, and description constraints are enforced.
-- Drafts may be edited; published configuration cannot be edited in place.
-- No configuration operation accepts client economics, vault, claim state, or
-  receipt data.
-- No Poll row is created or modified.
+- Nullable `settlement_id` references are additive and initially preserve old
+  Poll `campaign_id` columns.
+- Funding, receipt, refund, and vault rows have 100 percent settlement coverage.
+- Every settlement child agrees with its Poll adapter/root binding.
+- Cross-settlement receipt, attempt, funding, refund, and vault lookup fails.
+- Existing IDs, hashes, Poll `poll_id`, and compatibility aliases remain stable.
+- No child column is renamed or dropped in this slice.
+- No migration creates claim/secret/allowlist/event/community tables.
 
-**GREEN work:** implement draft creation, draft updates, publication validation,
-and safe configuration responses. Do not add claim or discovery routes.
+**GREEN work:** add, backfill, index, validate, and then constrain new settlement
+references. Do not change the active financial authority.
+
+**Commands:**
+
+```text
+npm test -- src/lib/rewards/settlement-child-compatibility.test.ts
+npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/rewards/settlement-child-compatibility.db.test.ts
+npx tsc --noEmit
+npm run lint
+```
+
+### 16.3 V2C.2C - Participation Campaign entity and binding
+
+**Planned commit:** `feat(v2c2): add Campaign product entity and root binding`
+
+**Files:**
+
+- Add `supabase/migrations/20260913083000_v2c2_participation_campaigns.sql`.
+- Add `supabase/migrations/20260913084000_v2c2_campaign_settlement_binding.sql`.
+- Add `src/lib/campaigns/types.ts`.
+- Add `src/lib/campaigns/entity.test.ts`.
+- Add `src/lib/campaigns/entity.db.test.ts`.
+
+**Symbols:** `ParticipationCampaignType`,
+`ParticipationCampaignStatus`, `CampaignVisibility`, and the final exact-one
+`settlement_source_bindings` resolver.
+
+**RED assertions:**
+
+- Exactly five type literals are accepted and stored.
+- Campaign has a one-to-one root settlement and one source binding.
+- Campaign/root owner mismatch fails closed.
+- Campaign type, owner, root, and published configuration version cannot change
+  after publication.
+- No `claimable` product column exists.
+- Unsupported types cannot be published as claimable.
+- No Poll row is created or modified.
+- The Campaign schema contains no claim, secret, allowlist, event, QR, or
+  community membership field.
+
+**GREEN work:** add product entity and root binding only. Do not add a Campaign
+claim adapter, participant route, eligibility evaluation, or UI.
+
+**Commands:**
+
+```text
+npm test -- src/lib/campaigns/entity.test.ts
+npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/campaigns/entity.db.test.ts
+npx tsc --noEmit
+npm run lint
+```
+
+### 16.4 V2C.2D - Creator Campaign draft/configuration APIs and NIM economics
+
+**Planned commit:** `feat(v2c2): add Campaign draft and configuration boundary`
+
+**Files:**
+
+- Add `src/lib/campaigns/configuration.ts`.
+- Add `src/lib/campaigns/configuration.test.ts`.
+- Add `src/lib/campaigns/configuration.db.test.ts`.
+- Add configuration route tests for the planned routes only.
+- Reuse `src/lib/rewards/config.ts`, constants, and settlement-root stores.
+
+**Symbols:** `createParticipationCampaign`,
+`updateParticipationCampaignDraft`, `publishParticipationCampaign`, and
+`loadCampaignFundingReadiness`.
+
+**RED assertions:**
+
+- Owner derives only from the verified session.
+- Draft configuration validates title, description, type, visibility, and window.
+- NIM amount input derives integer-Luna terms through existing reward config.
+- Principal, fee reserve, total, funding wallet, refund policy, root, and vault
+  are server-authoritative.
+- Drafts may change; published configuration cannot change in place.
+- Funding readiness does not create a funding intent or move NIM.
+- Unsupported types remain non-publishable/non-claimable.
+- No claim, strategy, secret, allowlist, event, community, discovery, or UI path
+  is added.
+
+**GREEN work:** add configuration-only server boundaries. Do not add creator
+financial management, closure/refund management, or participant behavior.
 
 **Commands:**
 
@@ -1553,137 +1329,69 @@ npx tsc --noEmit
 npm run lint
 ```
 
-### 16.3 V2C.2C - Versioned eligibility configuration storage
+### 16.5 V2C.2E - Atomic financial-authority cutover
 
-**Planned commit:** `feat(v2c2): add Campaign eligibility configuration storage`
-
-**Files:**
-
-- Add the migration from Section 13.1 step 3.
-- Add `src/lib/campaigns/eligibility-config.ts`.
-- Add `src/lib/campaigns/eligibility-config.test.ts`.
-- Add `src/lib/campaigns/eligibility-config.db.test.ts`.
-
-**RED assertions:**
-
-- Secret rows contain only a strong digest and never plaintext.
-- Allowlist writes canonicalize addresses and reject duplicate version entries.
-- Activated allowlist versions cannot be mutated.
-- Event proofs are hashed and scoped to Campaign/version/expiry.
-- Community membership remains separate from `funding_mode = community`.
-- No strategy configuration creates a receipt, payout, funding intent, or NIM
-  transfer.
-
-**GREEN work:** add service-role configuration/import functions and immutable
-version selection. Do not evaluate a claim or expose strategy rows publicly.
-
-**Commands:**
-
-```text
-npm test -- src/lib/campaigns/eligibility-config.test.ts
-npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/campaigns/eligibility-config.db.test.ts
-npx tsc --noEmit
-npm run lint
-```
-
-### 16.4 V2C.2D - Claim identity schema and challenge binding
-
-**Planned commit:** `feat(v2c2): add Campaign claim identity protections`
+**Planned commit:** `feat(v2c2): switch financial authority to settlements`
 
 **Files:**
 
-- Add the migration from Section 13.1 step 4.
-- Add `src/lib/campaigns/claim-identity.ts`.
-- Add `src/lib/campaigns/claim-identity.test.ts`.
-- Add `src/lib/campaigns/claim-identity.db.test.ts`.
-- Modify wallet challenge verification only when the new Campaign purpose is
-  implemented; preserve the generic wallet-session purpose and behavior.
+- Add `supabase/migrations/20260913085000_v2c2_financial_root_cutover.sql`.
+- Add `supabase/migrations/20260913086000_v2c2_poll_read_root_cutover.sql`.
+- Modify `src/lib/rewards/settlement.ts` and `settlement-root.ts`.
+- Modify reservation, funding, payout, reconciliation, closure, refund, and
+  vault loaders to use settlement-rooted fields.
+- Update Poll route/service tests without changing public Poll paths.
+- Add `src/lib/rewards/financial-authority-cutover.db.test.ts`.
 
 **RED assertions:**
 
-- Campaign challenge messages bind purpose, Campaign ID, wallet, nonce, and
-  expiry.
-- Nonces are stored hashed and consumed once.
-- One canonical wallet has one Campaign claim row.
-- Cross-Campaign and cross-wallet replay fails closed.
-- Existing generic wallet proof challenges still pass unchanged.
-- Claim rows contain no plaintext secret, QR payload, amount, vault, or option.
+- Phase C resync uses current `reward_campaigns` authority immediately before
+  the switch.
+- Root and child settlement accounting matches at cutover.
+- All financial RPCs/services use root fields as the only mutable authority after
+  the switch.
+- Old `reward_campaigns` financial columns are not refreshed or independently
+  mutated after the switch.
+- Poll binding still resolves the correct root, never a Poll ID as root ID.
+- Existing Poll funding/payout/refund IDs, hashes, and response aliases remain.
+- Poll vote response and automatic payout behavior remain unchanged.
+- Fee advancement, hash safety, finality, retry, vault lease, closure freeze,
+  and refund proof boundaries remain intact.
 
-**GREEN work:** add durable schema and server-only claim identity helpers. Do
-not add a Claim endpoint or invoke reservation from this slice.
-
-**Commands:**
-
-```text
-npm test -- src/lib/campaigns/claim-identity.test.ts
-npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/campaigns/claim-identity.db.test.ts
-npx tsc --noEmit
-npm run lint
-```
-
-### 16.5 V2C.2E - Financial root cutover and Poll compatibility
-
-**Planned commit:** `feat(v2c2): root shared financial engine on settlements`
-
-**Files:**
-
-- Add the migrations from Section 13.1 steps 7 and 8.
-- Modify `src/lib/rewards/settlement.ts` and add/update
-  `src/lib/rewards/settlement-root.ts`.
-- Modify `src/lib/rewards/reservation-service.ts` and Poll adapter stores.
-- Modify `src/lib/rewards/closure.ts` and Poll closure adapter stores.
-- Modify funding, payout, payout-reconciliation, refund, and
-  refund-reconciliation loaders only to change root lookup.
-- Update corresponding route tests without changing public Poll paths.
-
-**RED assertions:**
-
-- A Poll URL resolves the root through its Poll adapter and binding, never by
-  treating a Poll ID as a root ID.
-- Existing funding, receipt, payout, refund, and vault IDs remain reachable.
-- An unrelated child row cannot be reached through another root.
-- Root accounting increments paid principal and confirmed fee together.
-- No root transition accepts Poll options or Campaign strategy data.
-- Poll vote response remains `201` on successful vote even if reward follow-up
-  fails.
-- Rewarded reward-first Polls still pay automatically; free and legacy Polls do
-  not create reward work.
-- Hash reuse, payout unknown-outcome, retry, finality, and refund freeze rules
-  remain green.
-
-**GREEN work:** update root loaders/RPCs and compatibility adapters while
-preserving physical compatibility aliases and the existing irreversible
-boundaries.
+**GREEN work:** execute the guarded Phase C/D/E cutover and move Poll reads to
+root/binding. Do not create any Campaign participant flow.
 
 **Commands:**
 
 ```text
 npm test -- src/lib/rewards/settlement.test.ts src/lib/rewards/reservation-service.test.ts src/lib/rewards/closure.test.ts src/lib/rewards/v2c1-compatibility.test.ts
-npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/rewards/settlement-root.db.test.ts src/lib/rewards/reservation.db.test.ts src/lib/rewards/funding-confirmation.db.test.ts src/lib/rewards/payout.db.test.ts src/lib/rewards/refund-preparation.db.test.ts src/lib/rewards/refund-reconciliation.db.test.ts
+npm test -- --pool=forks --maxWorkers=1 --no-file-parallelism src/lib/rewards/financial-authority-cutover.db.test.ts src/lib/rewards/reservation.db.test.ts src/lib/rewards/funding-confirmation.db.test.ts src/lib/rewards/payout.db.test.ts src/lib/rewards/refund-preparation.db.test.ts src/lib/rewards/refund-reconciliation.db.test.ts
 npx tsc --noEmit
 npm run lint
 ```
 
-### 16.6 V2C.2F - Full Campaign foundation gate
+### 16.6 V2C.2F - Full foundation and migration gate
 
-**Planned commit:** `test(v2c2): verify Campaign foundation boundaries`
+**Planned commit:** `test(v2c2): verify Campaign foundation and root cutover`
 
 **Files:**
 
 - Add `src/lib/campaigns/v2c2-foundation.test.ts`.
-- Add/update only the focused DB and route tests needed to close a demonstrated
-  assertion gap.
+- Add/update only focused compatibility, schema, migration, and Poll route tests
+  for demonstrated assertion gaps.
 
 **RED/static assertions:**
 
-- Search production code and migrations for accidental Campaign claims, UI,
-  NIM sends, secret plaintext, selected-option leakage, or second ledgers.
-- Confirm all private tables are inaccessible to public roles.
-- Confirm all five types have configuration storage but no enabled claim flow.
-- Confirm no `reward_campaigns.poll_id` nullability or Poll creation behavior
-  changed.
-- Confirm NIM funding, payout, finality, and refund proof remain the financial
-  center of the design.
+- Production schema contains only V2C.2 foundation tables and additive child
+  references; no deferred strategy tables exist.
+- No claim route, Claim button, participant UI, discovery, NIM transfer, or
+  creator financial management is present.
+- No `claimable` product state exists.
+- No `reward_campaigns.poll_id` nullability change exists.
+- No second receipt, payout, refund, or vault ledger exists.
+- No old/new financial dual-write remains after cutover.
+- Poll history and response behavior remain compatible.
+- Root/backfill/canonical-wallet/child coverage is 100 percent.
 
 **Commands:**
 
@@ -1699,147 +1407,161 @@ npx tsx src/lib/api/v2b1-backward-test.ts
 npx tsx src/lib/api/publish-test.ts
 ```
 
-Database commands are local-only and must use the existing
-`assertLocalSupabaseForTests()` guard. If local Supabase is unavailable, the
-exact DB command and reason are recorded as skipped; a hosted database is never
-used as a substitute.
+All DB commands remain local-only and must use
+`assertLocalSupabaseForTests()`. A missing local service is reported as skipped,
+never replaced with a hosted target.
 
 ## 17. Regression and Acceptance Tests
 
-### 17.1 Required regression baseline
+### 17.1 V2C.1 baseline
 
-The V2C.1 baseline is:
+V2C.2 must retain and rerun the V2C.1 baseline:
 
-- full Vitest: 57 files and 621 tests passed;
-- focused V2C.1 financial/adapter/closure suites: 11 files and 162 tests
-  passed;
-- schema gate: 59 passed;
-- configuration gate: 75 passed;
-- funding gate: 57 passed;
-- persisted vault gate: 16 passed;
-- V2B.1 backward compatibility: 59 passed;
-- lint, typecheck, and production build passed.
+- Full Vitest: 57 files and 621 tests passed.
+- Focused V2C.1 reward/adapter/closure/financial suites: 11 files and 162 tests
+  passed.
+- Schema gate: 59 passed.
+- Creator configuration gate: 75 passed.
+- Funding gate: 57 passed.
+- Persisted vault gate: 16 passed.
+- V2B.1 backward compatibility: 59 passed.
+- Lint, typecheck, and production build passed.
 
-V2C.2 must rerun the current baseline after root cutover. It may not replace
-the baseline with Campaign-only tests.
+### 17.2 Foundation/schema acceptance
 
-### 17.2 Database acceptance
-
-- All seven new tables/relationships and their indexes/constraints exist.
-- Root and adapter owners match canonically.
-- Every existing Poll reward campaign has exactly one root and binding.
-- Every standalone Campaign has exactly one root and binding.
+- `reward_settlements`, `participation_campaigns`, and
+  `settlement_source_bindings` have the specified constraints and indexes.
+- `reward_campaigns.poll_id` remains `NOT NULL UNIQUE` with its Poll FK.
+- Root owner/funder/refund policy passes canonical comparisons.
+- New root/Campaign wallet fields use lowercase 40-hex canonical storage.
+- Historical wallet preflight reports invalid values/collisions and does not
+  silently rewrite old source rows.
+- Every Poll reward row has one stable root and one Poll binding.
+- Every Campaign configuration row has one root and one Campaign binding.
 - No root has two source adapters.
-- Canonical wallet uniqueness is database-enforced for claims and allowlists.
-- Claim nonce and challenge consumption are single-use and atomic.
-- Activated strategy configuration is immutable.
-- No secret, event proof, challenge nonce, or vault ciphertext is publicly
-  readable.
-- Root financial child foreign keys reject cross-settlement access.
-- Existing transaction hash uniqueness remains cross-ledger safe.
-- Root accounting rejects underpayment, overspend, fee mismatch, and invalid
-  refund values.
+- No Campaign table contains financial ledger or vault key authority.
+- No claim/secret/allowlist/event/community table exists in V2C.2.
 
-### 17.3 Poll compatibility acceptance
+### 17.3 Additive child migration acceptance
+
+- New settlement references are nullable only during the staged backfill.
+- 100 percent of funding, receipts, refunds, and vaults have validated root IDs
+  before `NOT NULL`/FK enforcement.
+- Old `campaign_id` columns remain stable during the additive phase.
+- No child UUID, hash, Poll compatibility field, or proof data is rewritten.
+- `reward_payout_attempts` remains reached through receipts.
+- Cross-settlement child access fails closed.
+- Child hash reuse protections remain cross-ledger safe.
+
+### 17.4 Authority cutover acceptance
+
+- Phase A root snapshots are not read as financial authority.
+- Phase B proves complete root/binding/child/accounting coverage.
+- Phase C resyncs root from current `reward_campaigns` under the cutover gate.
+- Phase D switches RPC/service writes to root only.
+- Phase E freezes old financial columns; no continuous dual-write remains.
+- Poll compatibility reads resolve through adapter/binding/root.
+- No request can observe mixed mutable financial authority.
+
+### 17.5 Poll compatibility acceptance
 
 - Poll publication, discovery, voting, receipts, and public reward reads retain
-  their existing response shapes.
-- Legacy support Polls remain support Polls.
-- Free reward-first Polls create no reward campaign/receipt/funding/payout/refund
-  obligation.
+  their current response shapes.
+- Legacy support Polls remain distinct.
+- Free reward-first Polls create no reward obligation.
 - Rewarded reward-first Polls retain automatic reservation and payout.
-- Creator votes remain valid Poll votes but do not produce reward receipts.
-- Exhausted capacity does not invalidate an already committed vote.
-- Poll options never enter shared context, settlement root, receipts, payout,
-  refund, profile metrics, or public reward proof.
-- Reservation/payout failure remains best-effort after vote commit.
+- Creator votes remain valid Poll votes but do not create reward receipts.
+- Exhausted capacity does not invalidate a committed vote.
+- Poll option data remains outside shared financial data and proof.
+- Reward follow-up failure remains best-effort after vote commit.
 
-### 17.4 Security acceptance
+### 17.6 Scope acceptance
 
-- No browser request can author economics, wallet identity, source binding,
-  eligibility, claim state, refund amount, or finality evidence.
-- Secret errors do not enumerate Campaigns or codes.
-- Allowlist and community membership are private and versioned.
-- Event proofs are scoped, expiring, hash-only, and replay-safe.
-- Hash-bearing payout/refund uncertainty never triggers a blind resend.
-- Confirmed payout/refund proof is immutable and requires macro finality.
-- The vault private key remains server-only and transient during signing.
+- No participant claim flow exists.
+- No eligibility strategy evaluates a claim.
+- No secret, allowlist, event-proof, QR/deep-link, or community membership
+  storage exists.
+- No Campaign discovery, UI, creator financial management, NIM movement,
+  deployment, or physical QA exists.
+- Public Giveaway is documented as the next vertical slice.
 
 ## 18. Release Gates and Non-Goals
 
 ### 18.1 V2C.2 completion means
 
-- The Campaign product entity and configuration model are specified and, in a
-  later implementation, can be created/validated without touching Polls.
-- The generic settlement root and explicit Poll binding are specified with a
-  deterministic preservation/backfill strategy.
-- Strategy storage is private, versioned, hash-only where sensitive, and not a
-  second financial ledger.
-- Claim identity schema and replay boundaries are specified but not enabled as a
-  claim flow.
-- Poll financial behavior remains protected by the existing regression gate.
+- Campaign product/configuration entity is defined.
+- Generic settlement root is defined and backfilled for Poll reward rows.
+- Poll/source bindings are explicit and validated.
+- Financial child references are migrated additively before cutover.
+- Root becomes the sole mutable financial authority through a guarded switch.
+- Old Poll financial columns are frozen/deprecated compatibility fields only.
+- Creator draft/configuration and NIM funding-readiness boundaries are defined,
+  without NIM movement.
+- All five type literals are retained, while unsupported types remain
+  non-publishable/non-claimable.
+- Public Giveaway remains the next participant vertical slice.
 
-### 18.2 V2C.2 does not mean
+### 18.2 Explicit non-goals
 
-- No standalone Campaign claim endpoint or Claim button.
-- No Public Giveaway payout vertical slice.
-- No Secret Drop code redemption.
-- No Private Drop allowlist claim evaluation.
-- No Event Drop QR/deep-link physical validation.
-- No Community Reward external membership integration.
-- No Campaign discovery, ranking, or public proof surface.
-- No Campaign UI or navigation changes.
-- No new NIM transfer, wallet approval, or physical Nimiq Pay QA.
-- No production deployment, hosted Supabase mutation, Docker startup, or main
-  branch merge.
-- No betting, prediction market, gambling, winner-takes-pot, or pooled prize
+- No `campaign_claims` table or claim route.
+- No Campaign-bound claim nonce/challenge migration.
+- No `campaign_secrets` table or Secret Drop verifier.
+- No `campaign_allowlist_entries` table or Private Drop strategy.
+- No `campaign_event_proofs` table or Event Drop proof/QR/deep-link flow.
+- No Community Reward membership storage or external integration.
+- No participant reservation/payout flow for Campaigns.
+- No Campaign discovery, ranking, public proof, or UI.
+- No creator financial management, closure, refund, retry, or manual-review UI.
+- No NIM transfer, wallet approval, Nimiq Pay flow, physical QA, deployment, or
+  `main` merge.
+- No betting, prediction market, gambling, winner-takes-pot, or pooled-prize
   semantics.
 
-### 18.3 Release dependency
+### 18.3 Later vertical slices
 
-V2C.2 configuration is not a funded Campaign release. Before any real Campaign
-can hold funds or undergo physical QA, the project must complete the generic
-Public Giveaway claim path, creator management, unresolved/manual-review
-handling, closure/refund finality, public proof limits, security review, and
-device validation. The first release type remains Public Giveaway; the other
-four remain configuration-only until their strategy and threat-model gates pass.
+- **V2C.3:** Public Giveaway claim identity, Campaign-bound claim proof,
+  reservation, payout, finality, proof, and required management/release gates.
+- **Later Secret slice:** Secret Drop hashing, rate limits, verifier, and claim.
+- **Later Private slice:** allowlist storage, activation, privacy, and claim.
+- **Later Event slice:** event proof, QR/deep-link transport, replay, and device
+  validation.
+- **Later Community slice:** membership set and claim policy.
+
+No later slice may create a second financial engine or ledger.
 
 ## 19. NIM-Centered Proof and Type Readiness
 
-Every Campaign type remains NIM-centered. Eligibility is an off-chain unlock
-condition, not the value proposition by itself. The shared financial proof is:
+Every Campaign type remains NIM-centered even though V2C.2 does not move NIM:
 
 ```text
-creator/designated funder commits NIM
-  -> isolated settlement vault receives observed funding
-  -> capacity is bounded by funded principal
-  -> one canonical wallet reservation creates one receipt
-  -> vault signs the exact integer-Luna payout
+creator/designated funder configures integer-Luna NIM budget
+  -> later funding transfers NIM to an isolated settlement vault
+  -> root capacity is bounded by funded principal
+  -> later verified participation creates one receipt
+  -> vault signs the exact reward transfer
   -> stored hash is observed on Nimiq
   -> exact transfer is canonical and macro-final
   -> receipt becomes paid
   -> unresolved obligations settle before conservative refund
 ```
 
-| Type | Off-chain eligibility | NIM proof that remains central | V2C.2 readiness |
-|---|---|---|---|
-| Public Giveaway | Verified wallet and capacity | Funded isolated vault, exact payout, observed canonical/macro-final transfer, receipt proof | Configuration-ready only; first future vertical slice |
-| Secret Drop | Server-verified secret | Same funding, payout, finality, and refund proof; secret entry itself is not chain proof | Not claim-ready |
-| Private Drop | Immutable private allowlist membership | Same NIM settlement and exact final payout proof; allowlist membership is not chain proof | Not claim-ready |
-| Event Drop | Scoped event code, opaque link, or QR proof | Same NIM settlement and finality proof; QR/deep link is only activation transport | Not physical-QA-ready |
-| Community Reward | Versioned internal contributor/community membership | Same NIM settlement and payout proof; membership is not implied by funding mode | Not claim-ready |
+| Type | V2C.2 status | Future NIM proof |
+|---|---|---|
+| Public Giveaway | Product/configuration foundation ready; claim deferred to V2C.3 | Isolated funded vault, exact payout, observed canonical/macro-final transfer, receipt proof |
+| Secret Drop | Type selectable/storable; strategy storage and claim deferred | Same funding, payout, finality, and refund proof; secret is only an off-chain unlock |
+| Private Drop | Type selectable/storable; allowlist and claim deferred | Same funding and final payout proof; membership is not chain proof |
+| Event Drop | Type selectable/storable; proof/QR/deep-link claim deferred | Same funding and finality proof; event transport is not chain proof |
+| Community Reward | Type selectable/storable; membership and claim deferred | Same funding and payout proof; membership is not implied by funding mode |
 
-NIM remains product-critical because the creator/funder prepays real NIM, the
-root accounts a bounded principal and fee reserve, the isolated vault performs
-the actual reward transfer, and `paid`/`refunded` require observed chain proof.
-Removing that path would produce a generic code/allowlist application rather
-than Votum.
+NIM remains central because the root represents a prepaid NIM obligation, capacity
+is constrained by funded principal, the isolated vault performs the payout, and
+`paid`/`refunded` require observed chain proof. V2C.2 only establishes the
+product/root foundation for that later flow.
 
 ### Final design verdict
 
-V2C.2 should add `participation_campaigns` as a product entity and
-`reward_settlements` as the one generic financial root. Existing Polls remain
-Polls through `reward_campaigns` and an explicit source binding. Campaign types
-store configuration only; no claim or NIM execution is enabled by this design.
-The next implementation task, if approved, is the root/backfill migration and
-its Poll compatibility gate, not a Campaign claim flow.
+V2C.2 is limited to `participation_campaigns`, `reward_settlements`, explicit
+Poll/Campaign source bindings, additive child settlement references, creator
+draft/configuration, NIM economics/readiness, Poll compatibility, and a guarded
+financial-root cutover. Claim identity, eligibility strategies, strategy storage,
+participant flows, creator financial management, and NIM movement remain deferred.
