@@ -1,9 +1,9 @@
 # V2C.1 Shared NIM Participation Engine Implementation Plan
 
-**Status:** TDD implementation plan only. This document does not implement the
-shared engine, add Campaign entities, add schema, add migrations, add routes,
-change Poll UI, start Docker, mutate Supabase, send NIM, deploy, or merge
-`main`.
+**Status:** V2C.1A-E implementation and local verification complete. This
+document records the TDD implementation plan and execution results; it does not
+add Campaign entities, add schema, add migrations, add routes, change Poll UI,
+send NIM, deploy, or merge `main`.
 
 **Design authority:**
 `docs/superpowers/specs/2026-09-12-v2c1-shared-nim-participation-engine-design.md`
@@ -884,6 +884,38 @@ hosted target.
 - Confirm no `src/types/database.ts` or migration diff exists.
 - Confirm protected worktree files remain untouched and unstaged.
 - Confirm no Campaign product behavior is claimed by the tests or output.
+
+### 7.5 Execution status
+
+- [x] V2C.1A committed as `569eec8`.
+- [x] V2C.1B committed as `d81715f`.
+- [x] V2C.1C committed as `5d90263`.
+- [x] V2C.1D committed as `14a3ce6`.
+- [x] V2C.1E compatibility coverage added in
+  `src/lib/rewards/v2c1-compatibility.test.ts` with 8 focused tests.
+- [x] Focused V2C.1 reward, adapter, closure/refund, and financial DB suites:
+  11 files, 162 tests passed.
+- [x] Full Vitest regression: 57 files, 621 tests passed.
+- [x] Local schema gate: 59 passed, 0 failed.
+- [x] Local creator configuration gate: 75 passed, 0 failed.
+- [x] Local funding initiation gate: 57 passed, 0 failed.
+- [x] Local persisted vault gate: 16 passed, 0 failed.
+- [x] Local V2B.1 backward-compatibility gate: 59 passed, 0 failed.
+- [x] Local publication RPC, conversion, concurrency, and rollback checks
+  passed across all 10 test groups.
+- [x] `npm run lint`, `npx tsc --noEmit`, and `npm run build` passed.
+- [x] No migration, generated database type, Campaign product implementation,
+  selected-option reward field, NIM transfer, or hosted Supabase operation was
+  added by V2C.1E.
+
+The first publication-gate attempt encountered stale canonical test rows left
+by its failure-only cleanup path. Those local fixture rows were removed with a
+scoped database cleanup, and the unchanged publication gate then passed. This
+was test-harness residue, not a Poll or reward-engine defect.
+
+V2C.2 Campaign entity work remains intentionally not started. Physical wallet
+approval, chain transfer, hosted rollout, and production deployment remain
+outstanding by design and are not V2C.1 completion criteria.
 
 ## 8. Commit and Delivery Order
 
