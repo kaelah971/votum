@@ -211,7 +211,7 @@ async function readState(fixture: Fixture) {
 }
 
 async function contextFor(fixture: Fixture, viewerWallet?: string) {
-  const loaded = await loadRefundReconciliationContext(admin, fixture.pollId, fixture.refundId, viewerWallet);
+  const loaded = await loadRefundReconciliationContext(admin, fixture.campaignId, fixture.refundId, viewerWallet);
   if (loaded.kind !== "ok") throw new Error(`fixture context failed: ${loaded.kind}`);
   return loaded.context;
 }
@@ -287,9 +287,16 @@ describe("V2B.2.11 Phase D local refund reconciliation", () => {
 
   it("rejects a non-creator viewer without observing or mutating", async () => {
     const fixture = await createFixture();
-    const loaded = await loadRefundReconciliationContext(admin, fixture.pollId, fixture.refundId, wallet());
+    const loaded = await loadRefundReconciliationContext(admin, fixture.campaignId, fixture.refundId, wallet());
     expect(loaded).toEqual({ kind: "forbidden" });
     expect((await readState(fixture)).campaign?.status).toBe("refunding");
+  });
+
+  it("does not load a refund through an unrelated settlement ID", async () => {
+    const fixture = await createFixture();
+    const loaded = await loadRefundReconciliationContext(admin, randomUUID(), fixture.refundId, fixture.creatorWallet);
+
+    expect(loaded).toMatchObject({ kind: "not_found", reasonCode: "campaign_not_found" });
   });
 
   it("allows an internal admin job context without a viewer wallet", async () => {

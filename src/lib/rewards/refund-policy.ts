@@ -6,12 +6,12 @@ import type {
 
 const ZERO_LUNA = BigInt(0);
 
-export type RewardClosureTrigger = "poll_closed" | "expired" | "cancelled";
+export type RewardPolicyClosureTrigger = "poll_closed" | "expired" | "cancelled";
 
 export interface RewardClosureCampaign {
   status: RewardCampaignState;
   participationWindowClosed: boolean;
-  closureTrigger: RewardClosureTrigger;
+  closureTrigger: RewardPolicyClosureTrigger;
   firstReservationAt: string | null;
   fundedAmountLuna: bigint;
   rewardPrincipalLuna: bigint;

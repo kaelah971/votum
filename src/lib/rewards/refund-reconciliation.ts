@@ -114,30 +114,31 @@ function safeDbNumber(value: bigint): number {
 
 export async function loadRefundReconciliationContext(
   admin: AdminClient,
-  pollId: string,
+  settlementId: string,
   refundId: string,
   viewerWallet?: string,
 ): Promise<RefundContextLoadResult> {
-  const { data: refund, error: refundError } = await admin
-    .from("reward_refunds")
-    .select("id, campaign_id, creator_wallet, amount_luna, status, transaction_hash, network_id, broadcast_started_at, broadcast_at, confirmed_at")
-    .eq("id", refundId)
-    .maybeSingle();
-  if (refundError) return { kind: "error", reasonCode: "database_read_failed" };
-  if (!refund) return { kind: "not_found", reasonCode: "refund_not_found" };
-
   const { data: campaign, error: campaignError } = await admin
     .from("reward_campaigns")
-    .select("id, poll_id, status, refunded_at, closed_at")
-    .eq("id", refund.campaign_id)
+    .select("id, status, refunded_at, closed_at")
+    .eq("id", settlementId)
     .maybeSingle();
   if (campaignError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!campaign) return { kind: "not_found", reasonCode: "campaign_not_found" };
 
+  const { data: refund, error: refundError } = await admin
+    .from("reward_refunds")
+    .select("id, campaign_id, creator_wallet, amount_luna, status, transaction_hash, network_id, broadcast_started_at, broadcast_at, confirmed_at")
+    .eq("id", refundId)
+    .eq("campaign_id", settlementId)
+    .maybeSingle();
+  if (refundError) return { kind: "error", reasonCode: "database_read_failed" };
+  if (!refund) return { kind: "not_found", reasonCode: "refund_not_found" };
+
   const { data: vault, error: vaultError } = await admin
     .from("reward_campaign_vaults")
     .select("vault_address_hex")
-    .eq("campaign_id", campaign.id)
+    .eq("campaign_id", settlementId)
     .maybeSingle();
   if (vaultError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!vault) return { kind: "not_found", reasonCode: "vault_not_found" };
@@ -148,8 +149,8 @@ export async function loadRefundReconciliationContext(
   const networkId = refund.network_id;
   if (
     refund.id !== refundId ||
-    refund.campaign_id !== campaign.id ||
-    campaign.poll_id !== pollId ||
+    refund.campaign_id !== settlementId ||
+    campaign.id !== settlementId ||
     !creatorWallet ||
     !vaultAddress ||
     amountLuna === null ||

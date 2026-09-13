@@ -4,16 +4,18 @@ import {
   classifyRewardObligations,
   evaluateRewardClosure,
   type RewardClosureInput,
+  type RewardPolicyClosureTrigger,
 } from "@/lib/rewards/refund-policy";
 
 const HASH = "a".repeat(64);
+const POLL_CLOSED_TRIGGER: RewardPolicyClosureTrigger = "poll_closed";
 
 function makeInput(overrides: Partial<RewardClosureInput> = {}): RewardClosureInput {
   return {
     campaign: {
       status: "funded",
       participationWindowClosed: true,
-      closureTrigger: "poll_closed",
+      closureTrigger: POLL_CLOSED_TRIGGER,
       firstReservationAt: null,
       fundedAmountLuna: BigInt(11200),
       rewardPrincipalLuna: BigInt(10000),

@@ -325,4 +325,16 @@ describe("server refund reconciliation boundary", () => {
     const source = readFileSync(resolve(process.cwd(), "src/lib/rewards/refund-reconciliation.ts"), "utf8");
     expect(source).not.toMatch(/option_id|selectedOption|winner|majority|Secret Drop|Private Drop|Event Drop|Community Reward/);
   });
+
+  it("loads refund authority by settlement ID rather than a Poll lookup", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/rewards/refund-reconciliation.ts"), "utf8");
+    const loaderStart = source.indexOf("export async function loadRefundReconciliationContext");
+    const loaderEnd = source.indexOf("function toExpectedRefund");
+    const loaderSource = source.slice(loaderStart, loaderEnd);
+
+    expect(loaderSource).toContain("settlementId");
+    expect(loaderSource).toContain('.eq("campaign_id", settlementId)');
+    expect(loaderSource).not.toContain('.from("polls")');
+    expect(loaderSource).not.toContain("poll_id");
+  });
 });

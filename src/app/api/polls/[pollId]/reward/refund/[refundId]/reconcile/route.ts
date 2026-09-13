@@ -7,6 +7,7 @@ import {
   loadRefundReconciliationContext,
   reconcileRefund,
 } from "@/lib/rewards/refund-reconciliation";
+import { resolvePollRewardSettlement } from "@/lib/rewards/settlement";
 
 export const runtime = "nodejs";
 
@@ -56,7 +57,20 @@ export async function POST(
     );
   }
 
-  const loaded = await loadRefundReconciliationContext(admin, pollId, refundId, viewerWallet);
+  const settlement = await resolvePollRewardSettlement(admin, pollId);
+  if (settlement.kind !== "ok") {
+    return NextResponse.json(
+      { error: settlement.kind === "not_found" ? "campaign_not_found" : "database_read_failed" },
+      { status: settlement.kind === "not_found" ? 404 : 500 },
+    );
+  }
+
+  const loaded = await loadRefundReconciliationContext(
+    admin,
+    settlement.settlementId,
+    refundId,
+    viewerWallet,
+  );
   if (loaded.kind !== "ok") {
     const status = loaded.kind === "forbidden"
       ? 403

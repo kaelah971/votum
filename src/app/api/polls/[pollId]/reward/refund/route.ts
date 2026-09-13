@@ -2,23 +2,19 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { getVerifiedWalletSession } from "@/lib/api/session";
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
-import { executeRewardRefund } from "@/lib/rewards/refund";
+import { createSupabaseRewardClosureService } from "@/lib/rewards/closure";
+import {
+  createSupabasePollClosureSourceStore,
+  PollRewardClosureAdapter,
+} from "@/lib/rewards/poll-closure-adapter";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
-
-type RpcResult = Record<string, unknown>;
 
 function log(stage: string, data: Record<string, unknown>): void {
   const status = data.status;
   if (typeof status === "number" && status < 400 && process.env.NODE_ENV === "production") return;
   console.error("[reward-refund]", { stage, ...data });
-}
-
-function resultKind(data: unknown): string {
-  return typeof data === "object" && data !== null && typeof (data as RpcResult).result_kind === "string"
-    ? (data as RpcResult).result_kind as string
-    : "";
 }
 
 function beginError(kind: string): { error: string; status: number; message: string } {
@@ -28,6 +24,8 @@ function beginError(kind: string): { error: string; status: number; message: str
     case "forbidden":
       return { error: "forbidden", status: 403, message: "Only the campaign creator can request this refund." };
     case "campaign_not_closable":
+    case "source_trigger_stale":
+    case "participation_window_open":
     case "unresolved_reward_obligations":
     case "payout_reconciliation_required":
     case "invalid_reward_accounting":
@@ -35,6 +33,8 @@ function beginError(kind: string): { error: string; status: number; message: str
     case "refund_state_conflict":
     case "refund_intent_missing":
       return { error: kind, status: 409, message: "The refund is not ready for execution." };
+    case "campaign_lookup_failed":
+      return { error: kind, status: 500, message: "Could not load the reward campaign." };
     default:
       return { error: "refund_preparation_failed", status: 500, message: "Could not prepare the campaign refund." };
   }
@@ -83,71 +83,61 @@ export async function POST(
     );
   }
 
-  const { data: campaign, error: campaignError } = await admin
-    .from("reward_campaigns")
-    .select("id")
-    .eq("poll_id", pollId)
-    .maybeSingle();
-  if (campaignError) {
-    log("campaign_lookup_failed", { requestId, status: 500, code: campaignError.code });
+  const pollClosureAdapter = new PollRewardClosureAdapter(
+    createSupabasePollClosureSourceStore(admin),
+  );
+  const closureContext = await pollClosureAdapter.resolveClosureContext(pollId, session.address);
+  if (closureContext.kind !== "ready") {
+    const mapped = closureContext.kind === "not_closed"
+      ? beginError(closureContext.reasonCode)
+      : closureContext.kind === "forbidden"
+        ? beginError("forbidden")
+        : closureContext.kind === "not_found"
+          ? beginError("campaign_not_found")
+          : beginError("campaign_lookup_failed");
+    log("source_closure_rejected", { requestId, status: mapped.status, reasonCode: closureContext.kind });
     return NextResponse.json(
-      { error: "campaign_lookup_failed", stage: "campaign", requestId, message: "Could not load the reward campaign." },
-      { status: 500 },
-    );
-  }
-  if (!campaign) {
-    return NextResponse.json(
-      { error: "campaign_not_found", stage: "campaign", requestId, message: "Reward campaign not found." },
-      { status: 404 },
+      { error: mapped.error, stage: "source", requestId, message: mapped.message },
+      { status: mapped.status },
     );
   }
 
   // The body is intentionally ignored. The preparation RPC derives the
   // creator, vault, amount, and state from its locked database snapshot.
-  const { data: prepared, error: preparationError } = await admin.rpc("begin_reward_refund_atomic", {
-    _campaign_id: campaign.id,
-    _session_token_hash: session.tokenHash,
-  });
-  if (preparationError) {
-    log("preparation_rpc_failed", { requestId, status: 500, code: preparationError.code });
+  const closureService = createSupabaseRewardClosureService(
+    admin,
+    pollClosureAdapter.revalidateTrigger.bind(pollClosureAdapter),
+  );
+  const prepared = await closureService.prepareRefund(
+    closureContext.context,
+    { sessionTokenHash: session.tokenHash },
+  );
+  if (prepared.kind === "nothing_to_refund" || prepared.kind === "already_refunded_or_closed") {
     return NextResponse.json(
-      { error: "refund_preparation_failed", stage: "atomic_begin", requestId, message: "Could not prepare the campaign refund." },
-      { status: 500 },
-    );
-  }
-
-  const preparationKind = resultKind(prepared);
-  if (preparationKind === "nothing_to_refund" || preparationKind === "already_refunded_or_closed") {
-    return NextResponse.json(
-      { resultKind: preparationKind, campaignId: campaign.id, requestId },
+      { resultKind: prepared.kind, campaignId: prepared.settlementId, requestId },
       { status: 200 },
     );
   }
-  if (preparationKind !== "created" && preparationKind !== "replay") {
-    const mapped = beginError(preparationKind);
-    log("preparation_rejected", { requestId, status: mapped.status, resultKind: preparationKind });
+  if (prepared.kind === "error") {
+    const mapped = beginError(prepared.reasonCode);
+    log("preparation_rejected", { requestId, status: mapped.status, resultKind: prepared.reasonCode });
     return NextResponse.json(
       { error: mapped.error, stage: "atomic_begin", requestId, message: mapped.message },
       { status: mapped.status },
     );
   }
-
-  const refundId = typeof (prepared as RpcResult).refund_id === "string"
-    ? (prepared as RpcResult).refund_id as string
-    : null;
-  if (!refundId) {
-    log("preparation_shape_invalid", { requestId, status: 500, resultKind: preparationKind });
+  if (prepared.kind !== "created" && prepared.kind !== "replay") {
     return NextResponse.json(
       { error: "refund_preparation_failed", stage: "response", requestId, message: "Refund preparation response was invalid." },
       { status: 500 },
     );
   }
 
-  const execution = await executeRewardRefund(admin, refundId, campaign.id);
+  const execution = await closureService.executeRefund(prepared.settlementId, prepared.refundId);
   const status = executionStatus(execution.kind);
   log("execution_complete", { requestId, status, resultKind: execution.kind });
   return NextResponse.json(
-    { refund: execution, preparationKind, requestId },
+    { refund: execution, preparationKind: prepared.kind, requestId },
     { status },
   );
 }

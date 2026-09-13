@@ -67,6 +67,7 @@ export interface RewardSettlementContext {
 }
 
 export interface RewardClosureTrigger {
+  /** For Polls this is the Poll lifecycle ID, not a poll_votes.id. */
   source: {
     type: RewardParticipationSourceType;
     id: string;
@@ -99,12 +100,12 @@ export interface RewardClosureAuthorization {
   sessionTokenHash: string;
 }
 
-export interface RewardClosureService {
+export interface RewardClosureService<PrepareResult = unknown, ExecuteResult = unknown> {
   prepareRefund(
     context: RewardClosureContext,
     authorization: RewardClosureAuthorization,
-  ): Promise<unknown>;
-  executeRefund(settlementId: string, refundId: string): Promise<unknown>;
+  ): Promise<PrepareResult>;
+  executeRefund(settlementId: string, refundId: string): Promise<ExecuteResult>;
 }
 
 const PARTICIPATION_KEYS = [
