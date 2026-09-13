@@ -2,6 +2,14 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { getVerifiedWalletSession } from "@/lib/api/session";
 import { executeReservedRewardPayout } from "@/lib/rewards/payout";
+import {
+  createPollRewardParticipationAdapter,
+  createSupabasePollRewardParticipationStore,
+} from "@/lib/rewards/poll-participation-adapter";
+import {
+  createRewardReservationService,
+  createSupabaseRewardReservationStore,
+} from "@/lib/rewards/reservation-service";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -16,59 +24,58 @@ async function reserveRewardAfterVote(
   admin: AdminClient,
   pollId: string,
   participationId: unknown,
+  verifiedSessionAddress: string,
   requestId: string,
 ): Promise<void> {
   if (typeof participationId !== "string" || !participationId) return;
 
   try {
-    const { data: campaign, error: campaignError } = await admin
-      .from("reward_campaigns")
-      .select("id")
-      .eq("poll_id", pollId)
-      .maybeSingle();
-
-    if (campaignError) {
-      log("reward_campaign_lookup_failed", {
-        requestId,
-        code: campaignError.code,
-        message: campaignError.message,
-      });
-      return;
-    }
-
-    if (!campaign) return;
-
-    const { data: reservation, error: reservationError } = await admin.rpc(
-      "claim_reward_receipt_atomic",
-      {
-        _participation_id: participationId,
-        _campaign_id: campaign.id,
-      },
+    const adapter = createPollRewardParticipationAdapter(
+      createSupabasePollRewardParticipationStore(admin),
     );
-
-    if (reservationError) {
-      log("reward_reservation_failed", {
-        requestId,
-        code: reservationError.code,
-        message: reservationError.message,
-      });
-      return;
-    }
-
-    const resultKind = (reservation as Record<string, unknown> | null)?.result_kind;
-    log("reward_reservation", {
-      requestId,
-      resultKind: typeof resultKind === "string" ? resultKind : "unknown",
+    const reservationService = createRewardReservationService(
+      createSupabaseRewardReservationStore(admin),
+    );
+    const participation = await adapter.resolveParticipation({
+      pollId,
+      participationId,
+      verifiedSession: { address: verifiedSessionAddress },
     });
 
-    const receiptId = (reservation as Record<string, unknown> | null)?.receipt_id;
-    const receiptStatus = (reservation as Record<string, unknown> | null)?.status;
+    if (participation.kind !== "eligible") {
+      log("reward_reservation", {
+        requestId,
+        resultKind: "ineligible",
+        reasonCode: participation.reasonCode,
+      });
+      return;
+    }
+
+    const reservation = await reservationService.reserve(participation.context);
+    const resultKind = reservation.kind;
+    if (reservation.kind === "rejected") {
+      log("reward_reservation_failed", {
+        requestId,
+        code: reservation.reasonCode,
+      });
+      return;
+    }
+
+    log("reward_reservation", {
+      requestId,
+      resultKind,
+      reasonCode: reservation.kind === "ineligible" ? reservation.reasonCode : null,
+    });
+
     if (
-      (resultKind === "reserved" || resultKind === "replay") &&
-      typeof receiptId === "string" &&
-      (receiptStatus === "reserved" || receiptStatus === "payout_pending")
+      (reservation.kind === "reserved" || reservation.kind === "replay") &&
+      (reservation.receiptStatus === "reserved" || reservation.receiptStatus === "payout_pending")
     ) {
-      const payout = await executeReservedRewardPayout(admin, receiptId, campaign.id);
+      const payout = await executeReservedRewardPayout(
+        admin,
+        reservation.receiptId,
+        reservation.settlementId,
+      );
       log("reward_payout", {
         requestId,
         resultKind: payout.kind,
@@ -212,7 +219,7 @@ export async function POST(
 
     switch (resultKind) {
       case "created":
-        await reserveRewardAfterVote(admin, pollId, r.vote_id, requestId);
+        await reserveRewardAfterVote(admin, pollId, r.vote_id, voterWallet, requestId);
         log("vote_created", { requestId, status: 201 });
         return NextResponse.json(
           {
@@ -228,7 +235,7 @@ export async function POST(
         );
 
       case "replay":
-        await reserveRewardAfterVote(admin, pollId, r.vote_id, requestId);
+        await reserveRewardAfterVote(admin, pollId, r.vote_id, voterWallet, requestId);
         return NextResponse.json({
           vote: { id: r.vote_id, pollId, optionId },
           resultKind: "replay",

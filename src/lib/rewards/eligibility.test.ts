@@ -107,6 +107,14 @@ describe("evaluateRewardEligibility", () => {
     expect(result).toMatchObject({ status: "ineligible", reasonCode: "poll_not_rewarded" });
   });
 
+  it("rejects a legacy-support poll even when a historical campaign row exists", () => {
+    const result = evaluateRewardEligibility(makeInput({
+      poll: { economicModel: "legacy_support", rewardMode: null },
+    }));
+
+    expect(result).toMatchObject({ status: "ineligible", reasonCode: "poll_not_rewarded" });
+  });
+
   it("rejects a non-public rewarded poll", () => {
     const result = evaluateRewardEligibility(makeInput({
       poll: { isPublic: false },

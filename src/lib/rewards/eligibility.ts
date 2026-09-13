@@ -99,10 +99,8 @@ function isPublicPoll(poll: RewardPollForEligibility): boolean {
 
 function isRewardedPoll(
   poll: RewardPollForEligibility,
-  campaign: RewardCampaignForEligibility | null,
 ): boolean {
-  if (poll.economicModel === "reward_first") return poll.rewardMode === "rewarded";
-  return campaign !== null;
+  return poll.economicModel === "reward_first" && poll.rewardMode === "rewarded";
 }
 
 function hasValidParticipation(input: RewardEligibilityInput): boolean {
@@ -135,7 +133,7 @@ export function evaluateRewardEligibility(
   if (!isPublicPoll(poll)) {
     return { status: "ineligible", reasonCode: "poll_not_public" };
   }
-  if (!isRewardedPoll(poll, campaign)) {
+  if (!isRewardedPoll(poll)) {
     return { status: "ineligible", reasonCode: "poll_not_rewarded" };
   }
   if (!campaign) {
