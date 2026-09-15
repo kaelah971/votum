@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  VAULT_ENVELOPE_PURPOSE,
   VAULT_ENVELOPE_VERSION,
   MASTER_KEY_BYTES,
   ENVELOPE_IV_BYTES,
@@ -22,7 +23,7 @@ function ephemeralMasterKey(): Buffer {
 
 function ephemeralContext(overrides: Partial<VaultAadContext> = {}): VaultAadContext {
   return {
-    campaignId: overrides.campaignId ?? "11111111-1111-4111-8111-111111111111",
+    settlementId: overrides.settlementId ?? "11111111-1111-4111-8111-111111111111",
     vaultAddressHex: overrides.vaultAddressHex ?? "ab".repeat(20),
   };
 }
@@ -124,11 +125,11 @@ describe("AAD campaign binding", () => {
     const vault = generateVaultKey();
     try {
       const ctxA = ephemeralContext({
-        campaignId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        settlementId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         vaultAddressHex: vault.addressHex,
       });
       const ctxB = ephemeralContext({
-        campaignId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        settlementId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         vaultAddressHex: vault.addressHex,
       });
       const envelope = encryptVaultKey(vault.privateKeyBytes, masterKey, ctxA);
@@ -153,6 +154,20 @@ describe("AAD campaign binding", () => {
     } finally {
       disposeVaultKey(vault);
     }
+  });
+
+  it("Poll AAD bytes are identical to the pre-cutover campaign-bound format", () => {
+    // Pre-cutover AAD was `${purpose}\0${campaignId}\0${vaultAddressHex}`.
+    // Poll settlements reuse the campaign UUID, so the byte stream is
+    // unchanged: no re-encryption, no new keypair, no address change.
+    const campaignId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const vaultAddressHex = "ab".repeat(20);
+    const legacy = Buffer.from(
+      `${VAULT_ENVELOPE_PURPOSE}\u0000${campaignId}\u0000${vaultAddressHex}`,
+      "utf8",
+    );
+    const current = buildVaultAad({ settlementId: campaignId, vaultAddressHex });
+    expect(current.equals(legacy)).toBe(true);
   });
 });
 

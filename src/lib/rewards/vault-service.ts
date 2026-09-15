@@ -15,17 +15,28 @@ import {
 } from "@/lib/rewards/vault-key";
 
 /**
- * Votum persisted campaign-vault lifecycle (V2B.2.2B).
+ * Votum persisted settlement-vault lifecycle (V2C.2E).
  *
  * Server-only by construction. Encrypts the campaign vault private key at rest
  * (AES-256-GCM, campaign-bound AAD) in the dedicated reward_campaign_vaults
- * table. Exactly one vault per campaign. The key never leaves the server, is
+ * table. Exactly one vault per settlement. The key never leaves the server, is
  * never returned in outward shapes, and is decrypted only transiently inside
- * `withCampaignVaultKey`.
+ * `withRewardSettlementVaultKey`.
  *
  * No transaction signing/broadcasting happens here.
  */
 
+export interface SettlementVaultPublic {
+  settlementId: string;
+  /** Poll compatibility campaign ID; absent for a standalone Campaign root. */
+  campaignId: string | null;
+  vaultAddressHex: string;
+  vaultAddressNq: string;
+  /** true when this call created the vault, false when it already existed. */
+  created: boolean;
+}
+
+/** @deprecated Use SettlementVaultPublic and settlementId-based APIs. */
 export interface CampaignVaultPublic {
   campaignId: string;
   vaultAddressHex: string;
@@ -35,7 +46,8 @@ export interface CampaignVaultPublic {
 }
 
 export interface CampaignVaultRow {
-  campaign_id: string;
+  settlement_id: string;
+  campaign_id: string | null;
   vault_address_hex: string;
   envelope_version: string;
   encryption_algorithm: string;
@@ -61,44 +73,54 @@ function requireMasterKey(): Buffer {
   return getVaultMasterKey(); // throws when missing/invalid (fail closed)
 }
 
-async function loadCampaignState(campaignId: string): Promise<string | null> {
+async function loadSettlementState(settlementId: string): Promise<string | null> {
   const admin = createAdminClient();
   if (!admin) throw new Error("admin client unavailable");
   const { data, error } = await admin
-    .from("reward_campaigns")
+    .from("reward_settlements")
     .select("status")
-    .eq("id", campaignId)
+    .eq("id", settlementId)
     .maybeSingle();
   if (error) throw error;
   return data?.status ?? null;
 }
 
-async function loadVaultRow(campaignId: string): Promise<CampaignVaultRow | null> {
+async function loadVaultRow(settlementId: string): Promise<CampaignVaultRow | null> {
   const admin = createAdminClient();
   if (!admin) throw new Error("admin client unavailable");
   const { data, error } = await admin
     .from("reward_campaign_vaults")
     .select("*")
-    .eq("campaign_id", campaignId)
+    .eq("settlement_id", settlementId)
     .maybeSingle();
   if (error) throw error;
   return (data as CampaignVaultRow) ?? null;
 }
 
-function aadFor(campaignId: string, vaultAddressHex: string): VaultAadContext {
-  return { campaignId, vaultAddressHex };
+function aadFor(settlementId: string, vaultAddressHex: string): VaultAadContext {
+  return { settlementId, vaultAddressHex };
 }
 
 function nqFromHex(hex: string): string {
   return Address.fromString(hex).toUserFriendlyAddress();
 }
 
-function toPublic(row: CampaignVaultRow, created: boolean): CampaignVaultPublic {
+function toSettlementPublic(row: CampaignVaultRow, created: boolean): SettlementVaultPublic {
   return {
+    settlementId: row.settlement_id,
     campaignId: row.campaign_id,
     vaultAddressHex: row.vault_address_hex,
     vaultAddressNq: nqFromHex(row.vault_address_hex),
     created,
+  };
+}
+
+function toCampaignPublic(row: SettlementVaultPublic): CampaignVaultPublic {
+  return {
+    campaignId: row.campaignId ?? row.settlementId,
+    vaultAddressHex: row.vaultAddressHex,
+    vaultAddressNq: row.vaultAddressNq,
+    created: row.created,
   };
 }
 
@@ -111,19 +133,19 @@ function toPublic(row: CampaignVaultRow, created: boolean): CampaignVaultPublic 
  * vault metadata (campaign id + public addresses). Never returns ciphertext or
  * key material. Idempotent and race-safe (see the atomic RPC).
  */
-export async function ensureCampaignVault(campaignId: string): Promise<CampaignVaultPublic> {
+export async function ensureRewardSettlementVault(settlementId: string): Promise<SettlementVaultPublic> {
   requireMasterKey(); // fail closed if not provisioned
 
-  const state = await loadCampaignState(campaignId);
-  if (state === null) throw new Error("campaign_not_found");
+  const state = await loadSettlementState(settlementId);
+  if (state === null) throw new Error("settlement_not_found");
   if (!(ALLOWED_PRE_FUNDING_STATES as readonly string[]).includes(state)) {
-    throw new Error(`campaign_state_invalid:${state}`);
+    throw new Error(`settlement_state_invalid:${state}`);
   }
 
   // Fast path: an authoritative vault already exists.
-  const existingRow = await loadVaultRow(campaignId);
+  const existingRow = await loadVaultRow(settlementId);
   if (existingRow) {
-    return toPublic(existingRow, false);
+    return toSettlementPublic(existingRow, false);
   }
 
   // Generate a candidate server-side, encrypt with campaign-bound AAD.
@@ -133,14 +155,14 @@ export async function ensureCampaignVault(campaignId: string): Promise<CampaignV
     const envelope = encryptVaultKey(
       candidate.privateKeyBytes,
       masterKey,
-      aadFor(campaignId, candidate.addressHex),
+      aadFor(settlementId, candidate.addressHex),
     );
 
     const admin = createAdminClient();
     if (!admin) throw new Error("admin client unavailable");
 
-    const { data, error } = await admin.rpc("ensure_reward_campaign_vault_atomic", {
-      _campaign_id: campaignId,
+     const { data, error } = await admin.rpc("ensure_reward_settlement_vault_atomic", {
+       _settlement_id: settlementId,
       _vault_address_hex: candidate.addressHex,
       _envelope_version: VAULT_ENVELOPE_VERSION,
       _encryption_algorithm: envelope.algorithm,
@@ -155,20 +177,45 @@ export async function ensureCampaignVault(campaignId: string): Promise<CampaignV
     // The authoritative row may be our candidate (created) or a concurrent
     // winner (existing). If another process won, our candidate is discarded —
     // never returned, never persisted.
-    const row = await loadVaultRow(campaignId);
-    if (!row) throw new Error("vault_row_missing_after_ensure");
-    return toPublic(row, result.result_kind === "created");
+     const row = await loadVaultRow(settlementId);
+     if (!row) throw new Error("vault_row_missing_after_ensure");
+     return toSettlementPublic(row, result.result_kind === "created");
   } finally {
     disposeVaultKey(candidate);
   }
 }
 
 /**
+ * Compatibility wrapper for existing Poll callers. The argument is now a
+ * settlement ID; the returned campaignId is derived from the persisted Poll
+ * binding rather than used as vault identity.
+ */
+export async function ensureCampaignVault(settlementId: string): Promise<CampaignVaultPublic> {
+  try {
+    return toCampaignPublic(await ensureRewardSettlementVault(settlementId));
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("settlement_not_found")) {
+      throw new Error("campaign_not_found");
+    }
+    if (error instanceof Error && error.message.startsWith("settlement_state_invalid")) {
+      throw new Error(error.message.replace("settlement_state_invalid", "campaign_state_invalid"));
+    }
+    throw error;
+  }
+}
+
+/**
  * Load a persisted vault's public metadata only (no ciphertext).
  */
-export async function getCampaignVault(campaignId: string): Promise<CampaignVaultPublic | null> {
-  const row = await loadVaultRow(campaignId);
-  return row ? toPublic(row, false) : null;
+export async function getRewardSettlementVault(settlementId: string): Promise<SettlementVaultPublic | null> {
+  const row = await loadVaultRow(settlementId);
+  return row ? toSettlementPublic(row, false) : null;
+}
+
+/** @deprecated Use getRewardSettlementVault. */
+export async function getCampaignVault(settlementId: string): Promise<CampaignVaultPublic | null> {
+  const row = await getRewardSettlementVault(settlementId);
+  return row ? toCampaignPublic(row) : null;
 }
 
 /**
@@ -178,12 +225,12 @@ export async function getCampaignVault(campaignId: string): Promise<CampaignVaul
  *
  * Never returns the keypair or key material through the application layer.
  */
-export async function withCampaignVaultKey<T>(
-  campaignId: string,
+export async function withRewardSettlementVaultKey<T>(
+  settlementId: string,
   callback: (keypair: KeyPair) => T | Promise<T>,
 ): Promise<T> {
   const masterKey = requireMasterKey();
-  const row = await loadVaultRow(campaignId);
+  const row = await loadVaultRow(settlementId);
   if (!row) throw new Error("vault_not_found");
 
   const plaintext = decryptVaultKey(
@@ -195,7 +242,7 @@ export async function withCampaignVaultKey<T>(
       authTag: row.authentication_tag,
     },
     masterKey,
-    aadFor(campaignId, row.vault_address_hex),
+    aadFor(settlementId, row.vault_address_hex),
   );
 
   // Address self-check: derived address MUST equal persisted address.
@@ -214,6 +261,14 @@ export async function withCampaignVaultKey<T>(
   } finally {
     keypair.free?.();
   }
+}
+
+/** @deprecated Use withRewardSettlementVaultKey. */
+export async function withCampaignVaultKey<T>(
+  settlementId: string,
+  callback: (keypair: KeyPair) => T | Promise<T>,
+): Promise<T> {
+  return withRewardSettlementVaultKey(settlementId, callback);
 }
 
 /** Verify a derived address equals a persisted vault address (exported helper). */

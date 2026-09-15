@@ -266,12 +266,12 @@ export function createSupabasePollRewardParticipationStore(
     loadSettlementBinding: async (pollId) => {
       const { data, error } = await admin
         .from("reward_campaigns")
-        .select("id, poll_id")
+        .select("id, poll_id, settlement_id")
         .eq("poll_id", pollId)
         .maybeSingle();
-      if (error || !data) return null;
+      if (error || !data || typeof data.settlement_id !== "string") return null;
       return {
-        settlementId: data.id,
+        settlementId: data.settlement_id,
         pollId: data.poll_id,
       };
     },

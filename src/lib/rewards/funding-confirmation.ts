@@ -124,7 +124,7 @@ export async function loadFundingConfirmationContext(
   funderWallet: string,
 ): Promise<FundingContextLoadResult> {
   const { data: campaign, error: campaignError } = await admin
-    .from("reward_campaigns")
+    .from("reward_settlements")
     .select(
       "id, funding_wallet, status, total_budget_luna, funded_amount_luna, refundable_excess_luna, funded_at",
     )
@@ -140,10 +140,10 @@ export async function loadFundingConfirmationContext(
   const { data: funding, error: fundingError } = await admin
     .from("reward_funding_transactions")
     .select(
-      "id, campaign_id, status, submitted_transaction_hash, confirmed_transaction_hash, reference, amount_luna, vault_wallet, confirmed_at",
+      "id, campaign_id, settlement_id, status, submitted_transaction_hash, confirmed_transaction_hash, reference, amount_luna, vault_wallet, confirmed_at",
     )
     .eq("id", intentId)
-    .eq("campaign_id", campaign.id)
+    .eq("settlement_id", campaign.id)
     .maybeSingle();
   if (fundingError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!funding) return { kind: "not_found", reasonCode: "intent_not_found" };
@@ -151,7 +151,7 @@ export async function loadFundingConfirmationContext(
   const { data: vault, error: vaultError } = await admin
     .from("reward_campaign_vaults")
     .select("vault_address_hex")
-    .eq("campaign_id", campaign.id)
+    .eq("settlement_id", campaign.id)
     .maybeSingle();
   if (vaultError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!vault) return { kind: "not_found", reasonCode: "vault_not_found" };
@@ -164,6 +164,7 @@ export async function loadFundingConfirmationContext(
   if (
     networkId === null ||
     typeof campaign.id !== "string" ||
+    funding.settlement_id !== settlementId ||
     typeof funding.id !== "string" ||
     typeof funding.reference !== "string" ||
     typeof vault.vault_address_hex !== "string" ||

@@ -444,37 +444,37 @@ export type Database = {
       reward_campaign_vaults: {
         Row: {
           authentication_tag: string
-          campaign_id: string
+          campaign_id: string | null
           created_at: string
           encrypted_private_key_ciphertext: string
           encryption_algorithm: string
           encryption_iv: string
           envelope_version: string
-          settlement_id: string | null
+          settlement_id: string
           updated_at: string
           vault_address_hex: string
         }
         Insert: {
           authentication_tag: string
-          campaign_id: string
+          campaign_id?: string | null
           created_at?: string
           encrypted_private_key_ciphertext: string
           encryption_algorithm: string
           encryption_iv: string
           envelope_version: string
-          settlement_id?: string | null
+          settlement_id: string
           updated_at?: string
           vault_address_hex: string
         }
         Update: {
           authentication_tag?: string
-          campaign_id?: string
+          campaign_id?: string | null
           created_at?: string
           encrypted_private_key_ciphertext?: string
           encryption_algorithm?: string
           encryption_iv?: string
           envelope_version?: string
-          settlement_id?: string | null
+          settlement_id?: string
           updated_at?: string
           vault_address_hex?: string
         }
@@ -482,14 +482,14 @@ export type Database = {
           {
             foreignKeyName: "reward_campaign_vaults_campaign_id_fkey"
             columns: ["campaign_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "reward_campaigns"
             referencedColumns: ["id"]
           },
           {
             foreignKeyName: "reward_campaign_vaults_settlement_id_fkey"
             columns: ["settlement_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "reward_settlements"
             referencedColumns: ["id"]
           },
@@ -1300,14 +1300,28 @@ export type Database = {
         }
         Returns: Json
       }
-      ensure_reward_campaign_vault_atomic: {
+      ensure_poll_reward_settlement_atomic: {
+        Args: {
+          _creator_wallet: string
+          _fee_reserve_luna: number
+          _funding_mode: string
+          _funding_wallet: string
+          _max_rewarded_participants: number
+          _poll_id: string
+          _reward_per_participant_luna: number
+          _reward_principal_luna: number
+          _total_budget_luna: number
+        }
+        Returns: Json
+      }
+      ensure_reward_settlement_vault_atomic: {
         Args: {
           _auth_tag: string
-          _campaign_id: string
           _ciphertext: string
           _encryption_algorithm: string
           _envelope_version: string
           _iv: string
+          _settlement_id: string
           _vault_address_hex: string
         }
         Returns: Json

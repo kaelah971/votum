@@ -14,6 +14,10 @@ import {
   type RewardPayoutResult,
 } from "@/lib/rewards/payout";
 import {
+  loadRewardSettlementContext as loadSettlementRoot,
+  resolvePollRewardSettlement as resolvePollSettlementRoot,
+} from "@/lib/rewards/settlement-root";
+import {
   createDefaultPayoutReconciliationDependencies,
   loadPayoutReconciliationContext,
   reconcilePayoutAttempt,
@@ -21,7 +25,6 @@ import {
   type PayoutReconciliationExecutionResult,
 } from "@/lib/rewards/payout-reconciliation";
 import type { RewardSettlementContext } from "@/lib/rewards/participation";
-import { isRewardCampaignState } from "@/lib/rewards/states";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type AdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
@@ -87,27 +90,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function integerLuna(value: unknown): bigint | null {
-  if (typeof value === "bigint" && value >= BigInt(0)) return value;
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
-  if (typeof value === "string" && /^\d+$/.test(value)) {
-    try {
-      return BigInt(value);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
 function safeNetworkId(): number | null {
   const value = Number(process.env.NIMIQ_NETWORK_ID);
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
-function safeStringOrNull(value: unknown): string | null | undefined {
-  if (value === undefined || typeof value === "string") return value;
-  return value === null ? null : undefined;
 }
 
 function rpcError(reasonCode: string, message?: string): SafeSettlementError {
@@ -120,77 +105,43 @@ export async function resolvePollRewardSettlement(
   admin: AdminClient,
   pollId: string,
 ): Promise<PollSettlementResolution> {
-  const { data, error } = await admin
-    .from("reward_campaigns")
-    .select("id, poll_id")
-    .eq("poll_id", pollId)
-    .maybeSingle();
-  if (error) return { kind: "error", reasonCode: "database_read_failed" };
-  if (!data) return { kind: "not_found", reasonCode: "settlement_not_found" };
-  if (typeof data.id !== "string" || typeof data.poll_id !== "string" || data.poll_id !== pollId) {
-    return { kind: "error", reasonCode: "malformed_settlement_binding" };
-  }
-  return { kind: "ok", settlementId: data.id };
+  const result = await resolvePollSettlementRoot(admin, pollId);
+  if (result.kind !== "ok") return result;
+  return { kind: "ok", settlementId: result.settlementId };
 }
 
 export async function loadRewardSettlementContext(
   admin: AdminClient,
   settlementId: string,
 ): Promise<SettlementContextLoadResult> {
-  const { data: campaign, error: campaignError } = await admin
-    .from("reward_campaigns")
-    .select(
-      "id, creator_wallet, funding_wallet, reward_per_participant_luna, reward_principal_luna, fee_reserve_luna, total_budget_luna, funded_amount_luna, paid_amount_luna, fee_spent_luna, refundable_excess_luna, status, first_reservation_at",
-    )
-    .eq("id", settlementId)
-    .maybeSingle();
-  if (campaignError) return { kind: "error", reasonCode: "database_read_failed" };
-  if (!campaign) return { kind: "not_found", reasonCode: "settlement_not_found" };
+  const rootResult = await loadSettlementRoot(admin, settlementId);
+  if (rootResult.kind === "not_found") return rootResult;
+  if (rootResult.kind === "error") {
+    return {
+      kind: "error",
+      reasonCode: rootResult.reasonCode === "database_read_failed"
+        ? "database_read_failed"
+        : "malformed_settlement_context",
+    };
+  }
+  const root = rootResult.root;
 
   const { data: vault, error: vaultError } = await admin
     .from("reward_campaign_vaults")
-    .select("campaign_id, vault_address_hex")
-    .eq("campaign_id", settlementId)
+    .select("settlement_id, vault_address_hex")
+    .eq("settlement_id", settlementId)
     .maybeSingle();
   if (vaultError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!vault) return { kind: "not_found", reasonCode: "vault_not_found" };
 
-  const ownerWallet = typeof campaign.creator_wallet === "string"
-    ? normalizeAddress(campaign.creator_wallet)
-    : null;
-  const fundingWallet = typeof campaign.funding_wallet === "string"
-    ? normalizeAddress(campaign.funding_wallet)
-    : null;
   const vaultAddressHex = typeof vault.vault_address_hex === "string"
     ? normalizeAddress(vault.vault_address_hex)
     : null;
   const networkId = safeNetworkId();
-  const rewardPerParticipantLuna = integerLuna(campaign.reward_per_participant_luna);
-  const rewardPrincipalLuna = integerLuna(campaign.reward_principal_luna);
-  const feeReserveLuna = integerLuna(campaign.fee_reserve_luna);
-  const totalBudgetLuna = integerLuna(campaign.total_budget_luna);
-  const fundedAmountLuna = integerLuna(campaign.funded_amount_luna);
-  const paidAmountLuna = integerLuna(campaign.paid_amount_luna);
-  const feeSpentLuna = integerLuna(campaign.fee_spent_luna);
-  const refundableExcessLuna = integerLuna(campaign.refundable_excess_luna);
-  const firstReservationAt = safeStringOrNull(campaign.first_reservation_at);
   if (
-    campaign.id !== settlementId ||
-    vault.campaign_id !== settlementId ||
-    !ownerWallet ||
-    !fundingWallet ||
     !vaultAddressHex ||
     networkId === null ||
-    rewardPerParticipantLuna === null ||
-    rewardPrincipalLuna === null ||
-    feeReserveLuna === null ||
-    totalBudgetLuna === null ||
-    fundedAmountLuna === null ||
-    paidAmountLuna === null ||
-    feeSpentLuna === null ||
-    refundableExcessLuna === null ||
-    !isRewardCampaignState(campaign.status) ||
-    firstReservationAt === undefined
+    vault.settlement_id !== settlementId
   ) {
     return { kind: "error", reasonCode: "malformed_settlement_context" };
   }
@@ -198,21 +149,21 @@ export async function loadRewardSettlementContext(
   return {
     kind: "ok",
     context: {
-      settlementId: campaign.id,
-      ownerWallet,
-      fundingWallet,
+      settlementId: root.settlementId,
+      ownerWallet: root.ownerWallet,
+      fundingWallet: root.fundingWallet,
       vaultAddressHex,
       networkId,
-      rewardPerParticipantLuna,
-      rewardPrincipalLuna,
-      feeReserveLuna,
-      totalBudgetLuna,
-      fundedAmountLuna,
-      paidAmountLuna,
-      feeSpentLuna,
-      refundableExcessLuna,
-      state: campaign.status,
-      firstReservationAt,
+      rewardPerParticipantLuna: root.rewardPerParticipantLuna,
+      rewardPrincipalLuna: root.rewardPrincipalLuna,
+      feeReserveLuna: root.feeReserveLuna,
+      totalBudgetLuna: root.totalBudgetLuna,
+      fundedAmountLuna: root.fundedAmountLuna,
+      paidAmountLuna: root.paidAmountLuna,
+      feeSpentLuna: root.feeSpentLuna,
+      refundableExcessLuna: root.refundableExcessLuna,
+      state: root.status,
+      firstReservationAt: root.firstReservationAt,
     },
   };
 }
@@ -227,7 +178,9 @@ function parseFundingResult(
   if (resultKind !== "created" && resultKind !== "replay") {
     return rpcError(resultKind || "funding_intent_failed");
   }
-  if (result.campaign_id !== settlementId) return rpcError("settlement_mismatch");
+  if ((result.settlement_id ?? result.campaign_id) !== settlementId) {
+    return rpcError("settlement_mismatch");
+  }
   const fundingIntent = mapFundingIntentResult(result);
   return fundingIntent
     ? { kind: resultKind, fundingIntent }
@@ -265,7 +218,9 @@ export function createRewardSettlementService(
         if (!result) return rpcError("binding_failed");
         const resultKind = typeof result.result_kind === "string" ? result.result_kind : "";
         if (resultKind !== "bound" && resultKind !== "bound_replay") return rpcError(resultKind || "binding_failed");
-        if (result.campaign_id !== settlementId) return rpcError("settlement_mismatch");
+        if ((result.settlement_id ?? result.campaign_id) !== settlementId) {
+          return rpcError("settlement_mismatch");
+        }
         return {
           kind: resultKind,
           settlementId,

@@ -6,7 +6,7 @@ import {
   validateRewardConfigInput,
   assertConfigMutable,
 } from "@/lib/rewards/config";
-import { ensureCampaignVault } from "@/lib/rewards/vault-service";
+import { ensureRewardSettlementVault } from "@/lib/rewards/vault-service";
 import { lunaToNim } from "@/lib/nimiq/units";
 import { addressesEqual, normalizeAddress, toUserFriendlyAddress } from "@/lib/nimiq/server-crypto";
 import { isRewardFundingMode, type RewardFundingMode } from "@/lib/polls/economic-model";
@@ -290,75 +290,119 @@ export async function POST(
     }
   }
 
-  // Load existing campaign (if any) to enforce immutability and one-per-poll.
+  // Load the Poll adapter (if any) to enforce immutability and one-per-poll.
   const { data: existing } = await admin
     .from("reward_campaigns")
-    .select("id, status, poll_id")
+    .select("id, status, poll_id, settlement_id")
     .eq("poll_id", pollId)
     .maybeSingle();
 
+  if (existing) {
+    const { data: binding, error: bindingError } = await admin
+      .from("settlement_source_bindings")
+      .select("settlement_id, source_type, reward_campaign_id")
+      .eq("reward_campaign_id", existing.id)
+      .maybeSingle();
+    if (
+      bindingError ||
+      !binding ||
+      binding.source_type !== "poll_reward_campaign" ||
+      binding.reward_campaign_id !== existing.id ||
+      binding.settlement_id !== existing.settlement_id
+    ) {
+      return NextResponse.json(
+        { error: "settlement_binding_invalid", stage: "authority", requestId, message: "The reward settlement binding is unavailable." },
+        { status: 500 },
+      );
+    }
+  }
+
   let campaignId: string;
+  let settlementId: string;
 
   if (existing) {
-    // Terms mutable only while `configured`.
+    if (typeof existing.settlement_id !== "string") {
+      return NextResponse.json(
+        { error: "settlement_missing", stage: "authority", requestId, message: "The reward settlement is unavailable." },
+        { status: 500 },
+      );
+    }
+    const { data: root, error: rootError } = await admin
+      .from("reward_settlements")
+      .select("status")
+      .eq("id", existing.settlement_id)
+      .maybeSingle();
+    if (rootError || !root) {
+      return NextResponse.json(
+        { error: "settlement_missing", stage: "authority", requestId, message: "The reward settlement is unavailable." },
+        { status: 500 },
+      );
+    }
+    // Terms mutable only while the settlement is `configured`.
     try {
-      assertConfigMutable(existing.status as never);
+      assertConfigMutable(root.status as never);
     } catch {
-      log("terms_locked", { requestId, status: 409, state: existing.status });
+      log("terms_locked", { requestId, status: 409, state: root.status });
       return NextResponse.json(
         { error: "terms_immutable", stage: "immutability", requestId, message: "Reward terms are locked once funding begins." },
         { status: 409 },
       );
     }
     campaignId = existing.id;
-    const { error: updErr } = await admin
-      .from("reward_campaigns")
-      .update({
-        funding_mode: fundingMode,
-        funding_wallet: fundingWallet,
-        reward_per_participant_luna: Number(v.rewardPerParticipantLuna),
-        max_rewarded_participants: v.maxRewardedParticipants,
-        reward_principal_luna: Number(v.rewardPrincipalLuna),
-        fee_reserve_luna: Number(v.feeReserveLuna),
-        total_budget_luna: Number(v.totalBudgetLuna),
-      })
-      .eq("id", campaignId);
-    if (updErr) {
-      return NextResponse.json(
-        { error: "update_failed", stage: "campaign", requestId, message: "Could not update the reward campaign." },
-        { status: 500 },
-      );
-    }
+    settlementId = existing.settlement_id;
   } else {
-    const { data: inserted, error: insErr } = await admin
-      .from("reward_campaigns")
-      .insert({
-        poll_id: pollId,
-        creator_wallet: sessionWallet,
-        funding_mode: fundingMode,
-        funding_wallet: fundingWallet,
-        reward_per_participant_luna: Number(v.rewardPerParticipantLuna),
-        max_rewarded_participants: v.maxRewardedParticipants,
-        reward_principal_luna: Number(v.rewardPrincipalLuna),
-        fee_reserve_luna: Number(v.feeReserveLuna),
-        total_budget_luna: Number(v.totalBudgetLuna),
-        status: "configured",
-      })
-      .select("id, status")
-      .single();
-    if (insErr || !inserted) {
+    campaignId = "";
+    settlementId = "";
+  }
+
+  const { data: authority, error: authorityError } = await admin.rpc(
+    "ensure_poll_reward_settlement_atomic",
+    {
+      _poll_id: pollId,
+      _creator_wallet: sessionWallet,
+      _funding_mode: fundingMode,
+      _funding_wallet: fundingWallet,
+      _reward_per_participant_luna: Number(v.rewardPerParticipantLuna),
+      _max_rewarded_participants: v.maxRewardedParticipants,
+      _reward_principal_luna: Number(v.rewardPrincipalLuna),
+      _fee_reserve_luna: Number(v.feeReserveLuna),
+      _total_budget_luna: Number(v.totalBudgetLuna),
+    },
+  );
+  const authorityRow = authority && typeof authority === "object"
+    ? authority as { result_kind?: string; campaign_id?: string; settlement_id?: string; status?: string }
+    : null;
+  if (
+    authorityError ||
+    !authorityRow ||
+    !authorityRow.campaign_id ||
+    !authorityRow.settlement_id ||
+    !["created", "updated"].includes(authorityRow.result_kind ?? "")
+  ) {
+    if (authorityRow?.result_kind === "terms_locked") {
       return NextResponse.json(
-        { error: "insert_failed", stage: "campaign", requestId, message: "Could not create the reward campaign." },
-        { status: 500 },
+        { error: "terms_immutable", stage: "immutability", requestId, message: "Reward terms are locked once funding begins." },
+        { status: 409 },
       );
     }
-    campaignId = inserted.id;
+    if (authorityRow?.result_kind === "forbidden") {
+      return NextResponse.json(
+        { error: "forbidden", stage: "authority", requestId, message: "Only the poll creator can configure rewards." },
+        { status: 403 },
+      );
+    }
+    return NextResponse.json(
+      { error: "authority_failed", stage: "authority", requestId, message: "Could not create the reward settlement." },
+      { status: 500 },
+    );
   }
+  campaignId = authorityRow.campaign_id;
+  settlementId = authorityRow.settlement_id;
 
   // Bind one vault (idempotent; safe metadata only).
   let vaultAddressHex: string | null = null;
   try {
-    const vault = await ensureCampaignVault(campaignId);
+    const vault = await ensureRewardSettlementVault(settlementId);
     vaultAddressHex = vault.vaultAddressHex;
   } catch (err) {
     log("vault_bind_failed", {
@@ -377,17 +421,33 @@ export async function POST(
     .select("*")
     .eq("id", campaignId)
     .maybeSingle();
-  if (readErr || !finalCampaign) {
-    return NextResponse.json(
-      { error: "read_failed", stage: "campaign", requestId, message: "Could not read the reward campaign." },
-      { status: 500 },
-    );
+  const { data: finalRoot, error: rootReadErr } = await admin
+    .from("reward_settlements")
+    .select("*")
+    .eq("id", settlementId)
+    .maybeSingle();
+  if (readErr || rootReadErr || !finalCampaign || !finalRoot) {
+      return NextResponse.json(
+        { error: "read_failed", stage: "authority", requestId, message: "Could not read the reward settlement." },
+        { status: 500 },
+      );
   }
 
-  log("configured", { requestId, status: 200, campaignId, state: finalCampaign.status });
+  const campaignView = {
+    ...finalCampaign,
+    funding_mode: finalRoot.funding_mode,
+    funding_wallet: finalRoot.funding_wallet,
+    reward_per_participant_luna: finalRoot.reward_per_participant_luna,
+    max_rewarded_participants: finalRoot.max_rewarded_participants,
+    reward_principal_luna: finalRoot.reward_principal_luna,
+    fee_reserve_luna: finalRoot.fee_reserve_luna,
+    total_budget_luna: finalRoot.total_budget_luna,
+    status: finalRoot.status,
+  } as CampaignRow;
+  log("configured", { requestId, status: 200, campaignId, settlementId, state: campaignView.status });
   return NextResponse.json({
     config: toConfigSummary(
-      finalCampaign as unknown as CampaignRow,
+      campaignView,
       vaultAddressHex,
       null,
       poll as unknown as PollSummaryRow,
@@ -474,11 +534,51 @@ export async function GET(
     );
   }
 
+  const { data: binding, error: bindingErr } = await admin
+    .from("settlement_source_bindings")
+    .select("settlement_id, source_type, reward_campaign_id")
+    .eq("reward_campaign_id", campaign.id)
+    .maybeSingle();
+  if (
+    bindingErr ||
+    !binding ||
+    binding.source_type !== "poll_reward_campaign" ||
+    binding.reward_campaign_id !== campaign.id ||
+    binding.settlement_id !== campaign.settlement_id
+  ) {
+    return NextResponse.json(
+      { error: "settlement_binding_invalid", stage: "authority", requestId, message: "The reward settlement binding is unavailable." },
+      { status: 500 },
+    );
+  }
+
+  const settlementId = typeof campaign.settlement_id === "string"
+    ? campaign.settlement_id
+    : null;
+  if (!settlementId) {
+    return NextResponse.json(
+      { error: "settlement_missing", stage: "authority", requestId, message: "The reward settlement is unavailable." },
+      { status: 500 },
+    );
+  }
+
+  const { data: root, error: rootErr } = await admin
+    .from("reward_settlements")
+    .select("*")
+    .eq("id", settlementId)
+    .maybeSingle();
+  if (rootErr || !root) {
+    return NextResponse.json(
+      { error: "settlement_missing", stage: "authority", requestId, message: "The reward settlement is unavailable." },
+      { status: 500 },
+    );
+  }
+
   let vaultAddressHex: string | null = null;
   const { data: vault } = await admin
     .from("reward_campaign_vaults")
     .select("vault_address_hex")
-    .eq("campaign_id", (campaign as { id: string }).id)
+    .eq("settlement_id", settlementId)
     .maybeSingle();
   if (vault) {
     vaultAddressHex = (vault as { vault_address_hex: string }).vault_address_hex;
@@ -489,14 +589,25 @@ export async function GET(
     .select(
       "id, campaign_id, reference, amount_luna, reward_principal_luna, fee_reserve_luna, status, submitted_transaction_hash, confirmation_deadline, created_at",
     )
-    .eq("campaign_id", (campaign as { id: string }).id)
+    .eq("settlement_id", settlementId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   return NextResponse.json({
     config: toConfigSummary(
-      campaign as unknown as CampaignRow,
+      {
+        ...campaign,
+        funding_mode: root.funding_mode,
+        funding_wallet: root.funding_wallet,
+        reward_per_participant_luna: root.reward_per_participant_luna,
+        max_rewarded_participants: root.max_rewarded_participants,
+        reward_principal_luna: root.reward_principal_luna,
+        fee_reserve_luna: root.fee_reserve_luna,
+        total_budget_luna: root.total_budget_luna,
+        status: root.status,
+        settlement_id: settlementId,
+      } as unknown as CampaignRow,
       vaultAddressHex,
       (funding as FundingSummaryRow | null) ?? null,
       poll as unknown as PollSummaryRow,

@@ -20,6 +20,7 @@ function log(stage: string, data: Record<string, unknown>) {
 interface RewardCampaignSummaryRow {
   id: string;
   poll_id: string;
+  settlement_id: string;
   status: string;
   reward_per_participant_luna: number | string;
   max_rewarded_participants: number;
@@ -100,26 +101,52 @@ export async function GET() {
     if (admin) {
       const { data: campaigns, error: campaignErr } = await admin
         .from("reward_campaigns")
-        .select(
-          "id, poll_id, status, reward_per_participant_luna, max_rewarded_participants, reward_principal_luna, fee_reserve_luna, total_budget_luna",
-        )
+        .select("id, poll_id, settlement_id")
         .in("poll_id", pollIds);
 
       if (campaignErr) throw campaignErr;
 
-      const fundingByCampaign = new Map<string, RewardFundingSnapshot>();
       const campaignIds = (campaigns ?? []).map((campaign) => campaign.id);
-      if (campaignIds.length > 0) {
+      const { data: bindings, error: bindingErr } = campaignIds.length > 0
+        ? await admin
+            .from("settlement_source_bindings")
+            .select("reward_campaign_id, settlement_id, source_type")
+            .in("reward_campaign_id", campaignIds)
+        : { data: [], error: null };
+      if (bindingErr) throw bindingErr;
+      const bindingByCampaign = new Map(
+        (bindings ?? [])
+          .filter((binding) => binding.source_type === "poll_reward_campaign")
+          .map((binding) => [binding.reward_campaign_id, binding.settlement_id]),
+      );
+
+      const fundingBySettlement = new Map<string, RewardFundingSnapshot>();
+      const settlementIds = (campaigns ?? [])
+        .filter((campaign) =>
+          typeof campaign.settlement_id === "string" &&
+          bindingByCampaign.get(campaign.id) === campaign.settlement_id,
+        )
+        .map((campaign) => bindingByCampaign.get(campaign.id) ?? "")
+        .filter((settlementId): settlementId is string => settlementId.length > 0);
+      const { data: settlements, error: settlementErr } = settlementIds.length > 0
+        ? await admin
+            .from("reward_settlements")
+            .select("id, status, reward_per_participant_luna, max_rewarded_participants, reward_principal_luna, fee_reserve_luna, total_budget_luna")
+            .in("id", settlementIds)
+        : { data: [], error: null };
+      if (settlementErr) throw settlementErr;
+
+      if (settlementIds.length > 0) {
         const { data: fundingRows, error: fundingErr } = await admin
           .from("reward_funding_transactions")
-          .select("campaign_id, status, submitted_transaction_hash, created_at")
-          .in("campaign_id", campaignIds)
+          .select("settlement_id, status, submitted_transaction_hash, created_at")
+          .in("settlement_id", settlementIds)
           .order("created_at", { ascending: false });
 
         if (fundingErr) throw fundingErr;
         for (const funding of fundingRows ?? []) {
-          if (!fundingByCampaign.has(funding.campaign_id)) {
-            fundingByCampaign.set(funding.campaign_id, {
+          if (!fundingBySettlement.has(funding.settlement_id)) {
+            fundingBySettlement.set(funding.settlement_id, {
               status: funding.status,
               submittedTransactionHash: funding.submitted_transaction_hash,
             });
@@ -127,10 +154,20 @@ export async function GET() {
         }
       }
 
-      for (const campaign of (campaigns ?? []) as RewardCampaignSummaryRow[]) {
+      const settlementById = new Map(
+        (settlements ?? []).map((settlement) => [settlement.id, settlement]),
+      );
+      for (const campaign of campaigns ?? []) {
+        const settlementId = campaign.settlement_id;
+        if (typeof settlementId !== "string") continue;
+        const settlement = settlementById.get(settlementId);
+        if (!settlement) continue;
         campaignByPoll.set(campaign.poll_id, {
-          ...campaign,
-          funding: fundingByCampaign.get(campaign.id) ?? null,
+          ...settlement,
+          id: campaign.id,
+          poll_id: campaign.poll_id,
+          settlement_id: settlementId,
+          funding: fundingBySettlement.get(settlementId) ?? null,
         });
       }
     }

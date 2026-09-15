@@ -3,10 +3,11 @@ import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
 import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SECRET_KEY ?? "";
+const url = testSupabaseUrl();
+const key = testSupabaseKey();
 const admin = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   db: { schema: "public" },
@@ -49,7 +50,7 @@ function sqlQuote(value: string): string {
 
 function runPsql(sql: string): void {
   execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-c", sql,
   ], { stdio: "pipe" });
 }
@@ -151,6 +152,7 @@ async function createFixture(options: {
 
   const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
     campaign_id: campaign.id,
+    settlement_id: campaign.id,
     vault_address_hex: vaultAddress,
     envelope_version: "votum:reward-vault:v1",
     encryption_algorithm: "aes-256-gcm",
@@ -253,8 +255,8 @@ async function beginRefund(campaignId: string, extra: Record<string, unknown> = 
 }
 
 async function readCampaign(campaignId: string) {
-  const { data, error } = await admin.from("reward_campaigns")
-    .select("status, refundable_amount_luna, closed_at, refunded_at, creator_wallet, vault_wallet, funded_amount_luna, paid_amount_luna, fee_spent_luna, refundable_excess_luna")
+  const { data, error } = await admin.from("reward_settlements")
+    .select("status, refundable_amount_luna, closed_at, refunded_at, owner_wallet, funded_amount_luna, paid_amount_luna, fee_spent_luna, refundable_excess_luna")
     .eq("id", campaignId).single();
   if (error || !data) throw error ?? new Error("campaign state missing");
   return data;
@@ -300,10 +302,9 @@ function cleanupFixtures(): void {
     DELETE FROM public.reward_funding_transactions WHERE campaign_id IN (${campaigns});
     DELETE FROM public.reward_receipts WHERE campaign_id IN (${campaigns});
     DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns});
-    UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns});
     DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
-    DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
     DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});
+    DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
     DELETE FROM public.poll_votes WHERE poll_id IN (${polls});
     DELETE FROM public.poll_options WHERE poll_id IN (${polls});
     DELETE FROM public.polls WHERE id IN (${polls});
@@ -572,7 +573,7 @@ describe("begin_reward_refund_atomic", () => {
     expect(resultKind(await beginRefund(closed.campaignId))).toBe("replay");
 
     const refunded = await createFixture({ campaignStatus: "refunded" });
-    const { error: statusError } = await admin.from("reward_campaigns")
+    const { error: statusError } = await admin.from("reward_settlements")
       .update({ status: "funded" }).eq("id", refunded.campaignId);
     expect(statusError).not.toBeNull();
     const refundedResult = await beginRefund(refunded.campaignId);
@@ -602,7 +603,7 @@ describe("begin_reward_refund_atomic", () => {
   it("freezes campaign economics after preparation", async () => {
     const fixture = await createFixture();
     expect(resultKind(await beginRefund(fixture.campaignId))).toBe("created");
-    const { error } = await admin.from("reward_campaigns")
+    const { error } = await admin.from("reward_settlements")
       .update({ reward_per_participant_luna: 2_000, reward_principal_luna: 20_000 })
       .eq("id", fixture.campaignId);
 

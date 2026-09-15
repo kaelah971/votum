@@ -1,17 +1,23 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
+import {
+  createPollCampaignFixture,
+  deletePollCampaignFixtureSql,
+  type PollCampaignFixture,
+} from "@/lib/rewards/settlement-fixture";
 import {
   loadRewardSettlementContext,
   resolvePollRewardSettlement,
 } from "@/lib/rewards/settlement-root";
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const adminKey = process.env.SUPABASE_SECRET_KEY ?? "";
-const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
+const url = testSupabaseUrl();
+const adminKey = testSupabaseKey();
+const publishableKey = process.env.VOTUM_CLEANROOM_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
 
 const admin = createClient(url, adminKey, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -26,7 +32,7 @@ function psql(sql: string): string {
   assertLocalSupabaseForTests();
   return execFileSync("docker", [
     "exec",
-    "supabase_db_votum",
+    testDbContainer(),
     "psql",
     "-U",
     "postgres",
@@ -49,9 +55,40 @@ beforeAll(() => {
   assertLocalSupabaseForTests();
 });
 
+const fixtureCampaignIds: string[] = [];
+const fixturePollIds: string[] = [];
+
+function trackFixture(fixture: PollCampaignFixture): PollCampaignFixture {
+  fixtureCampaignIds.push(fixture.campaignId);
+  fixturePollIds.push(fixture.pollId);
+  return fixture;
+}
+
+function cleanupFixtures(): void {
+  if (fixtureCampaignIds.length === 0) return;
+  execFileSync("docker", [
+    "exec",
+    testDbContainer(),
+    "psql",
+    "-U",
+    "postgres",
+    "-d",
+    "postgres",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    deletePollCampaignFixtureSql(fixtureCampaignIds, fixturePollIds),
+  ], { stdio: "pipe" });
+  fixtureCampaignIds.length = 0;
+  fixturePollIds.length = 0;
+}
+
+afterEach(() => {
+  cleanupFixtures();
+});
+
 afterAll(() => {
-  // This slice creates no fixtures. The test deliberately leaves the local
-  // database rows used by the migration harness untouched.
+  cleanupFixtures();
 });
 
 describe("V2C.2A settlement root schema", () => {
@@ -209,9 +246,11 @@ describe("V2C.2A Poll backfill", () => {
   });
 
   it("rejects duplicate or malformed binding/root writes", async () => {
+    const fixture = trackFixture(await createPollCampaignFixture(admin));
     const { data: campaign } = await admin
       .from("reward_campaigns")
       .select("id, poll_id")
+      .eq("id", fixture.campaignId)
       .not("settlement_id", "is", null)
       .limit(1)
       .single();
@@ -254,8 +293,8 @@ describe("V2C.2A Poll backfill", () => {
   });
 });
 
-describe("V2C.2A read-only authority boundary", () => {
-  it("does not add reward_settlements writes to existing financial RPCs", () => {
+describe("V2C.2E settlement-root authority boundary", () => {
+  it("routes existing financial RPCs through reward_settlements", () => {
     const functionNames = [
       "begin_reward_funding_atomic",
       "bind_reward_funding_transaction_atomic",
@@ -271,13 +310,15 @@ describe("V2C.2A read-only authority boundary", () => {
     ];
     const names = functionNames.map((name) => `'${name}'`).join(",");
     const result = psql(`SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname IN (${names}) AND pg_get_functiondef(p.oid) ILIKE '%reward_settlements%';`);
-    expect(result).toBe("");
+    expect(new Set(result.split("\n"))).toEqual(new Set(functionNames));
   });
 
   it("resolves the backfilled Poll binding through the read-only root loader", async () => {
+    const fixture = trackFixture(await createPollCampaignFixture(admin));
     const { data: campaign } = await admin
       .from("reward_campaigns")
       .select("id, poll_id")
+      .eq("id", fixture.campaignId)
       .not("settlement_id", "is", null)
       .limit(1)
       .single();

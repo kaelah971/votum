@@ -19,7 +19,8 @@ import "./load-local-env";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321";
 const key = process.env.SUPABASE_SECRET_KEY ?? "";
-const TEST_IO_TIMEOUT_MS = 15000;
+// The first App Router request can include a cold Turbopack compilation.
+const TEST_IO_TIMEOUT_MS = 30000;
 
 function requestPath(input: RequestInfo | URL): string {
   try {

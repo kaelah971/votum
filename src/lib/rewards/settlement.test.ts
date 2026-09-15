@@ -51,18 +51,33 @@ afterEach(() => {
 
 function adminFor(rows: {
   campaign?: Record<string, unknown> | null;
+  settlement?: Record<string, unknown> | null;
+  poll?: Record<string, unknown> | null;
+  binding?: Record<string, unknown> | null;
   vault?: Record<string, unknown> | null;
 } = {}) {
   return {
     from(table: string) {
-      let value = table === "reward_campaigns" ? rows.campaign : rows.vault;
+      let value = table === "reward_settlements"
+        ? (rows.settlement ?? rows.campaign)
+        : table === "reward_campaigns"
+          ? rows.campaign
+          : table === "polls"
+            ? (rows.poll ?? (rows.campaign ? {
+                id: rows.campaign.poll_id ?? POLL_ID,
+                creator_wallet: rows.campaign.creator_wallet ?? OWNER,
+              } : null))
+            : table === "settlement_source_bindings"
+              ? (rows.binding ?? (rows.campaign ? {
+                  settlement_id: rows.campaign.settlement_id ?? rows.campaign.id,
+                  reward_campaign_id: rows.campaign.id,
+                  source_type: "poll_reward_campaign",
+                } : null))
+              : rows.vault;
       const query = {
         select: () => query,
         eq: (column: string, expected: string) => {
-          if (
-            (table === "reward_campaigns" && column === "id" && rows.campaign && rows.campaign.id !== expected) ||
-            (table === "reward_campaign_vaults" && column === "campaign_id" && rows.vault && rows.vault.campaign_id !== expected)
-          ) {
+          if (value && value[column] !== undefined && value[column] !== expected) {
             value = null;
           }
           return query;
@@ -78,9 +93,16 @@ function adminFor(rows: {
 function campaignRow(): Record<string, unknown> {
   return {
     id: SETTLEMENT_ID,
+    poll_id: POLL_ID,
+    settlement_id: SETTLEMENT_ID,
     creator_wallet: OWNER,
+    owner_wallet: OWNER,
     funding_wallet: FUNDER,
+    refund_recipient_wallet: OWNER,
+    funding_mode: "creator",
+    asset: "NIM",
     reward_per_participant_luna: 5000,
+    max_rewarded_participants: 3,
     reward_principal_luna: 15000,
     fee_reserve_luna: 1000,
     total_budget_luna: 16000,
@@ -88,8 +110,18 @@ function campaignRow(): Record<string, unknown> {
     paid_amount_luna: 5000,
     fee_spent_luna: 4000,
     refundable_excess_luna: 0,
+    rewarded_participant_count: 1,
+    refundable_amount_luna: 0,
+    payout_lock_attempt_id: null,
+    payout_lock_expires_at: null,
+    payout_lock_token: null,
     status: "rewarding",
     first_reservation_at: "2026-09-13T00:00:00.000Z",
+    created_at: "2026-09-13T00:00:00.000Z",
+    funded_at: "2026-09-13T00:00:00.000Z",
+    closed_at: null,
+    refunded_at: null,
+    updated_at: "2026-09-13T00:00:00.000Z",
   };
 }
 
@@ -125,7 +157,7 @@ describe("RewardSettlementContext loader", () => {
     vi.stubEnv("NIMIQ_NETWORK_ID", "42");
     const loaded = await loadRewardSettlementContext(adminFor({
       campaign: campaignRow(),
-      vault: { campaign_id: SETTLEMENT_ID, vault_address_hex: VAULT },
+      vault: { settlement_id: SETTLEMENT_ID, campaign_id: SETTLEMENT_ID, vault_address_hex: VAULT },
     }) as never, SETTLEMENT_ID);
 
     expect(loaded).toEqual({
@@ -171,7 +203,7 @@ describe("RewardSettlementContext loader", () => {
 describe("Poll settlement resolver", () => {
   it("maps a Poll ID to reward_campaigns.id without making Poll ID the settlement identity", async () => {
     const loaded = await resolvePollRewardSettlement(adminFor({
-      campaign: { id: SETTLEMENT_ID, poll_id: POLL_ID },
+      campaign: campaignRow(),
     }) as never, POLL_ID);
 
     expect(loaded).toEqual({ kind: "ok", settlementId: SETTLEMENT_ID });

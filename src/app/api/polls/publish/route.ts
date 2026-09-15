@@ -6,7 +6,7 @@ import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 import { nimDecimalToLuna } from "@/lib/nimiq/units";
 import { isPollCategory, isPollFormat } from "@/lib/polls/taxonomy";
 import { validateRewardConfigInput } from "@/lib/rewards/config";
-import { ensureCampaignVault } from "@/lib/rewards/vault-service";
+import { ensureRewardSettlementVault } from "@/lib/rewards/vault-service";
 import {
   LEGACY_SUPPORT_ENABLED,
   NEW_REWARD_FIRST_POLL,
@@ -692,44 +692,38 @@ export async function POST(request: Request) {
 
     if (pollResult.id && d.economicModel === NEW_REWARD_FIRST_POLL && d.reward) {
       try {
-        const { data: campaign } = await admin
-          .from("reward_campaigns")
-          .select("id, status")
-          .eq("poll_id", pollResult.id)
-          .maybeSingle();
-
-        let campaignId: string;
-        let campaignState: string;
-        if (campaign) {
-          campaignId = campaign.id;
-          campaignState = campaign.status;
-        } else {
-          const { data: inserted, error: insErr } = await admin
-            .from("reward_campaigns")
-            .insert({
-              poll_id: pollResult.id,
-              creator_wallet: creatorWallet,
-              funding_mode: d.reward.fundingMode ?? "creator",
-              funding_wallet: d.reward.fundingWallet ?? creatorWallet,
-              reward_per_participant_luna: Number(d.reward.rewardPerParticipantLuna),
-              max_rewarded_participants: d.reward.maxRewardedParticipants,
-              reward_principal_luna: Number(d.reward.rewardPrincipalLuna),
-              fee_reserve_luna: Number(d.reward.feeReserveLuna),
-              total_budget_luna: Number(d.reward.totalBudgetLuna),
-              status: "configured",
-            })
-            .select("id, status")
-            .single();
-          if (insErr || !inserted) {
-            throw new Error("reward_campaign_insert_failed");
-          }
-          campaignId = inserted.id;
-          campaignState = inserted.status;
+        const { data: authority, error: authorityError } = await admin.rpc(
+          "ensure_poll_reward_settlement_atomic",
+          {
+            _poll_id: pollResult.id,
+            _creator_wallet: creatorWallet,
+            _funding_mode: d.reward.fundingMode ?? "creator",
+            _funding_wallet: d.reward.fundingWallet ?? creatorWallet,
+            _reward_per_participant_luna: Number(d.reward.rewardPerParticipantLuna),
+            _max_rewarded_participants: d.reward.maxRewardedParticipants,
+            _reward_principal_luna: Number(d.reward.rewardPrincipalLuna),
+            _fee_reserve_luna: Number(d.reward.feeReserveLuna),
+            _total_budget_luna: Number(d.reward.totalBudgetLuna),
+          },
+        );
+        const authorityRow = authority && typeof authority === "object"
+          ? authority as { campaign_id?: string; settlement_id?: string; status?: string; result_kind?: string }
+          : null;
+        if (
+          authorityError ||
+          !authorityRow?.campaign_id ||
+          !authorityRow.settlement_id ||
+          !["created", "updated"].includes(authorityRow.result_kind ?? "")
+        ) {
+          throw new Error(authorityRow?.result_kind ?? "reward_settlement_create_failed");
         }
+        const campaignId = authorityRow.campaign_id;
+        const settlementId = authorityRow.settlement_id;
+        const campaignState = authorityRow.status ?? "configured";
 
         let vaultAddressHex: string | null = null;
         try {
-          const vault = await ensureCampaignVault(campaignId);
+          const vault = await ensureRewardSettlementVault(settlementId);
           vaultAddressHex = vault.vaultAddressHex;
         } catch {
           // campaign exists; vault binding failed — surface as non-fatal flag

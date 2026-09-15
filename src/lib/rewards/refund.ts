@@ -7,7 +7,7 @@ import {
   buildRewardPayoutTransaction,
   signRewardPayoutTransaction,
 } from "@/lib/rewards/vault-signing";
-import { withCampaignVaultKey } from "@/lib/rewards/vault-service";
+import { withRewardSettlementVaultKey } from "@/lib/rewards/vault-service";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   isRewardCampaignState,
@@ -259,29 +259,29 @@ export function createSupabaseRewardRefundStore(admin: AdminClient): RewardRefun
     loadRefund: async (refundId, campaignId) => {
       const { data: refund, error: refundError } = await admin
         .from("reward_refunds")
-        .select("id, campaign_id, creator_wallet, amount_luna, status, transaction_hash, fee_luna, network_id, validity_start_height, sender_address_hex, recipient_address_hex, prepared_transaction_hex, prepared_transaction_hash, prepared_at, broadcast_started_at, broadcast_at, error_code")
+        .select("id, campaign_id, settlement_id, creator_wallet, amount_luna, status, transaction_hash, fee_luna, network_id, validity_start_height, sender_address_hex, recipient_address_hex, prepared_transaction_hex, prepared_transaction_hash, prepared_at, broadcast_started_at, broadcast_at, error_code")
         .eq("id", refundId)
-        .eq("campaign_id", campaignId)
+        .eq("settlement_id", campaignId)
         .maybeSingle();
       if (refundError || !refund) return null;
 
       const { data: campaign, error: campaignError } = await admin
-        .from("reward_campaigns")
+        .from("reward_settlements")
         .select("status")
-        .eq("id", refund.campaign_id)
+        .eq("id", refund.settlement_id)
         .maybeSingle();
       if (campaignError || !campaign) return null;
 
       const { data: vault, error: vaultError } = await admin
         .from("reward_campaign_vaults")
         .select("vault_address_hex")
-        .eq("campaign_id", refund.campaign_id)
+        .eq("settlement_id", refund.settlement_id)
         .maybeSingle();
       if (vaultError || !vault) return null;
 
       return parseSnapshot({
         id: refund.id,
-        campaign_id: refund.campaign_id,
+        campaign_id: refund.settlement_id,
         campaign_status: campaign.status,
         creator_wallet: refund.creator_wallet,
         amount_luna: refund.amount_luna,
@@ -395,7 +395,7 @@ function createDefaultRefundDependencies(admin: AdminClient): RefundDependencies
     getFeeLuna: () => ESTIMATED_TX_FEE_LUNA,
     getValidityStartHeight: () => adapter.getBlockNumber(),
     broadcast: (hex) => adapter.broadcastTransaction(hex),
-    sign: async (context) => withCampaignVaultKey(context.campaignId, (keypair) => {
+    sign: async (context) => withRewardSettlementVaultKey(context.campaignId, (keypair) => {
       const built = buildRewardPayoutTransaction({
         senderAddressHex: context.senderAddressHex,
         recipientAddressHex: context.recipientAddressHex,

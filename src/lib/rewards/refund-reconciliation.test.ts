@@ -368,7 +368,7 @@ describe("server refund reconciliation boundary", () => {
     const loaderSource = source.slice(loaderStart, loaderEnd);
 
     expect(loaderSource).toContain("settlementId");
-    expect(loaderSource).toContain('.eq("campaign_id", settlementId)');
+    expect(loaderSource).toContain('.eq("settlement_id", settlementId)');
     expect(loaderSource).not.toContain('.from("polls")');
     expect(loaderSource).not.toContain("poll_id");
   });

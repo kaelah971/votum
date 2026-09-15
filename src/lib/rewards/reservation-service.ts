@@ -7,6 +7,7 @@ import {
   type RewardReservationResult,
   type RewardReservationService,
 } from "@/lib/rewards/participation";
+import { resolvePollRewardSettlement } from "@/lib/rewards/settlement-root";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type AdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
@@ -126,10 +127,13 @@ function parseAtomicResult(
 
   const resultKind = value.result_kind;
   if (resultKind === "reserved" || resultKind === "replay") {
+    // Existing RPC names remain part of the Poll compatibility surface while
+    // settlement_id is the authoritative identity returned by cutover RPCs.
+    const resultSettlementId = value.settlement_id ?? value.campaign_id;
     if (
-      value.campaign_id !== context.settlement.id ||
-      !isNonEmptyString(value.receipt_id) ||
-      !isReceiptStatus(value.status)
+       resultSettlementId !== context.settlement.id ||
+       !isNonEmptyString(value.receipt_id) ||
+       !isReceiptStatus(value.status)
     ) {
       return rejected("invalid_reservation_result", sourceId);
     }
@@ -207,18 +211,14 @@ export function createSupabaseRewardReservationStore(
         .maybeSingle();
       if (pollError || !poll) return null;
 
-      const { data: campaign, error: campaignError } = await admin
-        .from("reward_campaigns")
-        .select("id, poll_id, creator_wallet")
-        .eq("id", context.settlement.id)
-        .maybeSingle();
-      if (campaignError || !campaign) return null;
-
       const pollOwner = normalizeAddress(poll.creator_wallet);
-      const campaignOwner = normalizeAddress(campaign.creator_wallet);
+      const binding = await resolvePollRewardSettlement(admin, vote.poll_id);
+      if (binding.kind !== "ok") return null;
+      const campaignOwner = binding.ownerWallet;
       if (
         poll.id !== vote.poll_id ||
-        campaign.poll_id !== vote.poll_id ||
+        binding.pollId !== vote.poll_id ||
+        binding.settlementId !== context.settlement.id ||
         pollOwner === null ||
         campaignOwner === null ||
         pollOwner !== campaignOwner
@@ -229,10 +229,10 @@ export function createSupabaseRewardReservationStore(
       return {
         sourceId: vote.id,
         sourceType: "poll_vote",
-        settlementId: campaign.id,
-        bindingSourceId: campaign.poll_id,
+        settlementId: context.settlement.id,
+        bindingSourceId: binding.pollId,
         participantWallet: vote.voter_wallet,
-        ownerWallet: campaign.creator_wallet,
+        ownerWallet: binding.ownerWallet,
       };
     },
     async reserveAtomic(sourceId, settlementId) {

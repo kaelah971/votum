@@ -3,9 +3,10 @@ import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const adminKey = process.env.SUPABASE_SECRET_KEY ?? "";
+const url = testSupabaseUrl();
+const adminKey = testSupabaseKey();
 const admin = createClient(url, adminKey, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   db: { schema: "public" },
@@ -59,19 +60,24 @@ async function createPrivateCampaign() {
 }
 
 async function cleanup(): Promise<void> {
-  if (fixtureCampaignIds.length > 0) {
-    await admin.from("reward_campaigns").delete().in("id", fixtureCampaignIds);
-  }
-  if (fixturePollIds.length > 0) {
-    await admin.from("polls").delete().in("id", fixturePollIds);
-  }
+  if (fixtureCampaignIds.length === 0 && fixturePollIds.length === 0) return;
+
+  const campaignIds = fixtureCampaignIds.map((id) => `'${id}'`).join(",");
+  const pollIds = fixturePollIds.map((id) => `'${id}'`).join(",");
+  execFileSync("docker", [
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
+    "-v", "ON_ERROR_STOP=1", "-c",
+    `DELETE FROM public.reward_campaigns WHERE id IN (${campaignIds});
+     DELETE FROM public.polls WHERE id IN (${pollIds});`,
+  ], { stdio: "pipe", timeout: 15000 });
+
   fixtureCampaignIds.length = 0;
   fixturePollIds.length = 0;
 }
 
 function callAsAnon(pollId: string): Record<string, unknown> {
   const output = execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c",
     `SET ROLE anon; SELECT public.get_public_reward_campaign('${pollId}')::text;`,
   ], { encoding: "utf8" });

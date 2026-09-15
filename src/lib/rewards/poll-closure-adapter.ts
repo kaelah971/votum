@@ -135,7 +135,7 @@ export function createSupabasePollClosureSourceStore(
 
       const { data: campaign, error: campaignError } = await admin
         .from("reward_campaigns")
-        .select("id, poll_id")
+        .select("id, poll_id, settlement_id")
         .eq("poll_id", pollId)
         .maybeSingle();
       if (campaignError) throw new Error("campaign_lookup_failed");
@@ -146,7 +146,21 @@ export function createSupabasePollClosureSourceStore(
         !pollStatus(poll.status) ||
         typeof poll.ends_at !== "string" ||
         typeof campaign.id !== "string" ||
-        typeof campaign.poll_id !== "string"
+        typeof campaign.poll_id !== "string" ||
+        typeof campaign.settlement_id !== "string"
+      ) throw new Error("source_shape_invalid");
+
+      const { data: binding, error: bindingError } = await admin
+        .from("settlement_source_bindings")
+        .select("settlement_id, source_type, reward_campaign_id")
+        .eq("reward_campaign_id", campaign.id)
+        .maybeSingle();
+      if (bindingError) throw new Error("binding_lookup_failed");
+      if (
+        !binding ||
+        binding.source_type !== "poll_reward_campaign" ||
+        binding.reward_campaign_id !== campaign.id ||
+        binding.settlement_id !== campaign.settlement_id
       ) throw new Error("source_shape_invalid");
 
       return {
@@ -154,7 +168,7 @@ export function createSupabasePollClosureSourceStore(
         pollStatus: poll.status,
         endsAt: poll.ends_at,
         creatorWallet: poll.creator_wallet,
-        settlementId: campaign.id,
+        settlementId: campaign.settlement_id,
         bindingSourceId: campaign.poll_id,
       };
     },

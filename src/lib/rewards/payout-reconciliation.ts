@@ -141,8 +141,8 @@ export async function loadPayoutReconciliationContext(
   viewerWallet?: string,
 ): Promise<PayoutContextLoadResult> {
   const { data: campaign, error: campaignError } = await admin
-    .from("reward_campaigns")
-    .select("id")
+    .from("reward_settlements")
+    .select("id, status")
     .eq("id", settlementId)
     .maybeSingle();
   if (campaignError) return { kind: "error", reasonCode: "database_read_failed" };
@@ -158,9 +158,9 @@ export async function loadPayoutReconciliationContext(
 
   const { data: receipt, error: receiptError } = await admin
     .from("reward_receipts")
-    .select("id, campaign_id, participant_wallet, amount_luna, status, paid_at")
+    .select("id, campaign_id, settlement_id, participant_wallet, amount_luna, status, paid_at")
     .eq("id", attempt.receipt_id)
-    .eq("campaign_id", settlementId)
+    .eq("settlement_id", settlementId)
     .maybeSingle();
   if (receiptError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!receipt) return { kind: "not_found", reasonCode: "receipt_not_found" };
@@ -168,7 +168,7 @@ export async function loadPayoutReconciliationContext(
   const { data: vault, error: vaultError } = await admin
     .from("reward_campaign_vaults")
     .select("vault_address_hex")
-    .eq("campaign_id", settlementId)
+    .eq("settlement_id", settlementId)
     .maybeSingle();
   if (vaultError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!vault) return { kind: "not_found", reasonCode: "vault_not_found" };
@@ -180,7 +180,7 @@ export async function loadPayoutReconciliationContext(
   const receiptStatus = parseReceiptStatus(receipt.status);
   if (
     campaign.id !== settlementId ||
-    receipt.campaign_id !== settlementId ||
+    receipt.settlement_id !== settlementId ||
     !participantWallet ||
     !vaultAddress ||
     amountLuna === null ||
@@ -190,7 +190,7 @@ export async function loadPayoutReconciliationContext(
     typeof attempt.id !== "string" ||
     typeof attempt.receipt_id !== "string" ||
     typeof receipt.id !== "string" ||
-    typeof receipt.campaign_id !== "string" ||
+    typeof receipt.settlement_id !== "string" ||
     typeof campaign.id !== "string"
   ) {
     return { kind: "error", reasonCode: "malformed_payout_context" };

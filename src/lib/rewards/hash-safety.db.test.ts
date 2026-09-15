@@ -3,10 +3,11 @@ import { createClient } from "@supabase/supabase-js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
 import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SECRET_KEY ?? "";
+const url = testSupabaseUrl();
+const key = testSupabaseKey();
 const admin = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   db: { schema: "public" },
@@ -35,7 +36,7 @@ function hash(): string {
 
 function runPsql(sql: string): void {
   execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-c", sql,
   ], { stdio: "pipe" });
 }
@@ -87,6 +88,7 @@ async function createFixture(options: { ledger: "funding" | "payout" | "refund" 
 
   const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
     campaign_id: campaign.id,
+    settlement_id: campaign.id,
     vault_address_hex: vaultAddress,
     envelope_version: "votum:reward-vault:v1",
     encryption_algorithm: "aes-256-gcm",
@@ -174,7 +176,6 @@ async function cleanup(): Promise<void> {
       DELETE FROM public.reward_funding_transactions WHERE campaign_id IN (${campaigns});
       DELETE FROM public.reward_refunds WHERE campaign_id IN (${campaigns});
       DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns});
-      UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns});
       DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
       DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
       DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});

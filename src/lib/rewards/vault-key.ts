@@ -37,7 +37,7 @@ export interface RewardVaultEnvelope {
 }
 
 export interface VaultAadContext {
-  campaignId: string;
+  settlementId: string;
   vaultAddressHex: string;
 }
 
@@ -153,13 +153,13 @@ export function deriveVaultAddress(privateKeyBytes: Uint8Array): {
 /**
  * Build the authenticated additional data (AAD).
  *
- * Binds the ciphertext to its campaign so a vault blob copied from campaign A
- * into campaign B fails authenticated decryption. AAD is deterministic and
+ * Binds the ciphertext to its settlement so a vault blob copied from settlement
+ * A into settlement B fails authenticated decryption. AAD is deterministic and
  * derived only from immutable context: purpose, campaign id, vault address.
  */
 export function buildVaultAad(context: VaultAadContext): Buffer {
   return Buffer.from(
-    `${VAULT_ENVELOPE_PURPOSE}\u0000${context.campaignId}\u0000${context.vaultAddressHex}`,
+    `${VAULT_ENVELOPE_PURPOSE}\u0000${context.settlementId}\u0000${context.vaultAddressHex}`,
     "utf8",
   );
 }

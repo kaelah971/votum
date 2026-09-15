@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const migrationPath = "supabase/migrations/20260913082000_v2c2_settlement_child_references.sql";
 
-describe("V2C.2B settlement child migration contract", () => {
+describe("V2C.2E settlement child migration contract", () => {
   it("adds only the approved settlement references and preserves old authority", () => {
     const migration = readFileSync(migrationPath, "utf8");
 
@@ -30,14 +30,18 @@ describe("V2C.2B settlement child migration contract", () => {
     expect(migration).not.toMatch(/participation_campaigns|claim|allowlist|event_proof|community_membership/i);
   });
 
-  it("keeps the current campaign-keyed vault service and payout traversal", () => {
+  it("uses settlement-rooted vault identity while preserving payout traversal", () => {
     const vaultService = readFileSync("src/lib/rewards/vault-service.ts", "utf8");
     const payout = readFileSync("src/lib/rewards/payout.ts", "utf8");
 
-    expect(vaultService).toMatch(/from\("reward_campaign_vaults"\)[\s\S]*eq\("campaign_id", campaignId\)/);
-    expect(vaultService).toMatch(/aadFor\(campaignId, row\.vault_address_hex\)/);
+    expect(vaultService).toMatch(/from\("reward_campaign_vaults"\)[\s\S]*eq\("settlement_id", settlementId\)/);
+    expect(vaultService).toMatch(/aadFor\(settlementId, row\.vault_address_hex\)/);
     expect(payout).toMatch(/from\("reward_receipts"\)/);
-    expect(payout).toMatch(/from\("reward_campaign_vaults"\)[\s\S]*eq\("campaign_id", receipt\.campaign_id\)/);
-    expect(payout).not.toMatch(/from\("reward_payout_attempts"\)[\s\S]*settlement_id/);
+    expect(payout).toMatch(/from\("reward_campaign_vaults"\)[\s\S]*eq\("settlement_id", receipt\.settlement_id\)/);
+    const payoutAttemptQuery = payout.match(
+      /from\("reward_payout_attempts"\)[\s\S]*?\.maybeSingle\(\)/,
+    )?.[0];
+    expect(payoutAttemptQuery).toBeDefined();
+    expect(payoutAttemptQuery).not.toContain("settlement_id");
   });
 });

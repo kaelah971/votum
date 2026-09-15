@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
 import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 import {
   createDefaultPayoutReconciliationDependencies,
@@ -16,8 +17,8 @@ import type {
   ObservedFundingTransaction,
 } from "@/lib/rewards/reconciliation";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SECRET_KEY ?? "";
+const url = testSupabaseUrl();
+const key = testSupabaseKey();
 const admin = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   db: { schema: "public" },
@@ -54,7 +55,7 @@ function hash(): string {
 
 function runPsql(sql: string): void {
   execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-c", sql,
   ], { stdio: "pipe" });
 }
@@ -70,10 +71,9 @@ async function cleanup(): Promise<void> {
       DELETE FROM public.reward_receipts WHERE campaign_id IN (${campaigns});
       DELETE FROM public.reward_refunds WHERE campaign_id IN (${campaigns});
       DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns});
-      UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns});
       DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
-      DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
       DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});
+      DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
       DELETE FROM public.polls WHERE id IN (${polls || "NULL"});
       SET session_replication_role = origin;
     `);
@@ -130,6 +130,7 @@ async function createFixture(): Promise<Fixture> {
 
   const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
     campaign_id: campaign.id,
+    settlement_id: campaign.id,
     vault_address_hex: vaultAddress,
     envelope_version: "votum:reward-vault:v1",
     encryption_algorithm: "aes-256-gcm",
@@ -237,7 +238,7 @@ async function readState(fixture: Fixture) {
   const [{ data: receipt, error: receiptError }, { data: attempt, error: attemptError }, { data: campaign, error: campaignError }, { data: refunds, error: refundsError }] = await Promise.all([
     admin.from("reward_receipts").select("status, paid_at, amount_luna").eq("id", fixture.receiptId).single(),
     admin.from("reward_payout_attempts").select("status, transaction_hash, confirmed_at, confirmed_network_id, confirmed_block_number, confirmed_canonical_block_hash, confirmed_batch_number, confirmed_finalizing_macro_block_height, confirmed_finalizing_macro_block_hash").eq("id", fixture.attemptId).single(),
-    admin.from("reward_campaigns").select("paid_amount_luna").eq("id", fixture.campaignId).single(),
+    admin.from("reward_settlements").select("paid_amount_luna").eq("id", fixture.campaignId).single(),
     admin.from("reward_refunds").select("id").eq("campaign_id", fixture.campaignId),
   ]);
   if (receiptError || attemptError || campaignError || refundsError) {

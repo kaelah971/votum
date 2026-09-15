@@ -3,10 +3,11 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
 import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SECRET_KEY ?? "";
+const url = testSupabaseUrl();
+const key = testSupabaseKey();
 const admin = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   db: { schema: "public" },
@@ -33,7 +34,7 @@ function sqlQuote(value: string): string {
 function runPsql(sql: string): void {
   execFileSync("docker", [
     "exec",
-    "supabase_db_votum",
+    testDbContainer(),
     "psql",
     "-U",
     "postgres",
@@ -156,7 +157,7 @@ async function createFixture(options: {
   await attachPollSettlement(admin, campaign.id);
 
   if (options.rewardedParticipantCount !== undefined || options.campaignStatus === "exhausted") {
-    const { error } = await admin.from("reward_campaigns").update({
+    const { error } = await admin.from("reward_settlements").update({
       rewarded_participant_count: options.rewardedParticipantCount ?? maxRewardedParticipants,
     }).eq("id", campaign.id);
     if (error) throw error;
@@ -195,7 +196,7 @@ async function createFixture(options: {
 }
 
 async function readCampaign(campaignId: string) {
-  const { data, error } = await admin.from("reward_campaigns")
+  const { data, error } = await admin.from("reward_settlements")
     .select("status, rewarded_participant_count, max_rewarded_participants, first_reservation_at")
     .eq("id", campaignId)
     .single();
@@ -245,10 +246,9 @@ async function cleanupFixtures(): Promise<void> {
     DELETE FROM public.reward_funding_transactions WHERE campaign_id IN (${campaigns || "NULL"});
     DELETE FROM public.reward_receipts WHERE campaign_id IN (${campaigns || "NULL"});
     DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns || "NULL"});
-    UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns || "NULL"});
     DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns || "NULL"});
-    DELETE FROM public.reward_settlements WHERE id IN (${campaigns || "NULL"});
     DELETE FROM public.reward_campaigns WHERE id IN (${campaigns || "NULL"});
+    DELETE FROM public.reward_settlements WHERE id IN (${campaigns || "NULL"});
     DELETE FROM public.poll_votes WHERE poll_id IN (${polls || "NULL"});
     DELETE FROM public.poll_options WHERE poll_id IN (${polls || "NULL"});
     DELETE FROM public.polls WHERE id IN (${polls || "NULL"});

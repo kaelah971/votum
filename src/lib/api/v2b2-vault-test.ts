@@ -18,6 +18,7 @@ import "./load-local-env";
 import { randomBytes } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { execFileSync } from "node:child_process";
+import { testDbContainer } from "@/lib/rewards/test-target";
 import { createHash } from "node:crypto";
 
 let passed = 0;
@@ -64,23 +65,30 @@ const campaignIds: string[] = [];
 function cleanupSql(): void {
   ensureLocal();
   const sql = `
+    CREATE TEMP TABLE _v2b2_vault_targets ON COMMIT DROP AS
+      SELECT c.id AS campaign_id, c.settlement_id, c.poll_id
+      FROM public.reward_campaigns c
+      JOIN public.polls p ON p.id = c.poll_id
+      WHERE p.question = 'V2B2 vault db contract test?';
     DELETE FROM public.reward_campaign_vaults
-      WHERE campaign_id IN (SELECT id FROM public.reward_campaigns
-        WHERE poll_id IN (SELECT id FROM public.polls
-          WHERE question = 'V2B2 vault db contract test?'));
+      WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_vault_targets);
+    DELETE FROM public.settlement_source_bindings
+      WHERE reward_campaign_id IN (SELECT campaign_id FROM _v2b2_vault_targets);
     DELETE FROM public.reward_campaigns
-      WHERE poll_id IN (SELECT id FROM public.polls
-        WHERE question = 'V2B2 vault db contract test?');
+      WHERE id IN (SELECT campaign_id FROM _v2b2_vault_targets);
+    DELETE FROM public.reward_settlements
+      WHERE id IN (SELECT settlement_id FROM _v2b2_vault_targets);
     DELETE FROM public.poll_publication_requests
-      WHERE poll_id IN (SELECT id FROM public.polls WHERE question = 'V2B2 vault db contract test?');
+      WHERE poll_id IN (SELECT poll_id FROM _v2b2_vault_targets);
     DELETE FROM public.poll_options
-      WHERE poll_id IN (SELECT id FROM public.polls WHERE question = 'V2B2 vault db contract test?');
+      WHERE poll_id IN (SELECT poll_id FROM _v2b2_vault_targets);
     DELETE FROM public.poll_votes
-      WHERE poll_id IN (SELECT id FROM public.polls WHERE question = 'V2B2 vault db contract test?');
-    DELETE FROM public.polls WHERE question = 'V2B2 vault db contract test?';
+      WHERE poll_id IN (SELECT poll_id FROM _v2b2_vault_targets);
+    DELETE FROM public.polls
+      WHERE id IN (SELECT poll_id FROM _v2b2_vault_targets);
   `;
   execFileSync("docker", [
-    "exec", "supabase_db_votum",
+    "exec", testDbContainer(),
     "psql", "-U", "postgres", "-d", "postgres",
     "-c", sql,
   ], { stdio: "pipe" });
@@ -117,22 +125,40 @@ async function publishPoll(): Promise<string> {
 
 async function createCampaign(status: string = "configured"): Promise<string> {
   const pollId = await publishPoll();
-  const { data, error } = await admin.from("reward_campaigns").insert({
-    poll_id: pollId,
-    creator_wallet: CREATOR,
-    funding_mode: "creator",
-    funding_wallet: CREATOR,
-    reward_per_participant_luna: 1000,
-    max_rewarded_participants: 10,
-    reward_principal_luna: 10000,
-    fee_reserve_luna: 0,
-    total_budget_luna: 10000,
-    status,
-  }).select("id").single();
-  if (error) throw error;
-  const id = (data as { id: string }).id;
+  const { data, error } = await admin.rpc("ensure_poll_reward_settlement_atomic", {
+    _poll_id: pollId,
+    _creator_wallet: CREATOR,
+    _funding_mode: "creator",
+    _funding_wallet: CREATOR,
+    _reward_per_participant_luna: 1000,
+    _max_rewarded_participants: 10,
+    _reward_principal_luna: 10000,
+    _fee_reserve_luna: 0,
+    _total_budget_luna: 10000,
+  });
+  if (error || !data || typeof data !== "object") throw error ?? new Error("campaign creation failed");
+  const id = (data as { campaign_id?: string }).campaign_id;
+  const settlementId = (data as { settlement_id?: string }).settlement_id;
+  if (!id || !settlementId) throw new Error("campaign authority response malformed");
+  if (status !== "configured") {
+    const { error: statusError } = await admin
+      .from("reward_settlements")
+      .update({ status })
+      .eq("id", settlementId);
+    if (statusError) throw statusError;
+  }
   campaignIds.push(id);
   return id;
+}
+
+async function settlementFor(campaignId: string): Promise<string> {
+  const { data, error } = await admin
+    .from("reward_campaigns")
+    .select("settlement_id")
+    .eq("id", campaignId)
+    .single();
+  if (error || typeof data?.settlement_id !== "string") throw error ?? new Error("settlement missing");
+  return data.settlement_id;
 }
 
 const DUMMY = {
@@ -155,6 +181,7 @@ async function run() {
 
   const badAddr = await admin.from("reward_campaign_vaults").insert({
     campaign_id: (await createCampaign()),
+    settlement_id: await settlementFor(campaignIds.at(-1) as string),
     vault_address_hex: "not-hex",
     envelope_version: "votum:reward-vault:v1",
     encryption_algorithm: "aes-256-gcm",
@@ -167,6 +194,7 @@ async function run() {
 
   const badVersion = await admin.from("reward_campaign_vaults").insert({
     campaign_id: (await createCampaign()),
+    settlement_id: await settlementFor(campaignIds.at(-1) as string),
     vault_address_hex: "ab".repeat(20),
     envelope_version: "v999",
     encryption_algorithm: "aes-256-gcm",
@@ -179,6 +207,7 @@ async function run() {
 
   const badAlgo = await admin.from("reward_campaign_vaults").insert({
     campaign_id: (await createCampaign()),
+    settlement_id: await settlementFor(campaignIds.at(-1) as string),
     vault_address_hex: "ab".repeat(20),
     envelope_version: "votum:reward-vault:v1",
     encryption_algorithm: "aes-128-cbc",
@@ -191,6 +220,7 @@ async function run() {
 
   const emptyCipher = await admin.from("reward_campaign_vaults").insert({
     campaign_id: (await createCampaign()),
+    settlement_id: await settlementFor(campaignIds.at(-1) as string),
     vault_address_hex: "ab".repeat(20),
     envelope_version: "votum:reward-vault:v1",
     encryption_algorithm: "aes-256-gcm",
@@ -204,38 +234,39 @@ async function run() {
   // ---- Atomic ensure RPC: create + idempotent + race + state gate ----
   console.log("\n-- Atomic ensure RPC --");
   const campCreated = await createCampaign("configured");
-  const r1 = await admin.rpc("ensure_reward_campaign_vault_atomic", {
-    _campaign_id: campCreated, ...DUMMY,
+  const createdSettlement = await settlementFor(campCreated);
+  const r1 = await admin.rpc("ensure_reward_settlement_vault_atomic", {
+    _settlement_id: createdSettlement, ...DUMMY,
   });
   check((r1.data as any)?.result_kind === "created", "first ensure → created");
 
-  const r2 = await admin.rpc("ensure_reward_campaign_vault_atomic", {
-    _campaign_id: campCreated, ...DUMMY,
+  const r2 = await admin.rpc("ensure_reward_settlement_vault_atomic", {
+    _settlement_id: createdSettlement, ...DUMMY,
   });
   check((r2.data as any)?.result_kind === "existing", "second ensure → existing");
 
   const race = await Promise.all([
-    admin.rpc("ensure_reward_campaign_vault_atomic", { _campaign_id: campCreated, ...DUMMY }),
-    admin.rpc("ensure_reward_campaign_vault_atomic", { _campaign_id: campCreated, ...DUMMY }),
+    admin.rpc("ensure_reward_settlement_vault_atomic", { _settlement_id: createdSettlement, ...DUMMY }),
+    admin.rpc("ensure_reward_settlement_vault_atomic", { _settlement_id: createdSettlement, ...DUMMY }),
   ]);
   const kinds = race.map((r) => (r.data as any)?.result_kind);
   check(kinds.every((k) => k === "existing"), "concurrent ensure → both existing");
   const rowCount = await admin.from("reward_campaign_vaults")
     .select("campaign_id")
-    .eq("campaign_id", campCreated);
+    .eq("settlement_id", createdSettlement);
   check((rowCount.data ?? []).length === 1, "exactly one persisted vault row");
 
   const campBlocked = await createCampaign("funded");
-  const blocked = await admin.rpc("ensure_reward_campaign_vault_atomic", {
-    _campaign_id: campBlocked, ...DUMMY,
+  const blocked = await admin.rpc("ensure_reward_settlement_vault_atomic", {
+    _settlement_id: await settlementFor(campBlocked), ...DUMMY,
   });
-  check((blocked.data as any)?.result_kind === "campaign_state_invalid", "funded campaign → state_invalid");
+  check((blocked.data as any)?.result_kind === "settlement_state_invalid", "funded settlement → state_invalid");
 
   const campMissing = uuid();
-  const missing = await admin.rpc("ensure_reward_campaign_vault_atomic", {
-    _campaign_id: campMissing, ...DUMMY,
+  const missing = await admin.rpc("ensure_reward_settlement_vault_atomic", {
+    _settlement_id: campMissing, ...DUMMY,
   });
-  check((missing.data as any)?.result_kind === "campaign_not_found", "unknown campaign → not_found");
+  check((missing.data as any)?.result_kind === "settlement_not_found", "unknown settlement → not_found");
 
   // ---- RLS ----
   console.log("\n-- RLS --");

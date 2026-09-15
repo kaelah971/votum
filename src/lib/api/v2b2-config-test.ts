@@ -21,6 +21,7 @@ import "./load-local-env";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { isLocalSupabaseUrl } from "@/lib/rewards/test-env";
+import { testDbContainer } from "@/lib/rewards/test-target";
 import { mapPollRow } from "@/lib/data/public-polls";
 
 let passed = 0;
@@ -67,10 +68,29 @@ function cleanupSql(wallets: string[]): void {
   const wl = wallets.map((w) => `'${w}'`).join(",");
   if (!wl) return;
   const sql = `
+    CREATE TEMP TABLE _v2b2_config_targets ON COMMIT DROP AS
+      SELECT c.id AS campaign_id, c.settlement_id, c.poll_id
+      FROM public.reward_campaigns c
+      WHERE c.creator_wallet IN (${wl});
+    DELETE FROM public.reward_payout_attempts
+      WHERE receipt_id IN (
+        SELECT id FROM public.reward_receipts
+        WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_config_targets)
+      );
+    DELETE FROM public.reward_receipts
+      WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_config_targets);
+    DELETE FROM public.reward_funding_transactions
+      WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_config_targets);
+    DELETE FROM public.reward_refunds
+      WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_config_targets);
     DELETE FROM public.reward_campaign_vaults
-      WHERE campaign_id IN (SELECT id FROM public.reward_campaigns
-        WHERE creator_wallet IN (${wl}));
-    DELETE FROM public.reward_campaigns WHERE creator_wallet IN (${wl});
+      WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_config_targets);
+    DELETE FROM public.settlement_source_bindings
+      WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_config_targets);
+    DELETE FROM public.reward_campaigns
+      WHERE id IN (SELECT campaign_id FROM _v2b2_config_targets);
+    DELETE FROM public.reward_settlements
+      WHERE id IN (SELECT settlement_id FROM _v2b2_config_targets);
     DELETE FROM public.reward_funding_transactions
       WHERE creator_wallet IN (${wl});
     DELETE FROM public.reward_receipts WHERE participant_wallet IN (${wl});
@@ -88,7 +108,7 @@ function cleanupSql(wallets: string[]): void {
   trace("cleanup DB started");
   try {
     execFileSync("docker", [
-      "exec", "supabase_db_votum",
+      "exec", testDbContainer(),
       "psql", "-U", "postgres", "-d", "postgres",
       "-c", sql,
     ], { stdio: "pipe", timeout: 15000 });
@@ -421,6 +441,14 @@ async function run() {
     const rows = await admin.from("reward_campaigns").select("id").eq("poll_id", publicPollId);
     check((rows.data ?? []).length === 1, "exactly one campaign per poll");
 
+    const authorityRow = await admin
+      .from("reward_campaigns")
+      .select("settlement_id")
+      .eq("id", config.campaignId)
+      .single();
+    const settlementId = authorityRow.data?.settlement_id as string;
+    check(typeof settlementId === "string", "campaign resolves to a settlement root");
+
     // -----------------------------------------------------------------
     // Vault binding: one per campaign
     // -----------------------------------------------------------------
@@ -431,7 +459,7 @@ async function run() {
     // Immutability after lock boundary
     // -----------------------------------------------------------------
     console.log("\n-- Immutability --");
-    const lock = await admin.from("reward_campaigns").update({ status: "funded" }).eq("id", config.campaignId);
+    const lock = await admin.from("reward_settlements").update({ status: "funded" }).eq("id", settlementId);
     check(!lock.error, "campaign moved to funded for lock test");
     const lockedEdit = await apiPost(`/api/polls/${publicPollId}/reward/config`, {
       rewardPerParticipant: "0.9",
@@ -439,7 +467,7 @@ async function run() {
     }, creatorCookie);
     check(lockedEdit.status === 409, "locked campaign terms cannot mutate → 409");
     // restore configured for cleanliness
-    await admin.from("reward_campaigns").update({ status: "configured" }).eq("id", config.campaignId);
+    await admin.from("reward_settlements").update({ status: "configured" }).eq("id", settlementId);
 
     // -----------------------------------------------------------------
     // Read model (creator-only)
@@ -474,9 +502,11 @@ async function run() {
     check(pubReward.status === 201 || pubReward.status === 200, "publish with reward config succeeds");
     check(pubReward.data?.reward?.rewardFundingRequired === true, "publish returns rewardFundingRequired:true");
     const pubRewardPollId = pubReward.data?.poll?.id as string;
-    const pubCampaigns = await admin.from("reward_campaigns").select("id,status").eq("poll_id", pubRewardPollId);
+    const pubCampaigns = await admin.from("reward_campaigns").select("id,settlement_id").eq("poll_id", pubRewardPollId);
     check((pubCampaigns.data ?? []).length === 1, "publish created one campaign");
-    check(pubCampaigns.data?.[0]?.status === "configured", "publish campaign state = configured");
+    const pubSettlementId = pubCampaigns.data?.[0]?.settlement_id as string;
+    const pubSettlement = await admin.from("reward_settlements").select("status").eq("id", pubSettlementId).single();
+    check(pubSettlement.data?.status === "configured", "publish settlement state = configured");
 
     const pubRewardFirst = await publishRewardFirstPoll(
       CREATOR,

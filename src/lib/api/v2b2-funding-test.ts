@@ -11,6 +11,7 @@ import "./load-local-env";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { isLocalSupabaseUrl } from "@/lib/rewards/test-env";
+import { testDbContainer } from "@/lib/rewards/test-target";
 
 let passed = 0;
 let failed = 0;
@@ -52,20 +53,31 @@ function uuid(): string {
 function cleanupSql(wallets: string[]): void {
   const quoted = wallets.map((wallet) => `'${wallet}'`).join(",");
   execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres", "-c",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres", "-c",
     `
+      CREATE TEMP TABLE _v2b2_funding_targets ON COMMIT DROP AS
+        SELECT c.id AS campaign_id, c.settlement_id, c.poll_id
+        FROM public.reward_campaigns c
+        WHERE c.creator_wallet IN (${quoted});
       DELETE FROM public.reward_payout_attempts
       WHERE receipt_id IN (
-        SELECT id FROM public.reward_receipts WHERE participant_wallet IN (${quoted})
+        SELECT id FROM public.reward_receipts
+        WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_funding_targets)
       );
-      DELETE FROM public.reward_receipts WHERE participant_wallet IN (${quoted});
-      DELETE FROM public.reward_refunds WHERE creator_wallet IN (${quoted});
-      DELETE FROM public.reward_funding_transactions WHERE creator_wallet IN (${quoted});
+      DELETE FROM public.reward_receipts
+        WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_funding_targets);
+      DELETE FROM public.reward_refunds
+        WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_funding_targets);
+      DELETE FROM public.reward_funding_transactions
+        WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_funding_targets);
       DELETE FROM public.reward_campaign_vaults
-      WHERE campaign_id IN (
-        SELECT id FROM public.reward_campaigns WHERE creator_wallet IN (${quoted})
-      );
-      DELETE FROM public.reward_campaigns WHERE creator_wallet IN (${quoted});
+        WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_funding_targets);
+      DELETE FROM public.settlement_source_bindings
+        WHERE settlement_id IN (SELECT settlement_id FROM _v2b2_funding_targets);
+      DELETE FROM public.reward_campaigns
+        WHERE id IN (SELECT campaign_id FROM _v2b2_funding_targets);
+      DELETE FROM public.reward_settlements
+        WHERE id IN (SELECT settlement_id FROM _v2b2_funding_targets);
       DELETE FROM public.poll_publication_requests WHERE creator_wallet IN (${quoted});
       DELETE FROM public.poll_votes WHERE voter_wallet IN (${quoted});
       DELETE FROM public.poll_options
@@ -193,22 +205,28 @@ async function run() {
     check(intent?.memo === intent?.reference, "funding memo is bounded server reference");
 
     const intentId = intent?.fundingIntentId as string;
-    const campaignRow = await admin.from("reward_campaigns")
-      .select("status, funded_amount_luna, funded_at, reward_principal_luna, fee_reserve_luna, total_budget_luna")
+    const campaignAuthority = await admin.from("reward_campaigns")
+      .select("settlement_id")
       .eq("id", config?.campaignId)
       .single();
-    check(campaignRow.data?.status === "funding_pending", "intent atomically moves campaign to funding_pending");
+    const settlementId = campaignAuthority.data?.settlement_id as string;
+    const campaignRow = await admin.from("reward_settlements")
+      .select("status, funded_amount_luna, funded_at, reward_principal_luna, fee_reserve_luna, total_budget_luna")
+      .eq("id", settlementId)
+      .single();
+    check(campaignRow.data?.status === "funding_pending", "intent atomically moves settlement to funding_pending");
     check(campaignRow.data?.funded_amount_luna === 0, "confirmed funding remains zero");
     check(campaignRow.data?.funded_at === null, "funded_at remains unset");
-    check(campaignRow.data?.reward_principal_luna === 10000000, "campaign principal remains exact");
-    check(campaignRow.data?.fee_reserve_luna === 1600000, "campaign fee reserve remains exact");
-    check(campaignRow.data?.total_budget_luna === 11600000, "campaign total remains exact");
+    check(campaignRow.data?.reward_principal_luna === 10000000, "settlement principal remains exact");
+    check(campaignRow.data?.fee_reserve_luna === 1600000, "settlement fee reserve remains exact");
+    check(campaignRow.data?.total_budget_luna === 11600000, "settlement total remains exact");
 
     const fundingRow = await admin.from("reward_funding_transactions")
-      .select("campaign_id, amount_luna, reward_principal_luna, fee_reserve_luna, vault_wallet, status, submitted_transaction_hash")
+      .select("campaign_id, settlement_id, amount_luna, reward_principal_luna, fee_reserve_luna, vault_wallet, status, submitted_transaction_hash")
       .eq("id", intentId)
       .single();
     check(fundingRow.data?.campaign_id === config?.campaignId, "intent records campaign id");
+    check(fundingRow.data?.settlement_id === settlementId, "intent records settlement id");
     check(fundingRow.data?.amount_luna === 11600000, "intent amount is principal plus fee reserve");
     check(fundingRow.data?.reward_principal_luna === 10000000, "persisted intent principal snapshot exact");
     check(fundingRow.data?.fee_reserve_luna === 1600000, "persisted intent fee snapshot exact");
@@ -238,7 +256,13 @@ async function run() {
     ]);
     check(concurrent.every((response) => response.status === 201 || response.status === 200), "concurrent intent requests return safely");
     check(new Set(concurrent.map((response) => response.data?.fundingIntent?.fundingIntentId)).size === 1, "concurrent intent requests produce one intent");
-    const secondRows = await admin.from("reward_funding_transactions").select("id").eq("campaign_id", secondPublished.data?.reward?.campaignId);
+    const secondAuthority = await admin.from("reward_campaigns")
+      .select("settlement_id")
+      .eq("id", secondPublished.data?.reward?.campaignId)
+      .single();
+    const secondRows = await admin.from("reward_funding_transactions")
+      .select("id")
+      .eq("settlement_id", secondAuthority.data?.settlement_id);
     check((secondRows.data ?? []).length === 1, "concurrent intent requests create one active row");
 
     const txHash = "b".repeat(64);
@@ -269,19 +293,19 @@ async function run() {
     check(afterBind.data?.config?.funding?.submittedTransactionHash === txHash, "refresh preserves submitted hash");
     check(afterBind.data?.config?.funded === false, "pending read model never reports funded");
 
-    const finalCampaign = await admin.from("reward_campaigns")
+    const finalCampaign = await admin.from("reward_settlements")
       .select("status, funded_amount_luna, funded_at")
-      .eq("id", config?.campaignId)
+      .eq("id", settlementId)
       .single();
-    check(finalCampaign.data?.status === "funding_pending", "campaign remains funding_pending after binding");
+    check(finalCampaign.data?.status === "funding_pending", "settlement remains funding_pending after binding");
     check(finalCampaign.data?.funded_amount_luna === 0, "binding does not increment confirmed funding");
     check(finalCampaign.data?.funded_at === null, "binding does not set funded_at");
 
-    const receipts = await admin.from("reward_receipts").select("id").eq("campaign_id", config?.campaignId);
+    const receipts = await admin.from("reward_receipts").select("id").eq("settlement_id", settlementId);
     const payouts = receipts.data && receipts.data.length > 0
       ? await admin.from("reward_payout_attempts").select("id").in("receipt_id", receipts.data.map((receipt) => receipt.id))
       : { data: [] };
-    const refunds = await admin.from("reward_refunds").select("id").eq("campaign_id", config?.campaignId);
+    const refunds = await admin.from("reward_refunds").select("id").eq("settlement_id", settlementId);
     check((receipts.data ?? []).length === 0, "no reward receipt created");
     check((payouts.data ?? []).length === 0, "no payout attempt created");
     check((refunds.data ?? []).length === 0, "no refund created");

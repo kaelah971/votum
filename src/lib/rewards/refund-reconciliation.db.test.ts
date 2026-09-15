@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
 import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 import {
   createDefaultRefundReconciliationDependencies,
@@ -13,8 +14,8 @@ import {
 } from "@/lib/rewards/refund-reconciliation";
 import type { FundingObservation, ObservedFundingTransaction } from "@/lib/rewards/reconciliation";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SECRET_KEY ?? "";
+const url = testSupabaseUrl();
+const key = testSupabaseKey();
 const admin = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   db: { schema: "public" },
@@ -49,7 +50,7 @@ function sqlQuote(value: string): string {
 
 function runPsql(sql: string): void {
   execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-c", sql,
   ], { stdio: "pipe" });
 }
@@ -104,6 +105,7 @@ async function createFixture(): Promise<Fixture> {
 
   const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
     campaign_id: campaign.id,
+    settlement_id: campaign.id,
     vault_address_hex: vaultAddress,
     envelope_version: "votum:reward-vault:v1",
     encryption_algorithm: "aes-256-gcm",
@@ -153,10 +155,9 @@ function cleanup(): void {
     SET session_replication_role = replica;
     DELETE FROM public.reward_refunds WHERE id IN (${refunds || "NULL"}) OR campaign_id IN (${campaigns});
     DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns});
-    UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns});
-    DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
-    DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
-    DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});
+      DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
+      DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});
+      DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
     DELETE FROM public.polls WHERE id IN (${polls});
     SET session_replication_role = origin;
   `);
@@ -210,7 +211,7 @@ function dependencies(
 async function readState(fixture: Fixture) {
   const [{ data: refund, error: refundError }, { data: campaign, error: campaignError }] = await Promise.all([
     admin.from("reward_refunds").select("status, transaction_hash, block_number, transaction_timestamp, confirmed_at, confirmed_network_id, confirmed_transaction_block_hash, confirmed_canonical_block_hash, confirmed_batch_number, confirmed_finalizing_macro_block_height, confirmed_finalizing_macro_block_hash, updated_at").eq("id", fixture.refundId).single(),
-    admin.from("reward_campaigns").select("status, refundable_amount_luna, refunded_at, closed_at, paid_amount_luna, fee_spent_luna").eq("id", fixture.campaignId).single(),
+    admin.from("reward_settlements").select("status, refundable_amount_luna, refunded_at, closed_at, paid_amount_luna, fee_spent_luna").eq("id", fixture.campaignId).single(),
   ]);
   if (refundError || campaignError) throw refundError ?? campaignError;
   return { refund, campaign };
@@ -361,7 +362,7 @@ describe("V2B.2.11 Phase D local refund reconciliation", () => {
     const refundUpdate = await admin.from("reward_refunds")
       .update({ error_code: "tampered" }).eq("id", fixture.refundId);
     const campaignUpdate = await admin.from("reward_campaigns")
-      .update({ status: "refunding" }).eq("id", fixture.campaignId);
+      .update({ status: "closed" }).eq("id", fixture.campaignId);
 
     expect(refundUpdate.error).not.toBeNull();
     expect(campaignUpdate.error).not.toBeNull();

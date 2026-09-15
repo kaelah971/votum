@@ -129,7 +129,7 @@ export async function loadRefundReconciliationContext(
   viewerWallet?: string,
 ): Promise<RefundContextLoadResult> {
   const { data: campaign, error: campaignError } = await admin
-    .from("reward_campaigns")
+    .from("reward_settlements")
     .select("id, status, refunded_at, closed_at")
     .eq("id", settlementId)
     .maybeSingle();
@@ -138,9 +138,9 @@ export async function loadRefundReconciliationContext(
 
   const { data: refund, error: refundError } = await admin
     .from("reward_refunds")
-    .select("id, campaign_id, creator_wallet, amount_luna, status, transaction_hash, network_id, broadcast_started_at, broadcast_at, confirmed_at")
+    .select("id, campaign_id, settlement_id, creator_wallet, amount_luna, status, transaction_hash, network_id, broadcast_started_at, broadcast_at, confirmed_at")
     .eq("id", refundId)
-    .eq("campaign_id", settlementId)
+    .eq("settlement_id", settlementId)
     .maybeSingle();
   if (refundError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!refund) return { kind: "not_found", reasonCode: "refund_not_found" };
@@ -148,7 +148,7 @@ export async function loadRefundReconciliationContext(
   const { data: vault, error: vaultError } = await admin
     .from("reward_campaign_vaults")
     .select("vault_address_hex")
-    .eq("campaign_id", settlementId)
+    .eq("settlement_id", settlementId)
     .maybeSingle();
   if (vaultError) return { kind: "error", reasonCode: "database_read_failed" };
   if (!vault) return { kind: "not_found", reasonCode: "vault_not_found" };
@@ -159,7 +159,7 @@ export async function loadRefundReconciliationContext(
   const networkId = refund.network_id;
   if (
     refund.id !== refundId ||
-    refund.campaign_id !== settlementId ||
+    refund.settlement_id !== settlementId ||
     campaign.id !== settlementId ||
     !creatorWallet ||
     !vaultAddress ||

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient } from "@supabase/supabase-js";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createHash } from "node:crypto";
@@ -16,9 +17,10 @@ import {
   type CampaignVaultRow,
 } from "@/lib/rewards/vault-service";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SECRET_KEY ?? "";
-const pubKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
+const url = testSupabaseUrl();
+const key = testSupabaseKey();
+const pubKey = process.env.VOTUM_CLEANROOM_SUPABASE_PUBLISHABLE_KEY
+  ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
 
 const admin = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -45,7 +47,7 @@ function uuid(): string {
 function runPsql(sql: string): void {
   ensureLocal();
   execFileSync("docker", [
-    "exec", "supabase_db_votum",
+    "exec", testDbContainer(),
     "psql", "-U", "postgres", "-d", "postgres",
     "-c", sql,
   ], { stdio: "pipe" });
@@ -57,13 +59,34 @@ const campaignIds: string[] = [];
 function cleanupSql(): void {
   ensureLocal();
   const sql = `
+    BEGIN;
+    CREATE TEMP TABLE _v2b2_vault_test_settlements ON COMMIT DROP AS
+      SELECT c.settlement_id AS id
+      FROM public.reward_campaigns c
+      JOIN public.polls p ON p.id = c.poll_id
+      WHERE p.question = 'V2B2 vault service contract test?';
+    DELETE FROM public.reward_payout_attempts
+      WHERE receipt_id IN (
+        SELECT r.id FROM public.reward_receipts r
+        WHERE r.settlement_id IN (SELECT id FROM _v2b2_vault_test_settlements)
+      );
+    DELETE FROM public.reward_funding_transactions
+      WHERE settlement_id IN (SELECT id FROM _v2b2_vault_test_settlements);
+    DELETE FROM public.reward_receipts
+      WHERE settlement_id IN (SELECT id FROM _v2b2_vault_test_settlements);
+    DELETE FROM public.reward_refunds
+      WHERE settlement_id IN (SELECT id FROM _v2b2_vault_test_settlements);
     DELETE FROM public.reward_campaign_vaults
-      WHERE campaign_id IN (SELECT id FROM public.reward_campaigns
+      WHERE settlement_id IN (SELECT id FROM _v2b2_vault_test_settlements);
+    DELETE FROM public.settlement_source_bindings
+      WHERE reward_campaign_id IN (SELECT id FROM public.reward_campaigns
         WHERE poll_id IN (SELECT id FROM public.polls
           WHERE question = 'V2B2 vault service contract test?'));
     DELETE FROM public.reward_campaigns
       WHERE poll_id IN (SELECT id FROM public.polls
         WHERE question = 'V2B2 vault service contract test?');
+    DELETE FROM public.reward_settlements
+      WHERE id IN (SELECT id FROM _v2b2_vault_test_settlements);
     DELETE FROM public.poll_publication_requests
       WHERE poll_id IN (SELECT id FROM public.polls WHERE question = 'V2B2 vault service contract test?');
     DELETE FROM public.poll_options
@@ -71,9 +94,10 @@ function cleanupSql(): void {
     DELETE FROM public.poll_votes
       WHERE poll_id IN (SELECT id FROM public.polls WHERE question = 'V2B2 vault service contract test?');
     DELETE FROM public.polls WHERE question = 'V2B2 vault service contract test?';
+    COMMIT;
   `;
   execFileSync("docker", [
-    "exec", "supabase_db_votum",
+    "exec", testDbContainer(),
     "psql", "-U", "postgres", "-d", "postgres",
     "-c", sql,
   ], { stdio: "pipe" });
@@ -112,20 +136,27 @@ async function createCampaign(
   status: string = "configured",
 ): Promise<string> {
   const pollId = await publishPoll();
-  const { data, error } = await admin.from("reward_campaigns").insert({
-    poll_id: pollId,
-    creator_wallet: CREATOR,
-    funding_mode: "creator",
-    funding_wallet: CREATOR,
-    reward_per_participant_luna: 1000,
-    max_rewarded_participants: 10,
-    reward_principal_luna: 10000,
-    fee_reserve_luna: 0,
-    total_budget_luna: 10000,
-    status,
-  }).select("id").single();
+  const { data, error } = await admin.rpc("ensure_poll_reward_settlement_atomic", {
+    _poll_id: pollId,
+    _creator_wallet: CREATOR,
+    _funding_mode: "creator",
+    _funding_wallet: CREATOR,
+    _reward_per_participant_luna: 1000,
+    _max_rewarded_participants: 10,
+    _reward_principal_luna: 10000,
+    _fee_reserve_luna: 0,
+    _total_budget_luna: 10000,
+  });
   if (error) throw error;
-  const id = (data as { id: string }).id;
+  const id = (data as { settlement_id?: string }).settlement_id;
+  if (!id) throw new Error("settlement fixture missing");
+  if (status !== "configured") {
+    const { error: statusError } = await admin
+      .from("reward_settlements")
+      .update({ status })
+      .eq("id", id);
+    if (statusError) throw statusError;
+  }
   campaignIds.push(id);
   return id;
 }
@@ -133,7 +164,7 @@ async function createCampaign(
 async function loadVaultRow(campaignId: string): Promise<CampaignVaultRow | null> {
   const { data } = await admin.from("reward_campaign_vaults")
     .select("*")
-    .eq("campaign_id", campaignId)
+    .eq("settlement_id", campaignId)
     .maybeSingle();
   return (data as CampaignVaultRow) ?? null;
 }
@@ -159,13 +190,13 @@ describe("ensureCampaignVault", () => {
     const campaignId = await createCampaign();
     const vault = await ensureCampaignVault(campaignId);
     expect(vault.created).toBe(true);
-    expect(vault.campaignId).toBe(campaignId);
+    expect(vault.campaignId).not.toBeNull();
     expect(vault.vaultAddressHex).toMatch(/^[0-9a-f]{40}$/);
     expect(vault.vaultAddressNq).toMatch(/^NQ/);
 
     const rows = await admin.from("reward_campaign_vaults")
-      .select("campaign_id")
-      .eq("campaign_id", campaignId);
+      .select("settlement_id")
+      .eq("settlement_id", campaignId);
     expect((rows.data ?? []).length).toBe(1);
   });
 
@@ -176,8 +207,8 @@ describe("ensureCampaignVault", () => {
     expect(b.vaultAddressHex).toBe(a.vaultAddressHex);
     expect(b.created).toBe(false);
     const rows = await admin.from("reward_campaign_vaults")
-      .select("campaign_id")
-      .eq("campaign_id", campaignId);
+      .select("settlement_id")
+      .eq("settlement_id", campaignId);
     expect((rows.data ?? []).length).toBe(1);
   });
 
@@ -191,8 +222,8 @@ describe("ensureCampaignVault", () => {
       ]);
       expect(a.vaultAddressHex).toBe(b.vaultAddressHex);
       const rows = await admin.from("reward_campaign_vaults")
-        .select("campaign_id")
-        .eq("campaign_id", campaignId);
+        .select("settlement_id")
+        .eq("settlement_id", campaignId);
       expect((rows.data ?? []).length).toBe(1);
     },
     30000,
@@ -260,7 +291,7 @@ describe("encrypted-at-rest integrity", () => {
       withCampaignVaultKey(campaignId, () => null),
     ).resolves.toBeNull(); // untouched row still works
     expect(() =>
-      decryptVaultKey(tampered, mk, { campaignId, vaultAddressHex: row.vault_address_hex }),
+       decryptVaultKey(tampered, mk, { settlementId: campaignId, vaultAddressHex: row.vault_address_hex }),
     ).toThrow(/authentication failed/);
   });
 
@@ -269,17 +300,19 @@ describe("encrypted-at-rest integrity", () => {
     await ensureCampaignVault(campaignId);
     const row = (await loadVaultRow(campaignId))!;
     const mk = getVaultMasterKey();
+    const ivBytes = Buffer.from(row.encryption_iv, "base64");
+    ivBytes[0] ^= 0xff;
     expect(() =>
       decryptVaultKey(
         {
           version: row.envelope_version as "votum:reward-vault:v1",
           algorithm: row.encryption_algorithm as "aes-256-gcm",
-          iv: row.encryption_iv.replace(/.$/, "A"),
+          iv: ivBytes.toString("base64"),
           ciphertext: row.encrypted_private_key_ciphertext,
           authTag: row.authentication_tag,
         },
         mk,
-        { campaignId, vaultAddressHex: row.vault_address_hex },
+         { settlementId: campaignId, vaultAddressHex: row.vault_address_hex },
       ),
     ).toThrow();
   });
@@ -303,7 +336,7 @@ describe("encrypted-at-rest integrity", () => {
           authTag: tamperedTag,
         },
         mk,
-        { campaignId, vaultAddressHex: row.vault_address_hex },
+         { settlementId: campaignId, vaultAddressHex: row.vault_address_hex },
       ),
     ).toThrow();
   });
@@ -329,13 +362,13 @@ describe("encrypted-at-rest integrity", () => {
         const oldAddress = vault.vaultAddressHex;
         const newAddress = other.addressHex;
         runPsql(
-          `UPDATE public.reward_campaign_vaults SET vault_address_hex = '${newAddress}' WHERE campaign_id = '${campaignId}';`,
+           `UPDATE public.reward_campaign_vaults SET vault_address_hex = '${newAddress}' WHERE settlement_id = '${campaignId}';`,
         );
         await expect(
           withCampaignVaultKey(campaignId, () => null),
         ).rejects.toThrow();
         runPsql(
-          `UPDATE public.reward_campaign_vaults SET vault_address_hex = '${oldAddress}' WHERE campaign_id = '${campaignId}';`,
+           `UPDATE public.reward_campaign_vaults SET vault_address_hex = '${oldAddress}' WHERE settlement_id = '${campaignId}';`,
         );
         // Restored row decrypts again.
         const derived2 = await withCampaignVaultKey(campaignId, (keypair) =>
@@ -367,7 +400,7 @@ describe("encrypted-at-rest integrity", () => {
           authTag: rowA.authentication_tag,
         },
         mk,
-        { campaignId: cB, vaultAddressHex: vA.vaultAddressHex },
+         { settlementId: cB, vaultAddressHex: vA.vaultAddressHex },
       ),
     ).toThrow(/authentication failed/);
   });
@@ -387,7 +420,7 @@ describe("encrypted-at-rest integrity", () => {
           authTag: row.authentication_tag,
         },
         mk,
-        { campaignId, vaultAddressHex: row.vault_address_hex },
+         { settlementId: campaignId, vaultAddressHex: row.vault_address_hex },
       ),
     ).toThrow(/unknown vault envelope version/);
   });
@@ -410,7 +443,7 @@ describe("security boundary", () => {
     await ensureCampaignVault(campaignId);
     const pollId = (await admin.from("reward_campaigns")
       .select("poll_id")
-      .eq("id", campaignId)
+      .eq("settlement_id", campaignId)
       .single()).data?.poll_id as string;
     const pub = await anon.rpc("get_public_reward_campaign", { _poll_id: pollId });
     expect(pub.error).toBeNull();

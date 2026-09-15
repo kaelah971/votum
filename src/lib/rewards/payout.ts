@@ -9,7 +9,7 @@ import {
   buildRewardPayoutTransaction,
   signRewardPayoutTransaction,
 } from "@/lib/rewards/vault-signing";
-import { withCampaignVaultKey } from "@/lib/rewards/vault-service";
+import { withRewardSettlementVaultKey } from "@/lib/rewards/vault-service";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type AdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
@@ -402,7 +402,10 @@ export function createSupabaseRewardPayoutStore(admin: AdminClient): RewardPayou
         return { kind: "rejected", reasonCode: String(result.result_kind) };
       }
       const resultKind = result.result_kind;
-      const attempt = parseSnapshot(result);
+      const attempt = parseSnapshot({
+        ...result,
+        campaign_id: result.settlement_id ?? result.campaign_id,
+      });
       return attempt
         ? { kind: resultKind === "created" ? "claimed" : "replay", attempt }
         : { kind: "rejected", reasonCode: "payout_claim_malformed" };
@@ -420,20 +423,20 @@ export function createSupabaseRewardPayoutStore(admin: AdminClient): RewardPayou
     if (attemptError || !attempt) return null;
     const { data: receipt, error: receiptError } = await admin
       .from("reward_receipts")
-      .select("id, campaign_id, participant_wallet, amount_luna, status")
+      .select("id, campaign_id, settlement_id, participant_wallet, amount_luna, status")
       .eq("id", attempt.receipt_id)
       .maybeSingle();
     if (receiptError || !receipt) return null;
     const { data: vault, error: vaultError } = await admin
       .from("reward_campaign_vaults")
       .select("vault_address_hex")
-      .eq("campaign_id", receipt.campaign_id)
+      .eq("settlement_id", receipt.settlement_id)
       .maybeSingle();
     if (vaultError || !vault) return null;
     return parseSnapshot({
       attempt_id: attempt.id,
       receipt_id: receipt.id,
-      campaign_id: receipt.campaign_id,
+      campaign_id: receipt.settlement_id,
       attempt_number: attempt.attempt_number,
       attempt_status: attempt.status,
       receipt_status: receipt.status,
@@ -542,7 +545,7 @@ function createDefaultPayoutDependencies(admin: AdminClient): PayoutDependencies
     getNetworkId: safeNetworkId,
     getValidityStartHeight: () => adapter.getBlockNumber(),
     broadcast: (hex) => adapter.broadcastTransaction(hex),
-    sign: async (context) => withCampaignVaultKey(context.campaignId, (keypair) => {
+    sign: async (context) => withRewardSettlementVaultKey(context.campaignId, (keypair) => {
       const built = buildRewardPayoutTransaction({
         senderAddressHex: context.senderAddressHex,
         recipientAddressHex: context.recipientAddressHex,

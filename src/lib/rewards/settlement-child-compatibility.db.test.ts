@@ -1,11 +1,36 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
+import { randomBytes, randomUUID } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
+import {
+  createPollCampaignFixture,
+  deletePollCampaignFixtureSql,
+  type PollCampaignFixture,
+} from "@/lib/rewards/settlement-fixture";
+
+const url = testSupabaseUrl();
+const key = testSupabaseKey();
+const admin = createClient(url, key, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  db: { schema: "public" },
+});
+
+function wallet(): string {
+  return "01" + randomBytes(19).toString("hex");
+}
+
+function trackFixture(fixture: PollCampaignFixture): PollCampaignFixture {
+  fixtureCampaignIds.push(fixture.campaignId);
+  fixturePollIds.push(fixture.pollId);
+  return fixture;
+}
 
 function psql(sql: string): string {
   assertLocalSupabaseForTests();
   return execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", sql,
   ], { encoding: "utf8" }).trim();
 }
@@ -18,8 +43,30 @@ beforeAll(() => {
   assertLocalSupabaseForTests();
 });
 
-describe("V2C.2B settlement child schema", () => {
-  it("has additive references with the approved nullability", () => {
+const fixtureCampaignIds: string[] = [];
+const fixturePollIds: string[] = [];
+
+function cleanupFixtures(): void {
+  if (fixtureCampaignIds.length === 0) return;
+  execFileSync("docker", [
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
+    "-v", "ON_ERROR_STOP=1", "-c",
+    deletePollCampaignFixtureSql(fixtureCampaignIds, fixturePollIds),
+  ], { stdio: "pipe" });
+  fixtureCampaignIds.length = 0;
+  fixturePollIds.length = 0;
+}
+
+afterEach(() => {
+  cleanupFixtures();
+});
+
+afterAll(() => {
+  cleanupFixtures();
+});
+
+describe("V2C.2E settlement child schema", () => {
+  it("has settlement-root references with the approved nullability", () => {
     expect(psql(`
       SELECT table_name || ':' || is_nullable
       FROM information_schema.columns
@@ -31,7 +78,7 @@ describe("V2C.2B settlement child schema", () => {
         )
       ORDER BY table_name;
     `).split("\n")).toEqual([
-      "reward_campaign_vaults:YES",
+      "reward_campaign_vaults:NO",
       "reward_funding_transactions:NO",
       "reward_receipts:NO",
       "reward_refunds:NO",
@@ -156,22 +203,29 @@ describe("V2C.2B settlement child schema", () => {
 
   it("indexes each child by settlement and keeps one vault per settlement", () => {
     expect(psql(`
-      SELECT tablename || ':' || indexname || ':' || ix.indisunique
+       SELECT tablename || ':' || indexname || ':' || ix.indisunique
       FROM pg_indexes i
       JOIN pg_class c ON c.relname = i.indexname
       JOIN pg_index ix ON ix.indexrelid = c.oid
       WHERE schemaname = 'public'
         AND indexname IN (
-          'idx_reward_funding_settlement', 'idx_reward_receipts_settlement',
-          'idx_reward_refunds_settlement', 'idx_reward_campaign_vaults_settlement'
+         'idx_reward_funding_settlement', 'idx_reward_receipts_settlement',
+         'idx_reward_refunds_settlement'
         )
       ORDER BY tablename;
     `).split("\n")).toEqual([
-      "reward_campaign_vaults:idx_reward_campaign_vaults_settlement:true",
       "reward_funding_transactions:idx_reward_funding_settlement:false",
       "reward_receipts:idx_reward_receipts_settlement:false",
       "reward_refunds:idx_reward_refunds_settlement:false",
     ]);
+    expect(count(`
+      SELECT COUNT(*)
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      WHERE t.relname = 'reward_campaign_vaults'
+        AND c.conname = 'reward_campaign_vaults_pkey'
+        AND c.contype = 'p';
+    `)).toBe(1);
 
     expect(count(`
       SELECT COUNT(*)
@@ -197,7 +251,55 @@ describe("V2C.2B settlement child schema", () => {
     `)).toBe(0);
   });
 
-  it("rejects financial children rewritten to another settlement", () => {
+  it("rejects financial children rewritten to another settlement", async () => {
+    const first = trackFixture(await createPollCampaignFixture(admin));
+    const second = trackFixture(await createPollCampaignFixture(admin));
+    expect(second.campaignId).not.toBe(first.campaignId);
+
+    const fundingAddress = wallet();
+    const { error: fundingError } = await admin.from("reward_funding_transactions").insert({
+      campaign_id: first.campaignId,
+      settlement_id: first.campaignId,
+      creator_wallet: first.creatorWallet,
+      funder_wallet: fundingAddress,
+      reference: randomUUID(),
+      amount_luna: 100,
+      status: "submitted",
+    });
+    if (fundingError) throw fundingError;
+
+    const { error: receiptError } = await admin.from("reward_receipts").insert({
+      campaign_id: first.campaignId,
+      settlement_id: first.campaignId,
+      poll_id: first.pollId,
+      participant_wallet: wallet(),
+      amount_luna: 1000,
+      status: "eligible",
+    });
+    if (receiptError) throw receiptError;
+
+    const { error: refundError } = await admin.from("reward_refunds").insert({
+      campaign_id: first.campaignId,
+      settlement_id: first.campaignId,
+      creator_wallet: first.creatorWallet,
+      amount_luna: 100,
+      status: "pending",
+    });
+    if (refundError) throw refundError;
+
+    const vaultAddress = randomBytes(20).toString("hex");
+    const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
+      campaign_id: first.campaignId,
+      settlement_id: first.campaignId,
+      vault_address_hex: vaultAddress,
+      envelope_version: "votum:reward-vault:v1",
+      encryption_algorithm: "aes-256-gcm",
+      encrypted_private_key_ciphertext: "fixture-ciphertext",
+      encryption_iv: "fixture-iv",
+      authentication_tag: "fixture-tag",
+    });
+    if (vaultError) throw vaultError;
+
     for (const table of [
       "reward_funding_transactions",
       "reward_receipts",

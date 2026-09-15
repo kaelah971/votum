@@ -4,10 +4,11 @@ import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { loadFundingConfirmationContext } from "@/lib/rewards/funding-confirmation";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer, testSupabaseKey, testSupabaseUrl } from "@/lib/rewards/test-target";
 import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SECRET_KEY ?? "";
+const url = testSupabaseUrl();
+const key = testSupabaseKey();
 const admin = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   db: { schema: "public" },
@@ -21,7 +22,7 @@ const fixturePollIds: string[] = [];
 
 function runPsql(sql: string): void {
   execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-c", sql,
   ], { stdio: "pipe" });
 }
@@ -98,6 +99,7 @@ async function fixture(options: {
 
   const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
     campaign_id: campaign.id,
+    settlement_id: campaign.id,
     vault_address_hex: vaultAddress,
     envelope_version: "votum:reward-vault:v1",
     encryption_algorithm: "aes-256-gcm",
@@ -158,7 +160,7 @@ async function confirm(
 
 async function readState(value: Fixture) {
   const [{ data: campaign, error: campaignError }, { data: funding, error: fundingError }] = await Promise.all([
-    admin.from("reward_campaigns")
+    admin.from("reward_settlements")
       .select("status, funded_amount_luna, refundable_excess_luna, refundable_amount_luna, funded_at")
       .eq("id", value.campaignId)
       .single(),
@@ -179,10 +181,9 @@ async function cleanup(): Promise<void> {
     runPsql(`
       DELETE FROM public.reward_funding_transactions WHERE campaign_id IN (${ids});
       DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${ids});
-      UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${ids});
       DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${ids});
-      DELETE FROM public.reward_settlements WHERE id IN (${ids});
       DELETE FROM public.reward_campaigns WHERE id IN (${ids});
+      DELETE FROM public.reward_settlements WHERE id IN (${ids});
       DELETE FROM public.polls WHERE id IN (${polls || "NULL"});
     `);
   }
@@ -347,7 +348,7 @@ describe("confirm_reward_funding_atomic", () => {
       .update({ vault_wallet: wallet() })
       .eq("id", value.intentId);
     const result = await confirm(value);
-    expect(result.data).toMatchObject({ result_kind: "vault_mismatch" });
+    expect(result.data).toMatchObject({ result_kind: "funding_terms_mismatch" });
     expect((await readState(value)).campaign.status).toBe("funding_pending");
 
     const receipts = await admin.from("reward_receipts").select("id").eq("campaign_id", value.campaignId);
