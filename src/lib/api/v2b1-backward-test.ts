@@ -14,6 +14,7 @@
 import "./load-local-env";
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { testDbContainer } from "@/lib/rewards/test-target";
 import { KeyPair, Address } from "@nimiq/core";
 
 let passed = 0;
@@ -62,7 +63,7 @@ function cleanupChallenges(wallet: string): void {
   try {
     execFileSync(
       "docker",
-      ["exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+      ["exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
         "-c", `DELETE FROM public.wallet_challenges WHERE wallet_address = '${wallet}';`],
       { stdio: "ignore" },
     );

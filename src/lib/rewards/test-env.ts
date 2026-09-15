@@ -70,8 +70,21 @@ export function loadLocalEnvForTests(): void {
   for (const [k, v] of Object.entries(parsed)) {
     if (process.env[k] === undefined) process.env[k] = v;
   }
-  if (parsed.NEXT_PUBLIC_SUPABASE_URL) {
+  // Disposable clean-room override for local verification: an explicitly
+  // provided target wins over .env.local so server-side clients used inside
+  // tests (admin/dev-server/vault service) follow the DB-backed suites.
+  // Unset by default, preserving historical local-stack behavior.
+  if (process.env.VOTUM_CLEANROOM_SUPABASE_URL) {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.VOTUM_CLEANROOM_SUPABASE_URL;
+  } else if (parsed.NEXT_PUBLIC_SUPABASE_URL) {
     process.env.NEXT_PUBLIC_SUPABASE_URL = parsed.NEXT_PUBLIC_SUPABASE_URL;
+  }
+  if (process.env.VOTUM_CLEANROOM_SUPABASE_KEY) {
+    process.env.SUPABASE_SECRET_KEY = process.env.VOTUM_CLEANROOM_SUPABASE_KEY;
+  }
+  if (process.env.VOTUM_CLEANROOM_SUPABASE_PUBLISHABLE_KEY) {
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY =
+      process.env.VOTUM_CLEANROOM_SUPABASE_PUBLISHABLE_KEY;
   }
   // Fail closed: local integration tests must never reach a hosted DB.
   assertLocalSupabaseForTests();

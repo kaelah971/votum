@@ -17,6 +17,7 @@ import "./load-local-env";
 import { createHash, randomBytes } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { execFileSync } from "node:child_process";
+import { testDbContainer } from "@/lib/rewards/test-target";
 import {
   MIN_REWARD_PER_PARTICIPANT_LUNA,
   ESTIMATED_TX_FEE_LUNA,
@@ -103,7 +104,7 @@ function cleanupSql(wallet: string): void {
     SET session_replication_role = origin;
   `;
   execFileSync("docker", [
-    "exec", "supabase_db_votum",
+    "exec", testDbContainer(),
     "psql", "-U", "postgres", "-d", "postgres",
     "-c", sql,
   ], { stdio: "pipe" });
@@ -529,13 +530,21 @@ async function run() {
   check(pub?.maxRewardedParticipants === maxP, "max participants exposed");
   check(String(pub?.rewardPrincipalLuna) === String(principalN), "reward principal budget exposed");
   check(pub?.rewardsRemaining === maxP, "rewards remaining = max − rewarded_participant_count (counter)");
-  const counterShifted = await admin.from("reward_campaigns" as any)
+  // Post-V2C.2E the settlement root is the sole mutable financial
+  // authority: the legacy campaign counter is frozen, and the public
+  // surface tracks the settlement counter instead.
+  const legacyCounterShift = await admin.from("reward_campaigns" as any)
     .update({ rewarded_participant_count: 1 })
     .eq("id", campaignId)
     .select("id");
-  check(!counterShifted.error, "campaign counter is updatable (authoritative)");
+  check(legacyCounterShift.error !== null, "legacy campaign counter is frozen (immutable)");
+  const counterShifted = await admin.from("reward_settlements" as any)
+    .update({ rewarded_participant_count: 1 })
+    .eq("id", settlementId)
+    .select("id");
+  check(!counterShifted.error, "settlement counter is updatable (authoritative)");
   const pubAfter = await anon.rpc("get_public_reward_campaign", { _poll_id: pollId });
-  check((pubAfter.data as any)?.rewardsRemaining === maxP - 1, "rewards remaining tracks the campaign counter");
+  check((pubAfter.data as any)?.rewardsRemaining === maxP - 1, "rewards remaining tracks the settlement counter");
   const pubJson = JSON.stringify(pub);
   check(pubJson.includes("vault_key_ref") === false, "no vault key reference exposed");
   check(pubJson.includes("vault_wallet") === false, "no vault wallet exposed");

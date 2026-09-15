@@ -12,9 +12,13 @@
  *   await cleanupTestWallet(wallet);
  */
 import { execFileSync } from "node:child_process";
+import { testDbContainer } from "@/lib/rewards/test-target";
 
 function ensureLocal(): void {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const url =
+    process.env.VOTUM_CLEANROOM_SUPABASE_URL ??
+    process.env.NEXT_PUBLIC_SUPABASE_URL ??
+    "";
   if (!url || url.includes(".supabase.co")) {
     throw new Error(
       "cleanupTestWallet: refusing hosted Supabase target. " +
@@ -51,7 +55,7 @@ export function cleanupTestWallet(wallet: string): void {
   `;
 
   execFileSync("docker", [
-    "exec", "supabase_db_votum",
+    "exec", testDbContainer(),
     "psql", "-U", "postgres", "-d", "postgres",
     "-c", sql,
   ], { stdio: "pipe" });
