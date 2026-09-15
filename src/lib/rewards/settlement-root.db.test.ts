@@ -247,9 +247,8 @@ describe("V2C.2A Poll backfill", () => {
     expect(count("SELECT COUNT(*) FROM pg_attribute a JOIN pg_class t ON t.oid = a.attrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = 'public' AND t.relname = 'reward_campaigns' AND a.attname = 'poll_id' AND a.attnotnull;")).toBe(1);
     expect(count("SELECT COUNT(*) FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = 'public' AND t.relname = 'reward_campaigns' AND c.conname = 'reward_campaigns_poll_id_key' AND c.contype = 'u';")).toBe(1);
     expect(count("SELECT COUNT(*) FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = 'public' AND t.relname = 'reward_campaigns' AND c.conname = 'reward_campaigns_poll_id_fkey' AND c.contype = 'f';")).toBe(1);
-    expect(count("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'participation_campaigns';")).toBe(0);
-
     const migration = readFileSync("supabase/migrations/20260913081000_v2c2_poll_settlement_backfill.sql", "utf8");
+    expect(migration).not.toMatch(/participation_campaigns/);
     expect(migration).not.toMatch(/reward_funding_transactions|reward_receipts|reward_refunds|reward_campaign_vaults|reward_payout_attempts/);
     expect(migration).not.toMatch(/encrypted_private_key|authentication_tag|encryption_iv|vault_address_hex/);
   });

@@ -59,6 +59,13 @@ function ensureLocal(): void {
 function cleanupSql(wallet: string): void {
   ensureLocal();
   const sql = `
+    DELETE FROM public.settlement_source_bindings
+      WHERE reward_campaign_id IN (
+        SELECT id FROM public.reward_campaigns WHERE creator_wallet = '${wallet}'
+      )
+      OR settlement_id IN (
+        SELECT id FROM public.reward_settlements WHERE owner_wallet = '${wallet}'
+      );
     SET session_replication_role = replica;
     DELETE FROM public.reward_payout_attempts
       WHERE receipt_id IN (
@@ -80,6 +87,7 @@ function cleanupSql(wallet: string): void {
         SELECT id FROM public.reward_campaigns WHERE creator_wallet = '${wallet}'
       );
     DELETE FROM public.reward_campaigns WHERE creator_wallet = '${wallet}';
+    DELETE FROM public.reward_settlements WHERE owner_wallet = '${wallet}';
     DELETE FROM public.nim_contributions
       WHERE poll_id IN (SELECT id FROM public.polls WHERE creator_wallet = '${wallet}');
     DELETE FROM public.nim_support_intents
@@ -112,6 +120,7 @@ const CREATOR = "01" + randomBytes(19).toString("hex");
 const PARTICIPANT = "02" + randomBytes(19).toString("hex");
 let pollId = "";
 let campaignId = "";
+let settlementId = "";
 
 async function publishPoll(): Promise<string> {
   const q = "V2B2 schema contract test?";
@@ -190,11 +199,15 @@ async function run() {
   const feeReserveN = Number(computeFeeReserveLuna(maxP));
   const totalN = principalN + feeReserveN;
 
-  const campInsert = await admin.from("reward_campaigns" as any).insert({
-    poll_id: pollId,
-    creator_wallet: CREATOR,
-    funding_mode: "creator",
+  settlementId = uuid();
+  campaignId = uuid();
+  const rootInsert = await admin.from("reward_settlements" as any).insert({
+    id: settlementId,
+    owner_wallet: CREATOR,
     funding_wallet: CREATOR,
+    refund_recipient_wallet: CREATOR,
+    funding_mode: "creator",
+    asset: "NIM",
     reward_per_participant_luna: perLuna,
     max_rewarded_participants: maxP,
     reward_principal_luna: principalN,
@@ -202,8 +215,30 @@ async function run() {
     total_budget_luna: totalN,
     status: "configured",
   }).select("id").single();
-  check(!campInsert.error, "valid campaign insert succeeds");
-  if (campInsert.data) campaignId = campInsert.data.id as string;
+  const campInsert = rootInsert.error
+    ? rootInsert
+    : await admin.from("reward_campaigns" as any).insert({
+      id: campaignId,
+      poll_id: pollId,
+      settlement_id: settlementId,
+      creator_wallet: CREATOR,
+      funding_mode: "creator",
+      funding_wallet: CREATOR,
+      reward_per_participant_luna: perLuna,
+      max_rewarded_participants: maxP,
+      reward_principal_luna: principalN,
+      fee_reserve_luna: feeReserveN,
+      total_budget_luna: totalN,
+      status: "configured",
+    }).select("id").single();
+  const bindingInsert = campInsert.error
+    ? campInsert
+    : await admin.from("settlement_source_bindings" as any).insert({
+      settlement_id: settlementId,
+      source_type: "poll_reward_campaign",
+      reward_campaign_id: campaignId,
+    }).select("settlement_id").single();
+  check(!bindingInsert.error, "valid campaign insert succeeds");
   check(typeof campaignId === "string" && campaignId.length > 0, "campaign id returned");
 
   // ---------------------------------------------------------------
@@ -311,6 +346,7 @@ async function run() {
   const hashA = "a".repeat(64);
   const f1 = await admin.from("reward_funding_transactions" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     creator_wallet: CREATOR,
     funder_wallet: CREATOR,
     reference: refA,
@@ -322,6 +358,7 @@ async function run() {
 
   const dupRef = await admin.from("reward_funding_transactions" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     creator_wallet: CREATOR,
     funder_wallet: CREATOR,
     reference: refA,
@@ -331,6 +368,7 @@ async function run() {
 
   const dupHash = await admin.from("reward_funding_transactions" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     creator_wallet: CREATOR,
     funder_wallet: CREATOR,
     reference: uuid(),
@@ -341,6 +379,7 @@ async function run() {
 
   const badFundingState = await admin.from("reward_funding_transactions" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     creator_wallet: CREATOR,
     funder_wallet: CREATOR,
     reference: uuid(),
@@ -355,6 +394,7 @@ async function run() {
   console.log("\n-- Receipts --");
   const r1 = await admin.from("reward_receipts" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     poll_id: pollId,
     participant_wallet: PARTICIPANT,
     amount_luna: perLuna,
@@ -365,6 +405,7 @@ async function run() {
 
   const dupReceipt = await admin.from("reward_receipts" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     poll_id: pollId,
     participant_wallet: PARTICIPANT,
     amount_luna: perLuna,
@@ -374,6 +415,7 @@ async function run() {
 
   const badReceiptState = await admin.from("reward_receipts" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     poll_id: pollId,
     participant_wallet: "03" + randomBytes(19).toString("hex"),
     amount_luna: perLuna,
@@ -419,6 +461,7 @@ async function run() {
   console.log("\n-- Refunds --");
   const ref1 = await admin.from("reward_refunds" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     creator_wallet: CREATOR,
     amount_luna: 1000,
     status: "pending",
@@ -427,6 +470,7 @@ async function run() {
 
   const activeRefund2 = await admin.from("reward_refunds" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     creator_wallet: CREATOR,
     amount_luna: 1000,
     status: "pending",
@@ -435,6 +479,7 @@ async function run() {
 
   const badRefundState = await admin.from("reward_refunds" as any).insert({
     campaign_id: campaignId,
+    settlement_id: settlementId,
     creator_wallet: CREATOR,
     amount_luna: 1000,
     status: "bogus",

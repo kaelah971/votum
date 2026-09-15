@@ -222,9 +222,14 @@ describe("V2C.1E Poll compatibility gate", () => {
     const migrationFiles = filesUnder(resolve(ROOT, "supabase/migrations"));
     const production = sourceFiles
       .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
+      .filter((file) => !file.replaceAll("\\", "/").endsWith("src/lib/campaigns/types.ts"))
+      .filter((file) => !file.replaceAll("\\", "/").endsWith("src/types/database.ts"))
       .map((file) => readFileSync(file, "utf8"))
       .join("\n");
-    const migrations = migrationFiles.map((file) => readFileSync(file, "utf8")).join("\n");
+    const preCampaignMigrations = migrationFiles
+      .filter((file) => !file.includes("20260913083000_v2c2_participation_campaigns.sql"))
+      .filter((file) => !file.includes("20260913084000_v2c2_campaign_settlement_binding.sql"));
+    const migrations = preCampaignMigrations.map((file) => readFileSync(file, "utf8")).join("\n");
 
     expect(production).not.toMatch(/participation_campaigns|CampaignClaim|Secret Drop|Private Drop|Event Drop|Community Reward/);
     expect(migrations).not.toMatch(/participation_campaigns|campaign_claim/);

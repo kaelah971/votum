@@ -203,6 +203,77 @@ export type Database = {
         }
         Relationships: []
       }
+      participation_campaigns: {
+        Row: {
+          campaign_type: string
+          close_reason: string | null
+          closed_at: string | null
+          configuration_locked_at: string | null
+          configuration_version: number
+          created_at: string
+          description: string | null
+          ends_at: string | null
+          id: string
+          owner_wallet: string
+          published_at: string | null
+          published_configuration_version: number | null
+          settlement_id: string
+          starts_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          visibility: string
+        }
+        Insert: {
+          campaign_type: string
+          close_reason?: string | null
+          closed_at?: string | null
+          configuration_locked_at?: string | null
+          configuration_version?: number
+          created_at?: string
+          description?: string | null
+          ends_at?: string | null
+          id?: string
+          owner_wallet: string
+          published_at?: string | null
+          published_configuration_version?: number | null
+          settlement_id: string
+          starts_at?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+          visibility?: string
+        }
+        Update: {
+          campaign_type?: string
+          close_reason?: string | null
+          closed_at?: string | null
+          configuration_locked_at?: string | null
+          configuration_version?: number
+          created_at?: string
+          description?: string | null
+          ends_at?: string | null
+          id?: string
+          owner_wallet?: string
+          published_at?: string | null
+          published_configuration_version?: number | null
+          settlement_id?: string
+          starts_at?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "participation_campaigns_settlement_id_fkey"
+            columns: ["settlement_id"]
+            isOneToOne: true
+            referencedRelation: "reward_settlements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       poll_options: {
         Row: {
           created_at: string
@@ -985,23 +1056,33 @@ export type Database = {
       settlement_source_bindings: {
         Row: {
           created_at: string
-          reward_campaign_id: string
+          participation_campaign_id: string | null
+          reward_campaign_id: string | null
           settlement_id: string
           source_type: string
         }
         Insert: {
           created_at?: string
-          reward_campaign_id: string
+          participation_campaign_id?: string | null
+          reward_campaign_id?: string | null
           settlement_id: string
           source_type: string
         }
         Update: {
           created_at?: string
-          reward_campaign_id?: string
+          participation_campaign_id?: string | null
+          reward_campaign_id?: string | null
           settlement_id?: string
           source_type?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "settlement_source_bindings_participation_campaign_id_fkey"
+            columns: ["participation_campaign_id"]
+            isOneToOne: true
+            referencedRelation: "participation_campaigns"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "settlement_source_bindings_reward_campaign_id_fkey"
             columns: ["reward_campaign_id"]
@@ -1202,6 +1283,23 @@ export type Database = {
         }
         Returns: Json
       }
+      create_participation_campaign_atomic: {
+        Args: {
+          _campaign_type: string
+          _description: string
+          _ends_at: string
+          _fee_reserve_luna: number
+          _funding_mode: string
+          _funding_wallet: string
+          _max_rewarded_participants: number
+          _owner_wallet: string
+          _reward_per_participant_luna: number
+          _starts_at: string
+          _title: string
+          _visibility: string
+        }
+        Returns: Json
+      }
       ensure_reward_campaign_vault_atomic: {
         Args: {
           _auth_tag: string
@@ -1273,6 +1371,10 @@ export type Database = {
         }
         Returns: Json
       }
+      publish_participation_campaign_atomic: {
+        Args: { _campaign_id: string; _published_configuration_version: number }
+        Returns: Json
+      }
       publish_poll_atomic: {
         Args: {
           _category?: string
@@ -1316,6 +1418,24 @@ export type Database = {
       }
       retry_reward_payout_atomic: {
         Args: { _campaign_id: string; _receipt_id: string }
+        Returns: Json
+      }
+      update_participation_campaign_draft_atomic: {
+        Args: {
+          _campaign_id: string
+          _campaign_type: string
+          _configuration_version: number
+          _description: string
+          _ends_at: string
+          _fee_reserve_luna: number
+          _funding_mode: string
+          _funding_wallet: string
+          _max_rewarded_participants: number
+          _reward_per_participant_luna: number
+          _starts_at: string
+          _title: string
+          _visibility: string
+        }
         Returns: Json
       }
     }
@@ -1453,3 +1573,4 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
