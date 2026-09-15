@@ -36,13 +36,13 @@ describe("V2C.2C Campaign foundation contract", () => {
     expect(types).not.toMatch(/claimable/);
   });
 
-  it("adds the Campaign binding branch without starting a Campaign API", () => {
+  it("adds the Campaign binding branch without starting a Campaign participant API", () => {
     const migration = readFileSync(bindingMigration, "utf8");
     expect(migration).toMatch(/participation_campaign_id/i);
     expect(migration).toMatch(/source_type.*participation_campaign/i);
     expect(migration).toMatch(/create_participation_campaign_atomic/i);
     expect(migration).toMatch(/update_participation_campaign_draft_atomic/i);
     expect(migration).toMatch(/publish_participation_campaign_atomic/i);
-    expect(existsSync("src/app/api/campaigns")).toBe(false);
+    expect(existsSync("src/app/api/campaigns/[campaignId]/participants")).toBe(false);
   });
 });

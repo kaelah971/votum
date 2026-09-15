@@ -217,12 +217,15 @@ describe("V2C.1E Poll compatibility gate", () => {
     }
   });
 
-  it("contains no Campaign product implementation or schema addition", () => {
+  it("keeps Poll financial modules free of Campaign authority", () => {
     const sourceFiles = filesUnder(resolve(ROOT, "src"));
     const migrationFiles = filesUnder(resolve(ROOT, "supabase/migrations"));
     const production = sourceFiles
       .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
-      .filter((file) => !file.replaceAll("\\", "/").endsWith("src/lib/campaigns/types.ts"))
+      .filter((file) => {
+        const normalized = file.replaceAll("\\", "/");
+        return !normalized.includes("/src/lib/campaigns/") && !normalized.includes("/src/app/api/campaigns/");
+      })
       .filter((file) => !file.replaceAll("\\", "/").endsWith("src/types/database.ts"))
       .map((file) => readFileSync(file, "utf8"))
       .join("\n");

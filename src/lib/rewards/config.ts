@@ -4,7 +4,7 @@ import {
   computeRewardPrincipalLuna,
   computeTotalBudgetLuna,
 } from "@/lib/rewards/constants";
-import { nimDecimalToLuna } from "@/lib/nimiq/units";
+import { nimDecimalToLuna, PG_BIGINT_MAX } from "@/lib/nimiq/units";
 import type { RewardCampaignState } from "@/lib/rewards/states";
 
 /**
@@ -107,6 +107,20 @@ export function validateRewardConfigInput(input: RewardConfigInput): RewardConfi
   );
   const feeReserveLuna = computeCampaignFeeReserveLuna(maxRewardedParticipants);
   const totalBudgetLuna = computeTotalBudgetLuna(rewardPrincipalLuna, feeReserveLuna);
+
+  if (rewardPrincipalLuna > PG_BIGINT_MAX) {
+    errors.push("rewardPrincipalLuna exceeds Postgres bigint range");
+  }
+  if (feeReserveLuna > PG_BIGINT_MAX) {
+    errors.push("feeReserveLuna exceeds Postgres bigint range");
+  }
+  if (totalBudgetLuna > PG_BIGINT_MAX) {
+    errors.push("totalBudgetLuna exceeds Postgres bigint range");
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
 
   return {
     ok: true,
