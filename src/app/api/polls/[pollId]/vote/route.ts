@@ -144,10 +144,10 @@ export async function POST(
     );
   }
 
-  const optionId =
-    typeof (body as Record<string, unknown>).optionId === "string"
-      ? (body as Record<string, unknown>).optionId
-      : "";
+  const rawOptionId = body && typeof body === "object" && !Array.isArray(body)
+    ? (body as Record<string, unknown>).optionId
+    : undefined;
+  const optionId = typeof rawOptionId === "string" ? rawOptionId : "";
   if (!optionId) {
     return NextResponse.json(
       {

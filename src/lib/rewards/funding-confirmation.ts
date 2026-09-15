@@ -293,9 +293,9 @@ export function createDefaultFundingConfirmationDependencies(
         _transaction_hash: input.transactionHash,
         _observed_amount_luna: Number(input.observedAmountLuna),
         _block_number: input.blockNumber,
-        _transaction_timestamp: input.transactionTimestampMs === null
-          ? null
-          : new Date(input.transactionTimestampMs).toISOString(),
+        ...(input.transactionTimestampMs === null
+          ? {}
+          : { _transaction_timestamp: new Date(input.transactionTimestampMs).toISOString() }),
       });
       if (error) {
         return { kind: "error", code: error.code, message: error.message };

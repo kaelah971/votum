@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  createDefaultFundingConfirmationDependencies,
   loadFundingConfirmationContext,
   reconcileFundingObservation,
+  type AtomicFundingConfirmationInput,
   type FundingConfirmationContext,
 } from "@/lib/rewards/funding-confirmation";
 import type { FundingObservation } from "@/lib/rewards/reconciliation";
@@ -66,6 +68,28 @@ function finalizedObservation(
 }
 
 describe("server reward funding confirmation boundary", () => {
+  it("omits an unknown transaction timestamp so SQL applies its NULL default", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: { result_kind: "confirmed" },
+      error: null,
+    });
+    const dependencies = createDefaultFundingConfirmationDependencies({ rpc } as never);
+    const input: AtomicFundingConfirmationInput = {
+      campaignId: context.campaignId,
+      intentId: context.intentId,
+      transactionHash: HASH,
+      requiredAmountLuna: context.requiredAmountLuna,
+      observedAmountLuna: context.requiredAmountLuna,
+      blockNumber: 100,
+      transactionTimestampMs: null,
+    };
+
+    await dependencies.confirmAtomic(input);
+
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc.mock.calls[0]?.[1]).not.toHaveProperty("_transaction_timestamp");
+  });
+
   it("calls atomic confirmation only for a confirmed server reconciliation", async () => {
     const confirmAtomic = vi.fn().mockResolvedValue({
       kind: "confirmed",

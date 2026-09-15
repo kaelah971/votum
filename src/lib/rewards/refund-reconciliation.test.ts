@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  createDefaultRefundReconciliationDependencies,
   reconcileRefund,
+  type AtomicRefundConfirmationInput,
   type RefundReconciliationContext,
   type RefundReconciliationDependencies,
 } from "@/lib/rewards/refund-reconciliation";
@@ -229,6 +231,39 @@ describe("reconcileRewardRefund", () => {
 });
 
 describe("server refund reconciliation boundary", () => {
+  it("forwards nullable chain evidence without inventing a hash or timestamp", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: { result_kind: "confirmed" },
+      error: null,
+    });
+    const dependencies = createDefaultRefundReconciliationDependencies({ rpc } as never);
+    const input: AtomicRefundConfirmationInput = {
+      refundId: REFUND_ID,
+      campaignId: CAMPAIGN_ID,
+      transactionHash: HASH,
+      networkId: NETWORK_ID,
+      observedSender: VAULT_HEX,
+      observedRecipient: CREATOR_HEX,
+      observedAmountLuna: BigInt(11200),
+      executionResult: true,
+      blockNumber: 100,
+      transactionTimestampMs: null,
+      transactionBlockHash: null,
+      canonicalBlockHash: "c".repeat(64),
+      batchNumber: 7,
+      finalizingMacroBlockHeight: 105,
+      finalizingMacroBlockHash: "d".repeat(64),
+    };
+
+    await dependencies.confirmAtomic(input);
+
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc.mock.calls[0]?.[1]).toMatchObject({
+      _transaction_timestamp: null,
+      _transaction_block_hash: null,
+    });
+  });
+
   it("passes exact observed sender, recipient, amount, and finality proof to the atomic boundary", async () => {
     const deps = dependencies();
     const result = await reconcileRefund(context(), deps);

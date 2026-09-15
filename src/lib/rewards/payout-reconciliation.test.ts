@@ -9,7 +9,9 @@ import {
   type FundingObservation,
 } from "@/lib/rewards/reconciliation";
 import {
+  createDefaultPayoutReconciliationDependencies,
   reconcilePayoutAttempt,
+  type AtomicPayoutConfirmationInput,
   type PayoutReconciliationContext,
   type PayoutReconciliationDependencies,
 } from "@/lib/rewards/payout-reconciliation";
@@ -247,6 +249,40 @@ describe("reconcileRewardPayout", () => {
 });
 
 describe("server payout reconciliation boundary", () => {
+  it("forwards nullable chain evidence without inventing a hash or timestamp", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: { result_kind: "confirmed" },
+      error: null,
+    });
+    const dependencies = createDefaultPayoutReconciliationDependencies({ rpc } as never);
+    const input: AtomicPayoutConfirmationInput = {
+      attemptId: ATTEMPT_ID,
+      receiptId: RECEIPT_ID,
+      campaignId: CAMPAIGN_ID,
+      transactionHash: HASH,
+      networkId: NETWORK_ID,
+      observedSender: VAULT_HEX,
+      observedRecipient: PARTICIPANT_HEX,
+      observedAmountLuna: BigInt(9000),
+      executionResult: true,
+      blockNumber: 100,
+      transactionTimestampMs: null,
+      transactionBlockHash: null,
+      canonicalBlockHash: "c".repeat(64),
+      batchNumber: 7,
+      finalizingMacroBlockHeight: 105,
+      finalizingMacroBlockHash: "d".repeat(64),
+    };
+
+    await dependencies.confirmAtomic(input);
+
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc.mock.calls[0]?.[1]).toMatchObject({
+      _transaction_timestamp: null,
+      _transaction_block_hash: null,
+    });
+  });
+
   it("atomically confirms an exact finalized payout", async () => {
     const deps = dependencies();
     const result = await reconcilePayoutAttempt(context(), deps);

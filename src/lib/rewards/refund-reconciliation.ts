@@ -16,8 +16,18 @@ import {
   type RewardRefundState,
 } from "@/lib/rewards/states";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/types/database";
 
 type AdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
+type GeneratedRefundConfirmationArgs =
+  Database["public"]["Functions"]["confirm_reward_refund_atomic"]["Args"];
+type RefundConfirmationSqlArgs = Omit<
+  GeneratedRefundConfirmationArgs,
+  "_transaction_timestamp" | "_transaction_block_hash"
+> & {
+  _transaction_timestamp: string | null;
+  _transaction_block_hash: string | null;
+};
 
 export interface RefundReconciliationContext {
   refundId: string;
@@ -302,7 +312,7 @@ export function createDefaultRefundReconciliationDependencies(
   return {
     observeRefundByHash: (hash) => adapter.observeFundingByHash(hash),
     confirmAtomic: async (input) => {
-      const { data, error } = await admin.rpc("confirm_reward_refund_atomic", {
+      const rpcArgs: RefundConfirmationSqlArgs = {
         _refund_id: input.refundId,
         _campaign_id: input.campaignId,
         _transaction_hash: input.transactionHash,
@@ -320,7 +330,13 @@ export function createDefaultRefundReconciliationDependencies(
         _batch_number: input.batchNumber,
         _finalizing_macro_block_height: input.finalizingMacroBlockHeight,
         _finalizing_macro_block_hash: input.finalizingMacroBlockHash,
-      });
+      };
+      // PostgreSQL accepts NULL evidence here; generated RPC args cannot
+      // express input nullability for scalar function parameters.
+      const { data, error } = await admin.rpc(
+        "confirm_reward_refund_atomic",
+        rpcArgs as GeneratedRefundConfirmationArgs,
+      );
       if (error) return { kind: "error", code: error.code, message: error.message };
       const result = typeof data === "object" && data !== null ? data as Record<string, unknown> : null;
       const resultKind = typeof result?.result_kind === "string" ? result.result_kind : "";

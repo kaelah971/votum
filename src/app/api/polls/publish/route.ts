@@ -17,6 +17,7 @@ import {
   type RewardFirstMode,
   type RewardFundingMode,
 } from "@/lib/polls/economic-model";
+import type { Database } from "@/types/database";
 
 export const runtime = "nodejs";
 
@@ -39,6 +40,25 @@ const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 6;
 const MAX_OPTION_LABEL_LENGTH = 120;
 const MAX_BODY_BYTES = 64_000;
+
+type GeneratedPublishPollArgs =
+  Database["public"]["Functions"]["publish_poll_atomic"]["Args"];
+type PublishPollSqlArgs = Omit<
+  GeneratedPublishPollArgs,
+  | "_description"
+  | "_mode"
+  | "_destination_wallet"
+  | "_destination_purpose"
+  | "_min_nim_luna"
+  | "_reward_mode"
+> & {
+  _description: string | null;
+  _mode: string | null;
+  _destination_wallet: string | null;
+  _destination_purpose: string | null;
+  _min_nim_luna: number | null;
+  _reward_mode: RewardFirstMode | null;
+};
 
 // ── Structured logging ───────────────────────────────────────────────
 
@@ -587,26 +607,29 @@ export async function POST(request: Request) {
     // Note: min_nim_luna is stored as bigint in PostgreSQL. The value is
     // well within Number.MAX_SAFE_INTEGER for any realistic poll minimum
     // (the full 21 billion NIM supply = 2.1 quadrillion Luna < 9 quadrillion).
+    const rpcArgs: PublishPollSqlArgs = {
+      _creator_wallet: creatorWallet,
+      _question: d.question,
+      _description: d.description,
+      _mode: d.dbMode,
+      _destination_wallet: d.canonicalWallet,
+      _destination_purpose: d.destinationPurpose,
+      _min_nim_luna: d.minNimLuna === null ? null : Number(d.minNimLuna),
+      _fairness_mode: d.fairnessMode,
+      _ends_at: endsAt,
+      _options: d.options,
+      _idempotency_key: d.idempotencyKey,
+      _request_fingerprint: requestFingerprint,
+      _category: d.category,
+      _format: d.format,
+      _economic_model: d.economicModel,
+      _reward_mode: d.rewardMode,
+    };
+    // PostgreSQL permits these NULL branches, but generated RPC args cannot
+    // express input nullability for scalar function parameters.
     const { data: result, error: rpcErr } = await admin.rpc(
       "publish_poll_atomic",
-      {
-        _creator_wallet: creatorWallet,
-        _question: d.question,
-        _description: d.description,
-        _mode: d.dbMode,
-        _destination_wallet: d.canonicalWallet,
-        _destination_purpose: d.destinationPurpose,
-        _min_nim_luna: d.minNimLuna === null ? null : Number(d.minNimLuna),
-        _fairness_mode: d.fairnessMode,
-        _ends_at: endsAt,
-        _options: d.options,
-        _idempotency_key: d.idempotencyKey,
-        _request_fingerprint: requestFingerprint,
-        _category: d.category,
-        _format: d.format,
-        _economic_model: d.economicModel,
-        _reward_mode: d.rewardMode,
-      },
+      rpcArgs as GeneratedPublishPollArgs,
     );
 
     if (rpcErr) {

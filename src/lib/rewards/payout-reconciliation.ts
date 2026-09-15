@@ -9,8 +9,18 @@ import {
   type PayoutReconciliationResult,
 } from "@/lib/rewards/reconciliation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/types/database";
 
 type AdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
+type GeneratedPayoutConfirmationArgs =
+  Database["public"]["Functions"]["confirm_reward_payout_atomic"]["Args"];
+type PayoutConfirmationSqlArgs = Omit<
+  GeneratedPayoutConfirmationArgs,
+  "_transaction_timestamp" | "_transaction_block_hash"
+> & {
+  _transaction_timestamp: string | null;
+  _transaction_block_hash: string | null;
+};
 type AttemptStatus = "pending" | "confirmed" | "failed" | "retryable";
 type ReceiptStatus = "reserved" | "payout_pending" | "paid" | "failed" | "retryable";
 
@@ -334,7 +344,7 @@ export function createDefaultPayoutReconciliationDependencies(
   return {
     observePayoutByHash: (hash) => adapter.observeFundingByHash(hash),
     confirmAtomic: async (input) => {
-      const { data, error } = await admin.rpc("confirm_reward_payout_atomic", {
+      const rpcArgs: PayoutConfirmationSqlArgs = {
         _attempt_id: input.attemptId,
         _receipt_id: input.receiptId,
         _campaign_id: input.campaignId,
@@ -353,7 +363,13 @@ export function createDefaultPayoutReconciliationDependencies(
         _batch_number: input.batchNumber,
         _finalizing_macro_block_height: input.finalizingMacroBlockHeight,
         _finalizing_macro_block_hash: input.finalizingMacroBlockHash,
-      });
+      };
+      // PostgreSQL accepts NULL evidence here; generated RPC args cannot
+      // express input nullability for scalar function parameters.
+      const { data, error } = await admin.rpc(
+        "confirm_reward_payout_atomic",
+        rpcArgs as GeneratedPayoutConfirmationArgs,
+      );
       if (error) return { kind: "error", code: error.code, message: error.message };
       const result = asRecord(data);
       const resultKind = typeof result?.result_kind === "string" ? result.result_kind : "";
