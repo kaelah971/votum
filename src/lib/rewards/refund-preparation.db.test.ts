@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const key = process.env.SUPABASE_SECRET_KEY ?? "";
@@ -136,6 +137,7 @@ async function createFixture(options: {
     .single();
   if (campaignError || !campaign) throw campaignError ?? new Error("campaign fixture missing");
   fixtureCampaignIds.push(campaign.id);
+  await attachPollSettlement(admin, campaign.id);
 
   const { data: optionsRows, error: optionsError } = await admin.from("poll_options").insert([
     { poll_id: poll.id, label: "Option A", sort_order: 0 },
@@ -205,6 +207,7 @@ async function insertReceipt(
   fixtureWallets.push(participantWallet);
   const { data, error } = await admin.from("reward_receipts").insert({
     campaign_id: fixture.campaignId,
+    settlement_id: fixture.campaignId,
     poll_id: fixture.pollId,
     participant_wallet: participantWallet,
     amount_luna: options.amountLuna ?? REWARD,
@@ -297,6 +300,9 @@ function cleanupFixtures(): void {
     DELETE FROM public.reward_funding_transactions WHERE campaign_id IN (${campaigns});
     DELETE FROM public.reward_receipts WHERE campaign_id IN (${campaigns});
     DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns});
+    UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns});
+    DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
+    DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
     DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});
     DELETE FROM public.poll_votes WHERE poll_id IN (${polls});
     DELETE FROM public.poll_options WHERE poll_id IN (${polls});
@@ -643,6 +649,7 @@ describe("begin_reward_refund_atomic", () => {
     expect(resultKind(await beginRefund(fixture.campaignId))).toBe("created");
     const { error } = await admin.from("reward_receipts").insert({
       campaign_id: fixture.campaignId,
+      settlement_id: fixture.campaignId,
       poll_id: fixture.pollId,
       participant_wallet: wallet(),
       amount_luna: REWARD,

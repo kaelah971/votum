@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 import {
   createSupabaseRewardRefundStore,
   runRewardRefund,
@@ -95,6 +96,7 @@ async function createFixture(options: { withPayoutAttempt?: boolean } = {}): Pro
   }).select("id").single();
   if (campaignError || !campaign) throw campaignError ?? new Error("campaign fixture missing");
   fixtureCampaignIds.push(campaign.id);
+  await attachPollSettlement(admin, campaign.id);
 
   const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
     campaign_id: campaign.id,
@@ -111,6 +113,7 @@ async function createFixture(options: { withPayoutAttempt?: boolean } = {}): Pro
   if (options.withPayoutAttempt) {
     const { data: receipt, error: receiptError } = await admin.from("reward_receipts").insert({
       campaign_id: campaign.id,
+      settlement_id: campaign.id,
       poll_id: poll.id,
       participant_wallet: wallet(),
       amount_luna: 1000,
@@ -129,6 +132,7 @@ async function createFixture(options: { withPayoutAttempt?: boolean } = {}): Pro
 
   const { data: refund, error: refundError } = await admin.from("reward_refunds").insert({
     campaign_id: campaign.id,
+    settlement_id: campaign.id,
     creator_wallet: creatorWallet,
     amount_luna: Number(AMOUNT_LUNA),
     status: "pending",
@@ -164,6 +168,9 @@ function cleanupFixtures(): void {
     DELETE FROM public.reward_receipts WHERE campaign_id IN (${campaigns});
     DELETE FROM public.reward_refunds WHERE id IN (${refunds || "NULL"}) OR campaign_id IN (${campaigns});
     DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns});
+    UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns});
+    DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
+    DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
     DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});
     DELETE FROM public.polls WHERE id IN (${polls});
     SET session_replication_role = origin;

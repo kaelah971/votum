@@ -1,8 +1,10 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { loadFundingConfirmationContext } from "@/lib/rewards/funding-confirmation";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const key = process.env.SUPABASE_SECRET_KEY ?? "";
@@ -16,6 +18,13 @@ const PRINCIPAL = 9000;
 const FEE_RESERVE = 0;
 const fixtureCampaignIds: string[] = [];
 const fixturePollIds: string[] = [];
+
+function runPsql(sql: string): void {
+  execFileSync("docker", [
+    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "-v", "ON_ERROR_STOP=1", "-c", sql,
+  ], { stdio: "pipe" });
+}
 
 function hex(bytes: number): string {
   return randomBytes(bytes).toString("hex");
@@ -85,6 +94,7 @@ async function fixture(options: {
     .single();
   if (campaignError || !campaign) throw campaignError ?? new Error("campaign fixture missing");
   fixtureCampaignIds.push(campaign.id);
+  await attachPollSettlement(admin, campaign.id);
 
   const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
     campaign_id: campaign.id,
@@ -101,6 +111,7 @@ async function fixture(options: {
     .from("reward_funding_transactions")
     .insert({
       campaign_id: campaign.id,
+      settlement_id: campaign.id,
       creator_wallet: creator,
       funder_wallet: creator,
       reference: `votum:fund:${hex(8)}`,
@@ -163,12 +174,17 @@ async function readState(value: Fixture) {
 
 async function cleanup(): Promise<void> {
   if (fixtureCampaignIds.length > 0) {
-    await admin.from("reward_funding_transactions").delete().in("campaign_id", fixtureCampaignIds);
-    await admin.from("reward_campaign_vaults").delete().in("campaign_id", fixtureCampaignIds);
-    await admin.from("reward_campaigns").delete().in("id", fixtureCampaignIds);
-  }
-  if (fixturePollIds.length > 0) {
-    await admin.from("polls").delete().in("id", fixturePollIds);
+    const ids = fixtureCampaignIds.map((id) => `'${id}'`).join(", ");
+    const polls = fixturePollIds.map((id) => `'${id}'`).join(", ");
+    runPsql(`
+      DELETE FROM public.reward_funding_transactions WHERE campaign_id IN (${ids});
+      DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${ids});
+      UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${ids});
+      DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${ids});
+      DELETE FROM public.reward_settlements WHERE id IN (${ids});
+      DELETE FROM public.reward_campaigns WHERE id IN (${ids});
+      DELETE FROM public.polls WHERE id IN (${polls || "NULL"});
+    `);
   }
   fixtureCampaignIds.length = 0;
   fixturePollIds.length = 0;

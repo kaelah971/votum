@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const key = process.env.SUPABASE_SECRET_KEY ?? "";
@@ -152,6 +153,7 @@ async function createFixture(options: {
     .single();
   if (campaignError || !campaign) throw campaignError ?? new Error("campaign fixture missing");
   fixtureCampaignIds.push(campaign.id);
+  await attachPollSettlement(admin, campaign.id);
 
   if (options.rewardedParticipantCount !== undefined || options.campaignStatus === "exhausted") {
     const { error } = await admin.from("reward_campaigns").update({
@@ -243,6 +245,9 @@ async function cleanupFixtures(): Promise<void> {
     DELETE FROM public.reward_funding_transactions WHERE campaign_id IN (${campaigns || "NULL"});
     DELETE FROM public.reward_receipts WHERE campaign_id IN (${campaigns || "NULL"});
     DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns || "NULL"});
+    UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns || "NULL"});
+    DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns || "NULL"});
+    DELETE FROM public.reward_settlements WHERE id IN (${campaigns || "NULL"});
     DELETE FROM public.reward_campaigns WHERE id IN (${campaigns || "NULL"});
     DELETE FROM public.poll_votes WHERE poll_id IN (${polls || "NULL"});
     DELETE FROM public.poll_options WHERE poll_id IN (${polls || "NULL"});
@@ -511,6 +516,7 @@ describe("claim_reward_receipt_atomic", () => {
     const fixture = await createFixture({ rewardPerParticipantLuna: 7500 });
     const { error } = await admin.from("reward_receipts").insert({
       campaign_id: fixture.campaignId,
+      settlement_id: fixture.campaignId,
       poll_id: fixture.pollId,
       participant_wallet: fixture.participantWallet,
       amount_luna: 7500,

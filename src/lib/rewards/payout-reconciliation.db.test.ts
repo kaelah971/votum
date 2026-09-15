@@ -2,7 +2,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Address } from "@nimiq/core";
 import { createClient } from "@supabase/supabase-js";
 import { randomBytes, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 import {
   createDefaultPayoutReconciliationDependencies,
   loadPayoutReconciliationContext,
@@ -50,20 +52,31 @@ function hash(): string {
   return hex(32);
 }
 
+function runPsql(sql: string): void {
+  execFileSync("docker", [
+    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "-v", "ON_ERROR_STOP=1", "-c", sql,
+  ], { stdio: "pipe" });
+}
+
 async function cleanup(): Promise<void> {
-  if (fixtureAttemptIds.length > 0) {
-    await admin.from("reward_payout_attempts").delete().in("id", fixtureAttemptIds);
-  }
-  if (fixtureReceiptIds.length > 0) {
-    await admin.from("reward_receipts").delete().in("id", fixtureReceiptIds);
-  }
   if (fixtureCampaignIds.length > 0) {
-    await admin.from("reward_refunds").delete().in("campaign_id", fixtureCampaignIds);
-    await admin.from("reward_campaign_vaults").delete().in("campaign_id", fixtureCampaignIds);
-    await admin.from("reward_campaigns").delete().in("id", fixtureCampaignIds);
-  }
-  if (fixturePollIds.length > 0) {
-    await admin.from("polls").delete().in("id", fixturePollIds);
+    const campaigns = fixtureCampaignIds.map((id) => `'${id}'`).join(", ");
+    const polls = fixturePollIds.map((id) => `'${id}'`).join(", ");
+    runPsql(`
+      SET session_replication_role = replica;
+      DELETE FROM public.reward_payout_attempts
+        WHERE receipt_id IN (SELECT id FROM public.reward_receipts WHERE campaign_id IN (${campaigns}));
+      DELETE FROM public.reward_receipts WHERE campaign_id IN (${campaigns});
+      DELETE FROM public.reward_refunds WHERE campaign_id IN (${campaigns});
+      DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns});
+      UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns});
+      DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
+      DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
+      DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});
+      DELETE FROM public.polls WHERE id IN (${polls || "NULL"});
+      SET session_replication_role = origin;
+    `);
   }
   fixtureAttemptIds.length = 0;
   fixtureReceiptIds.length = 0;
@@ -113,6 +126,7 @@ async function createFixture(): Promise<Fixture> {
   }).select("id").single();
   if (campaignError || !campaign) throw campaignError ?? new Error("campaign fixture missing");
   fixtureCampaignIds.push(campaign.id);
+  await attachPollSettlement(admin, campaign.id);
 
   const { error: vaultError } = await admin.from("reward_campaign_vaults").insert({
     campaign_id: campaign.id,
@@ -127,6 +141,7 @@ async function createFixture(): Promise<Fixture> {
 
   const { data: receipt, error: receiptError } = await admin.from("reward_receipts").insert({
     campaign_id: campaign.id,
+    settlement_id: campaign.id,
     poll_id: poll.id,
     participant_wallet: participantWallet,
     amount_luna: REWARD,

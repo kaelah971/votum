@@ -4,6 +4,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { Transaction } from "@nimiq/core";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { attachPollSettlement } from "@/lib/rewards/settlement-fixture";
 import {
   createSupabaseRewardPayoutStore,
   runRewardPayout,
@@ -59,6 +60,9 @@ function cleanupFixtures(): void {
     DELETE FROM public.reward_receipts WHERE campaign_id IN (${campaigns});
     DELETE FROM public.reward_refunds WHERE campaign_id IN (${campaigns});
     DELETE FROM public.reward_campaign_vaults WHERE campaign_id IN (${campaigns});
+    UPDATE public.reward_campaigns SET settlement_id = NULL WHERE id IN (${campaigns});
+    DELETE FROM public.settlement_source_bindings WHERE reward_campaign_id IN (${campaigns});
+    DELETE FROM public.reward_settlements WHERE id IN (${campaigns});
     DELETE FROM public.reward_campaigns WHERE id IN (${campaigns});
     DELETE FROM public.poll_options WHERE poll_id IN (${polls});
     DELETE FROM public.polls WHERE id IN (${polls});
@@ -107,6 +111,7 @@ async function createFixture(receiptCount = 1): Promise<Fixture> {
   }).select("id").single();
   if (campaignError || !campaign) throw campaignError ?? new Error("campaign fixture missing");
   fixtureCampaignIds.push(campaign.id);
+  await attachPollSettlement(admin, campaign.id);
 
   const vault = await ensureCampaignVault(campaign.id);
   const { error: stateError } = await admin.from("reward_campaigns")
@@ -116,6 +121,7 @@ async function createFixture(receiptCount = 1): Promise<Fixture> {
   const { data: receipts, error: receiptError } = await admin.from("reward_receipts").insert(
     participantWallets.map((participantWallet) => ({
       campaign_id: campaign.id,
+      settlement_id: campaign.id,
       poll_id: poll.id,
       participant_wallet: participantWallet,
       amount_luna: rewardPerParticipantLuna,

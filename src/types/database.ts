@@ -379,6 +379,7 @@ export type Database = {
           encryption_algorithm: string
           encryption_iv: string
           envelope_version: string
+          settlement_id: string | null
           updated_at: string
           vault_address_hex: string
         }
@@ -390,6 +391,7 @@ export type Database = {
           encryption_algorithm: string
           encryption_iv: string
           envelope_version: string
+          settlement_id?: string | null
           updated_at?: string
           vault_address_hex: string
         }
@@ -401,6 +403,7 @@ export type Database = {
           encryption_algorithm?: string
           encryption_iv?: string
           envelope_version?: string
+          settlement_id?: string | null
           updated_at?: string
           vault_address_hex?: string
         }
@@ -410,6 +413,13 @@ export type Database = {
             columns: ["campaign_id"]
             isOneToOne: true
             referencedRelation: "reward_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reward_campaign_vaults_settlement_id_fkey"
+            columns: ["settlement_id"]
+            isOneToOne: false
+            referencedRelation: "reward_settlements"
             referencedColumns: ["id"]
           },
         ]
@@ -543,6 +553,7 @@ export type Database = {
           id: string
           reference: string
           reward_principal_luna: number | null
+          settlement_id: string
           status: string
           submitted_at: string | null
           submitted_transaction_hash: string | null
@@ -564,6 +575,7 @@ export type Database = {
           id?: string
           reference: string
           reward_principal_luna?: number | null
+          settlement_id: string
           status?: string
           submitted_at?: string | null
           submitted_transaction_hash?: string | null
@@ -585,6 +597,7 @@ export type Database = {
           id?: string
           reference?: string
           reward_principal_luna?: number | null
+          settlement_id?: string
           status?: string
           submitted_at?: string | null
           submitted_transaction_hash?: string | null
@@ -598,6 +611,13 @@ export type Database = {
             columns: ["campaign_id"]
             isOneToOne: false
             referencedRelation: "reward_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reward_funding_transactions_settlement_id_fkey"
+            columns: ["settlement_id"]
+            isOneToOne: false
+            referencedRelation: "reward_settlements"
             referencedColumns: ["id"]
           },
         ]
@@ -709,6 +729,7 @@ export type Database = {
           paid_at: string | null
           participant_wallet: string
           poll_id: string
+          settlement_id: string
           status: string
           updated_at: string
         }
@@ -720,6 +741,7 @@ export type Database = {
           paid_at?: string | null
           participant_wallet: string
           poll_id: string
+          settlement_id: string
           status?: string
           updated_at?: string
         }
@@ -731,6 +753,7 @@ export type Database = {
           paid_at?: string | null
           participant_wallet?: string
           poll_id?: string
+          settlement_id?: string
           status?: string
           updated_at?: string
         }
@@ -747,6 +770,13 @@ export type Database = {
             columns: ["poll_id"]
             isOneToOne: false
             referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reward_receipts_settlement_id_fkey"
+            columns: ["settlement_id"]
+            isOneToOne: false
+            referencedRelation: "reward_settlements"
             referencedColumns: ["id"]
           },
         ]
@@ -776,6 +806,7 @@ export type Database = {
           prepared_transaction_hex: string | null
           recipient_address_hex: string | null
           sender_address_hex: string | null
+          settlement_id: string
           status: string
           transaction_hash: string | null
           transaction_timestamp: string | null
@@ -806,6 +837,7 @@ export type Database = {
           prepared_transaction_hex?: string | null
           recipient_address_hex?: string | null
           sender_address_hex?: string | null
+          settlement_id: string
           status?: string
           transaction_hash?: string | null
           transaction_timestamp?: string | null
@@ -836,6 +868,7 @@ export type Database = {
           prepared_transaction_hex?: string | null
           recipient_address_hex?: string | null
           sender_address_hex?: string | null
+          settlement_id?: string
           status?: string
           transaction_hash?: string | null
           transaction_timestamp?: string | null
@@ -848,6 +881,13 @@ export type Database = {
             columns: ["campaign_id"]
             isOneToOne: false
             referencedRelation: "reward_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reward_refunds_settlement_id_fkey"
+            columns: ["settlement_id"]
+            isOneToOne: false
+            referencedRelation: "reward_settlements"
             referencedColumns: ["id"]
           },
         ]
