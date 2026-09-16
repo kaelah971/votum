@@ -178,11 +178,13 @@ describe("V2C.3A derived funding readiness keeps publication, funding, and claim
   });
 
   it("exposes no receipt, challenge, or claim route for the Campaign", async () => {
-    // Static absence proof: the claim route module must not resolve in
-    // slice A. Task D4 retires this probe when the route lands (both the
-    // unused directive and the rejection assertion fail once it exists).
-    // @ts-expect-error claim route must not exist in slice A
-    const loader = import("@/app/api/campaigns/[campaignId]/claims/route");
-    await expect(loader).rejects.toThrow();
+    // Filesystem absence proof: the claim route file must not exist in
+    // slice A. Task D4 retires this probe when the route lands (the
+    // assertion fails once the file exists).
+    const { existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    expect(
+      existsSync(join(process.cwd(), "src", "app", "api", "campaigns", "[campaignId]", "claims", "route.ts")),
+    ).toBe(false);
   });
 });
