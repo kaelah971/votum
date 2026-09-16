@@ -1,7 +1,8 @@
 import "server-only";
 
-import { normalizeAddress } from "@/lib/nimiq/server-crypto";
+import { normalizeAddress, toUserFriendlyAddress } from "@/lib/nimiq/server-crypto";
 import { formatNimAmount } from "@/lib/nimiq/units";
+import { truncateAddress } from "@/lib/format";
 import { resolveCampaignRewardSettlement } from "@/lib/campaigns/settlement";
 import { loadRewardSettlementContext } from "@/lib/rewards/settlement-root";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -17,13 +18,14 @@ export type PublicCampaignClaimState =
   | "closed"
   | "unpublished";
 
-/** Browser-safe public projection. No wallet, challenge, receipt, vault, lease, signing, or refund field. */
+/** Browser-safe public projection. Creator appears only as a shortened display form. No full wallet, challenge, receipt, vault, lease, signing, or refund field. */
 export interface PublicCampaignGiveaway {
   campaignId: string;
   campaignType: "public_giveaway";
   visibility: "public" | "unlisted";
   title: string;
   description: string | null;
+  creatorDisplay: string;
   startsAt: string | null;
   endsAt: string | null;
   claimState: PublicCampaignClaimState;
@@ -149,6 +151,13 @@ export async function getPublicCampaignGiveaway(
   const binding = await resolveCampaignRewardSettlement(admin, campaign.id);
   if (binding.kind !== "ok") return null;
 
+  // Authoritative creator source: the Campaign owner, already validated
+  // equal to the settlement owner by the binding resolution above. Only the
+  // approved shortened display form ever leaves the server.
+  const creatorNq = toUserFriendlyAddress(binding.ownerWallet);
+  if (!creatorNq) return null;
+  const creatorDisplay = truncateAddress(creatorNq);
+
   const economics = await loadEconomics(admin, binding.settlementId);
   if (!economics) return null;
 
@@ -165,6 +174,7 @@ export async function getPublicCampaignGiveaway(
     visibility: campaign.visibility,
     title: campaign.title,
     description: campaign.description,
+    creatorDisplay,
     startsAt: campaign.starts_at,
     endsAt: campaign.ends_at,
     claimState: deriveClaimState({

@@ -179,7 +179,9 @@ function baseTables(extra: Record<string, Row[]> = {}): Record<string, Row[]> {
 describe("getPublicCampaignGiveaway", () => {
   it("projects the exact allowlisted DTO for an open Campaign", async () => {
     const dto = await getPublicCampaignGiveaway(makeAdmin(baseTables()) as never, CAMPAIGN);
-    expect(dto).toEqual({
+    const { creatorDisplay, ...rest } = dto ?? ({} as Record<string, unknown>);
+    expect(typeof creatorDisplay).toBe("string");
+    expect(rest).toEqual({
       campaignId: CAMPAIGN,
       campaignType: "public_giveaway",
       visibility: "public",
@@ -209,6 +211,29 @@ describe("getPublicCampaignGiveaway", () => {
       "vault",
       "owner",
       "challenge",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("derives a shortened server-side creator display without leaking the full wallet", async () => {
+    const { truncateAddress } = await import("@/lib/format");
+    const { toUserFriendlyAddress } = await import("@/lib/nimiq/server-crypto");
+    const dto = await getPublicCampaignGiveaway(makeAdmin(baseTables()) as never, CAMPAIGN);
+
+    const fullNq = toUserFriendlyAddress(OWNER);
+    expect(fullNq).not.toBeNull();
+    expect(dto?.creatorDisplay).toBe(truncateAddress(fullNq as string));
+    expect(dto?.creatorDisplay).toContain("...");
+    expect((dto?.creatorDisplay as string).length).toBeLessThan((fullNq as string).length);
+    const serialized = JSON.stringify(dto);
+    expect(serialized).not.toContain(OWNER);
+    expect(serialized).not.toContain(fullNq);
+    for (const forbidden of [
+      "funding_wallet",
+      "session",
+      "ciphertext",
+      "refund_recipient",
     ]) {
       expect(serialized).not.toContain(forbidden);
     }

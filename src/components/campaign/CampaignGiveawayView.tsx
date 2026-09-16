@@ -83,10 +83,10 @@ interface CampaignGiveawayViewProps {
 
 /**
  * Presentational share-link surface for a Public Giveaway. Renders only the
- * public DTO: no wallets, no challenges, no receipts, no vault data, and no
- * own-claim state. In the open state it reserves the single-CTA slot with a
- * disabled, non-actionable Claim NIM placeholder until the participant
- * slice lands; it never implies claiming is possible today.
+ * public DTO: shortened creator display, no full wallets, no challenges, no
+ * receipts, no vault data, and no own-claim state. The open state renders a
+ * non-interactive informational note only; no button, link, handler, or
+ * Claim NIM control of any kind exists before the participant slice.
  */
 export function CampaignGiveawayView({ giveaway, className = "" }: CampaignGiveawayViewProps) {
   const state = stateCopy(giveaway);
@@ -103,6 +103,9 @@ export function CampaignGiveawayView({ giveaway, className = "" }: CampaignGivea
       {giveaway.description ? (
         <p className="mt-2 text-body text-quiet-ink">{giveaway.description}</p>
       ) : null}
+      <p className="mt-2 text-micro text-quiet-ink">
+        Created by <span className="font-proof text-proof">{giveaway.creatorDisplay}</span>
+      </p>
 
       <dl className="mt-5 space-y-2 border-t border-divider pt-5">
         <div className="flex items-baseline justify-between gap-4">
@@ -148,17 +151,9 @@ export function CampaignGiveawayView({ giveaway, className = "" }: CampaignGivea
       </div>
 
       {isOpen ? (
-        <div className="mt-5">
-          <button
-            type="button"
-            disabled
-            aria-disabled="true"
-            className="inline-flex w-full items-center justify-center rounded-full bg-signal-gold px-6 py-4 text-sm font-medium text-ballot-ink disabled:pointer-events-none disabled:opacity-50"
-          >
-            Claim NIM
-          </button>
-          <p className="mt-2 text-center text-micro text-quiet-ink">
-            Claiming is not available yet.
+        <div className="mt-5 rounded-thumbnail border border-divider bg-soft-fog px-4 py-3">
+          <p className="text-center text-body text-quiet-ink">
+            Claims are not available yet.
           </p>
         </div>
       ) : null}

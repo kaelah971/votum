@@ -549,16 +549,21 @@ availability. No active Claim NIM action ships in this slice.
   Promise<PublicCampaignGiveaway | null>` where
   `PublicCampaignGiveaway = { campaignId: string; campaignType:
   "public_giveaway"; visibility: "public" | "unlisted"; title: string;
-  description: string | null; startsAt: string | null; endsAt: string | null;
+  description: string | null; creatorDisplay: string; startsAt: string | null; endsAt: string | null;
   claimState: "needs_funding" | "starts_soon" | "open" | "full" | "ended" |
   "closed" | "unpublished"; published: boolean; fundingReady: boolean;
   rewardPerParticipantNim: string; maxRewardedParticipants: number;
   remainingRewards: number; reservedCount: number; paidCount: number }`.
+  `creatorDisplay` is the server-derived shortened creator identity
+  (`truncateAddress(toUserFriendlyAddress(...))` over the validated
+  settlement owner from `resolveCampaignRewardSettlement`); the full
+  wallet never leaves the server, per spec Section 9.2.
   `remainingRewards` equals `max_rewarded_participants -
   rewarded_participant_count` from the locked settlement row on every call.
   `deriveClaimState` is exported pure for the page and the E slice. Draft
-  and private Campaigns return `null`. No wallet, challenge, receipt,
-  vault, lease, signing, or refund field appears in the type.
+  and private Campaigns return `null`. No full wallet, challenge, receipt,
+  vault, lease, signing, or refund field appears in the type; creator
+  identity appears only as the shortened `creatorDisplay`.
 
 **TDD**
 
@@ -625,8 +630,9 @@ availability. No active Claim NIM action ships in this slice.
   `generateMetadata`, `ProductShell` layout, `UnavailableState` on
   not-found per the Poll page pattern)
 - Create: `src/components/campaign/CampaignGiveawayView.tsx` (presentational
-  only: title, terms, window, derived state, proof strip; disabled Claim NIM
-  placeholder button that renders nothing actionable until slice E)
+  only: title, shortened creator display, terms, window, derived state,
+  proof strip; no button, link, handler, or Claim NIM control of any kind —
+  the open state renders a non-interactive informational note only)
 
 **Interfaces**
 
@@ -635,9 +641,11 @@ availability. No active Claim NIM action ships in this slice.
   `ProductShell` from `src/components/layout/ProductShell`,
   `UnavailableState` from `src/components/state/UnavailableState`.
 - Produces: rendered share-link surface following `DESIGN.md` (Soft Fog
-  field, Clear Ballot card, Signal Gold single CTA reserved for the future
-  Claim action, NIM Blue proof context, text-plus-icon status) and
-  `docs/brand-messaging.md` vocabulary. No claimant list, no wallet data, no
+  field, Clear Ballot card, NIM Blue proof context, text-plus-icon status,
+  no Claim NIM control of any kind) and
+  `docs/brand-messaging.md` vocabulary, visibly communicating the
+  shortened creator display alongside title, terms, window, and derived
+  state. No claimant list, no wallet data, no
   fetch of own-claim state in this slice.
 
 **TDD**

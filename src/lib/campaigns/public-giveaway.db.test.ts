@@ -152,12 +152,15 @@ describe("V2C.3B public projector on authoritative settlement truth", () => {
     await ensureRewardSettlementVault(open.settlementId);
     await publishParticipationCampaign(OWNER, open.campaignId);
     await markFunded(open.settlementId);
-    await expect(getPublicCampaignGiveaway(admin as never, open.campaignId)).resolves.toMatchObject({
+    const openDto = await getPublicCampaignGiveaway(admin as never, open.campaignId);
+    expect(openDto).toMatchObject({
       claimState: "open",
       published: true,
       fundingReady: true,
       remainingRewards: 10,
     });
+    expect(openDto?.creatorDisplay).toContain("...");
+    expect(JSON.stringify(openDto)).not.toContain(OWNER);
 
     const ended = await createCampaign({ title: "Ended", endsAt: "2026-09-15T12:00:00.000Z" });
     await ensureRewardSettlementVault(ended.settlementId);

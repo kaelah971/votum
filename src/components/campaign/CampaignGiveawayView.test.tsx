@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { CampaignGiveawayView } from "@/components/campaign/CampaignGiveawayView";
 import type { PublicCampaignGiveaway } from "@/lib/campaigns/public-giveaway";
 
@@ -10,6 +10,7 @@ function dto(overrides: Partial<PublicCampaignGiveaway> = {}): PublicCampaignGiv
     visibility: "public",
     title: "Neighborhood cleanup reward",
     description: "Join the Saturday cleanup.",
+    creatorDisplay: "NQ32 4Y...b845",
     startsAt: null,
     endsAt: null,
     claimState: "open",
@@ -45,20 +46,24 @@ describe("CampaignGiveawayView", () => {
     expect(screen.getByText("0.5 NIM")).toBeInTheDocument();
     expect(screen.getByText("7 of 10")).toBeInTheDocument();
     expect(screen.getByText("One wallet · one claim")).toBeInTheDocument();
+    expect(screen.getByText("Created by", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("NQ32 4Y...b845")).toBeInTheDocument();
+    expect(screen.queryByText("01" + "a".repeat(38))).toBeNull();
     const html = container.innerHTML;
     for (const token of PRIVATE_TOKENS) {
       expect(html).not.toContain(token);
     }
   });
 
-  it("reserves a disabled, non-actionable Claim NIM slot only when open", () => {
-    const { unmount } = render(<CampaignGiveawayView giveaway={dto()} />);
-    const button = screen.getByRole("button", { name: "Claim NIM" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(button);
-    expect(button).toBeDisabled();
-    expect(screen.getByText("Claiming is not available yet.")).toBeInTheDocument();
+  it("renders open state with no interactive claim element at all", () => {
+    const { unmount, container } = render(<CampaignGiveawayView giveaway={dto()} />);
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.querySelector('[role="button"]')).toBeNull();
+    expect(screen.queryByText("Claim NIM")).toBeNull();
+    expect(
+      screen.getByText("Claims are not available yet."),
+    ).toBeInTheDocument();
     unmount();
 
     render(<CampaignGiveawayView giveaway={dto({ claimState: "needs_funding" })} />);
