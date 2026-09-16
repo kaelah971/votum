@@ -129,12 +129,15 @@ The plan names only objects that exist at commit `1049ce9`
 - `reward_receipts` (`campaign_id NOT NULL` FK `reward_campaigns`,
   `poll_id NOT NULL` FK `polls`, `settlement_id NOT NULL` FK
   `reward_settlements`, `UNIQUE (campaign_id, participant_wallet)`).
-  Sections A and D adapt the Poll-shaped `NOT NULL` columns; see Migration
-  M1 justification below.
+  Slice D adapts the Poll-shaped `NOT NULL` columns; see Migration
+  M2 justification below. Slices A–C never touch this table.
 - `reward_funding_transactions` (`campaign_id NOT NULL` FK
-  `reward_campaigns`, `settlement_id NOT NULL`). Same adaptation need; M1.
+  `reward_campaigns`, `settlement_id NOT NULL`). Same adaptation need; M2
+  in slice D, which additionally proves Campaign-branch funding execution
+  as the first consumer of the migrated columns.
 - `reward_refunds` (`campaign_id NOT NULL` FK `reward_campaigns`,
-  `settlement_id NOT NULL`). Same adaptation need; M1 with the close slice.
+  `settlement_id NOT NULL`). Same adaptation need; M2 in slice D alongside
+  the receipt columns.
 - `reward_campaign_vaults` (PK `settlement_id`, nullable `campaign_id`
   compatibility FK; standalone Campaign rows use `campaign_id IS NULL`).
 - `reward_payout_attempts` (reached through `receipt_id`; no direct source
@@ -261,23 +264,28 @@ suites using `test-target.ts`/`test-env.ts` and `docker exec` psql cleanup;
 ## Migration Plan (Exact Numbering)
 
 Highest shipped migration is `20260913086000_v2c2_poll_read_root_cutover.sql`.
-Historical migrations are never edited. New migrations:
+No `20260916*` migration is committed, so the sequence below is
+collision-free. Historical migrations are never edited. Migration versions
+are monotonic in slice execution order (C, then D, then F); slice A ships
+no migration. New migrations:
 
-- **M1 `20260916000000_v2c3_campaign_source_columns.sql`** (Task A1):
-  adapts `reward_funding_transactions.campaign_id`,
+- **M1 `20260916000000_v2c3_claim_challenges.sql`** (Task C1):
+  `campaign_claim_challenges` private table, indexes, RLS, grants.
+- **M2 `20260916001000_v2c3_campaign_source_columns.sql`** (Task D1,
+  Phase 1): adapts `reward_funding_transactions.campaign_id`,
   `reward_receipts.campaign_id`, `reward_receipts.poll_id`, and
   `reward_refunds.campaign_id` from `NOT NULL` to nullable with
   exactly-one-source check constraints and settlement-scoped uniqueness.
-  Justification recorded in Task A1: the spec default (reuse
+  Justification recorded in Task D1: the spec default (reuse
   `reward_receipts`, no second table) is literally impossible against the
   shipped Poll-shaped `NOT NULL` FKs, because a standalone Campaign row must
   never fabricate a `reward_campaigns` row or a `polls` row. The adaptation
   keeps one ledger and adds a Campaign branch to it; it does not create a
-  parallel table.
-- **M2 `20260916001000_v2c3_claim_challenges.sql`** (Task C1):
-  `campaign_claim_challenges` private table, indexes, RLS, grants.
-- **M3 `20260916002000_v2c3_campaign_claim_rpc.sql`** (Task D1):
-  `claim_campaign_reward_atomic` security-definer RPC plus grants.
+  parallel table. The migration and the atomic reservation behavior that
+  consumes it ship in the same reviewed slice D.
+- **M3 `20260916002000_v2c3_campaign_claim_rpc.sql`** (Task D1,
+  Phase 2): `claim_campaign_reward_atomic` security-definer RPC plus
+  grants. Phase 2 starts only after Phase 1 is GREEN.
 - **M4 `20260916003000_v2c3_campaign_close_refund.sql`** (Task F2):
   `begin_campaign_refund_atomic` security-definer RPC plus grants.
 
@@ -290,52 +298,15 @@ the same slice commit.
 ## V2C.3A — Public Giveaway Funding / Readiness
 
 Goal: the Campaign settlement becomes fundable from the creator product flow
-through the existing settlement vault and funding engine. No claim
-functionality ships in this slice.
+through the existing settlement vault and funding engine. Slice A ships no
+migration, modifies no `reward_receipts` schema, and supports no participant
+entitlement: no Campaign receipts, no claim reservations, no claim APIs, no
+claim authorization, and no payout claims. Campaign-branch funding-row
+execution is first proven GREEN in Task D1 Phase 1 as the initial consumer
+of the slice-D source migration; slice A proves vault usage, authoritative
+terms, route contracts, delegation to the settlement engine, and readiness.
 
-### Task A1 — Campaign source-column adaptation migration M1
-
-- [ ] Write the failing clean-room assertion first, then migration M1, then
-  make it pass.
-
-**Files**
-
-- Create: `supabase/migrations/20260916000000_v2c3_campaign_source_columns.sql`
-- Create: `src/lib/rewards/v2c3-source-columns.db.test.ts`
-- Modify: `src/types/database.ts` (regenerated)
-
-**Interfaces**
-
-- Consumes: existing `reward_funding_transactions`, `reward_receipts`,
-  `reward_refunds` definitions; `settlement_source_bindings` Campaign branch.
-- Produces: nullable `campaign_id`/`poll_id` compatibility columns governed
-  by `CHECK` constraints enforcing exactly one source branch per row:
-  Poll rows keep `campaign_id IS NOT NULL AND poll_id IS NOT NULL`;
-  Campaign rows use `campaign_id IS NULL AND poll_id IS NULL` with
-  `settlement_id IS NOT NULL`; plus a settlement-scoped uniqueness index
-  `UNIQUE (settlement_id, lower(trim(participant_wallet)))` on
-  `reward_receipts` expressed as a unique expression index, and RLS/grants
-  unchanged (service-role only).
-
-**TDD**
-
-- RED: `npx vitest run src/lib/rewards/v2c3-source-columns.db.test.ts`
-  against the clean-room instance before M1 applies; inserting a Campaign
-  funding intent row with `campaign_id IS NULL` fails on the `NOT NULL`
-  constraint, and the new `CHECK` names are absent from the catalog.
-- Implement: the smallest M1 that (a) runs a preflight aborting when any
-  existing row violates the Poll-branch shape, (b) drops the four `NOT NULL`
-  constraints, (c) adds the branch `CHECK` constraints, (d) adds the
-  settlement-scoped receipt uniqueness index, (e) leaves every existing Poll
-  row byte-identical.
-- GREEN: the same suite passes; all pre-existing Poll rows validate against
-  the new checks; `supabase migration up` from zero on a disposable project
-  applies the full chain including M1.
-- Regression: `npx vitest run src/lib/rewards/settlement-child-compatibility.db.test.ts src/lib/rewards/reservation.db.test.ts src/lib/campaigns/configuration.db.test.ts`
-
-**Commit:** Fold into slice commit `feat(v2c3a): campaign funding and readiness foundation`.
-
-### Task A2 — Standalone Campaign settlement vault provisioning proof
+### Task A1 — Standalone Campaign settlement vault provisioning proof
 
 - [ ] Prove `ensureRewardSettlementVault` provisions exactly one vault with
   `campaign_id IS NULL` for a `participation_campaign` settlement, reusing
@@ -370,11 +341,14 @@ functionality ships in this slice.
 
 **Commit:** Fold into slice commit `feat(v2c3a): campaign funding and readiness foundation`.
 
-### Task A3 — Campaign funding service adapter
+### Task A2 — Campaign funding service adapter
 
 - [ ] Add the server-only Campaign funding adapter that resolves the Campaign
   branch and delegates every money decision to the existing settlement
-  funding engine.
+  funding engine. Slice A proves terms derivation, authorization, vault
+  resolution, and delegation on fixtures that require no schema change;
+  Campaign-branch funding-row execution is proven in Task D1 Phase 1 as the
+  first consumer of migration M2.
 
 **Files**
 
@@ -418,14 +392,20 @@ functionality ships in this slice.
   `resolveCampaignRewardSettlement` addition that satisfies the unit suite.
 - GREEN: `npx vitest run src/lib/campaigns/funding.test.ts`
 - Regression (db): `npx vitest run src/lib/campaigns/funding.db.test.ts`
-  on the clean-room instance covering authoritative amount, funder
-  enforcement, hash replay and cross-ledger safety, underpayment and
-  overpayment accounting, and the finality requirement; plus
-  `npx vitest run src/lib/rewards/funding-confirmation.db.test.ts src/lib/rewards/hash-safety.db.test.ts`
+  on the clean-room instance covering, without writing any Campaign
+  funding row (no schema change exists in slice A): Campaign-branch
+  settlement resolution, authoritative amount derivation, funder
+  enforcement, and vault resolution; plus delegation proof of hash replay
+  and cross-ledger safety, underpayment and overpayment accounting, and
+  the finality requirement through the existing settlement engine on Poll
+  fixtures via `attachPollSettlement`; plus
+  `npx vitest run src/lib/rewards/funding-confirmation.db.test.ts src/lib/rewards/hash-safety.db.test.ts`.
+  Campaign-branch intent to funded execution is proven in Task D1 Phase 1,
+  never here.
 
 **Commit:** Fold into slice commit `feat(v2c3a): campaign funding and readiness foundation`.
 
-### Task A4 — Creator Campaign funding routes
+### Task A3 — Creator Campaign funding routes
 
 - [ ] Expose intent, bind, and confirm funding routes for the Campaign
   branch, mirroring the Poll funding route contracts exactly.
@@ -445,7 +425,7 @@ functionality ships in this slice.
 
 - Consumes: `getVerifiedWalletSession` from `src/lib/api/session.ts`,
   `normalizeAddress`, `isSameOriginRequest` from `src/lib/api/origin.ts`,
-  the three Task A3 functions, `mapFundingIntentResult` from
+  the three Task A2 functions, `mapFundingIntentResult` from
   `src/lib/rewards/funding.ts`.
 - Produces: `FundingIntentResponse` JSON on intent creation (server-derived
   vault, exact Luna total, reference, deadline), `{ settlementId, intentId,
@@ -459,16 +439,20 @@ functionality ships in this slice.
 **TDD**
 
 - RED: `npx vitest run src/app/api/campaigns/[campaignId]/funding/intents/route.test.ts`
-  asserting 401 without session and 403 for a non-owner funder; routes do
-  not exist so the run fails at import.
+  asserting 401 without session, 403 for a non-owner funder, 404 for an
+  unknown Campaign, and contract shapes for intent, bind, and confirm;
+  routes do not exist so the run fails at import.
 - Implement: the three routes with session, origin, and funder checks
-  delegating to Task A3.
-- GREEN: the three route suites pass.
+  delegating to Task A2.
+- GREEN: the three route suites pass on contract and authorization cases
+  that require no Campaign funding-row write. Campaign-branch
+  intent to funded execution through these routes is proven in Task D1
+  Phase 1, never here.
 - Regression: `npx vitest run src/app/api/campaigns/route.test.ts "src/app/api/campaigns/[campaignId]/route.test.ts" "src/app/api/campaigns/[campaignId]/funding-readiness/route.test.ts" src/lib/rewards/funding-confirmation.test.ts`
 
 **Commit:** Fold into slice commit `feat(v2c3a): campaign funding and readiness foundation`.
 
-### Task A5 — Funding-readiness read and creator response model
+### Task A4 — Funding-readiness read and creator response model
 
 - [ ] Extend the creator readiness read so it reports settlement funding
   truth for Campaign settlements, and prove no claim path exists yet.
@@ -507,11 +491,15 @@ functionality ships in this slice.
 ### Slice V2C.3A exit gate
 
 - [ ] A configured `public_giveaway` Campaign provisions one
-  settlement-rooted vault, funds to `funded` through the three new routes
-  with server-observed finality, and readiness reads agree with settlement
-  state for funded drafts and published-but-unfunded Campaigns. No claim,
-  challenge, or receipt-creation path exists. Poll funding suites stay
-  green.
+  settlement-rooted vault, derives authoritative funding terms, exposes the
+  three funding routes with session, funder, and contract checks proven,
+  demonstrates delegation to the settlement funding engine on fixtures that
+  require no schema change, and reports readiness that agrees with
+  settlement state for funded drafts and published-but-unfunded Campaigns.
+  No migration ships. No claim, challenge, receipt, or entitlement path
+  exists. Campaign-branch funding-row execution to `funded` is proven in
+  Task D1 Phase 1 as the first consumer of migration M2. Poll funding
+  suites stay green.
 
 ---
 
@@ -560,8 +548,10 @@ availability. No active Claim NIM action ships in this slice.
 - Implement: the projector with the exact allowlist and state machine.
 - GREEN: unit suite passes; then
   `npx vitest run src/lib/campaigns/public-giveaway.db.test.ts` passes on
-  the clean-room instance proving the remaining count tracks reservations
-  exactly.
+  the clean-room instance proving exact reward and remaining-count reads on
+  funded and unfunded Campaigns with zero reservations (no receipt row can
+  exist before slice D). Live-reservation count tracking is proven in Task
+  D1 Phase 1 and Task D5, never here.
 - Regression: `npx vitest run src/lib/data/public-polls.test.ts src/lib/rewards/settlement-root.test.ts`
 
 **Commit:** Fold into slice commit `feat(v2c3b): public campaign read and share-link surface`.
@@ -670,9 +660,10 @@ availability. No active Claim NIM action ships in this slice.
 **TDD**
 
 - RED: route suite asserting 401 without session, `{ claimed: false }` for
-  a non-claimant, exact own receipt for a claimant fixture, and
-  cross-wallet opacity (wallet A response reveals nothing about wallet B);
-  the route does not exist so the run fails at import.
+  a non-claimant, and cross-wallet opacity (wallet A response reveals
+  nothing about wallet B); the route does not exist so the run fails at
+  import. No claimant fixture can exist before slice D, so the positive
+  exact-own-receipt case is proven in Task E4 after the D backend lands.
 - Implement: the read function plus route.
 - GREEN: the route suite passes on the clean-room instance.
 - Regression: `npx vitest run src/app/api/wallet-proof/session/route.test.ts`
@@ -685,7 +676,7 @@ availability. No active Claim NIM action ships in this slice.
   remaining count, all six derived states present correctly, no claimant
   list or private material is reachable anonymously or as a non-claimant,
   own-status reads are session-scoped, and Poll read suites stay green. No
-  Claim NIM action is wired.
+  Claim NIM action is wired and no claim storage exists.
 
 ---
 
@@ -694,14 +685,14 @@ availability. No active Claim NIM action ships in this slice.
 Goal: secure one-time authorization for an exact Campaign claim. No
 financial reservation ships in this slice.
 
-### Task C1 — Challenge storage migration M2
+### Task C1 — Challenge storage migration M1
 
 - [ ] Create the server-private `campaign_claim_challenges` table with TTL,
   consumption, RLS, and grants.
 
 **Files**
 
-- Create: `supabase/migrations/20260916001000_v2c3_claim_challenges.sql`
+- Create: `supabase/migrations/20260916000000_v2c3_claim_challenges.sql`
 - Create: `src/lib/campaigns/claim-challenge-migration.db.test.ts`
 - Modify: `src/types/database.ts` (regenerated)
 
@@ -726,12 +717,12 @@ financial reservation ships in this slice.
 
 - RED: `npx vitest run src/lib/campaigns/claim-challenge-migration.db.test.ts`
   asserting table presence, constraint presence in the catalog, anon-role
-  insert refusal, and expiry-check enforcement; M2 is absent so catalog
+  insert refusal, and expiry-check enforcement; M1 is absent so catalog
   assertions fail.
-- Implement: the smallest M2 satisfying the assertions.
+- Implement: the smallest M1 satisfying the assertions.
 - GREEN: the suite passes on a clean-room instance migrated from zero;
-  db-reset path (`supabase migration up` from zero) applies M1 and M2 in
-  order.
+  db-reset path (`supabase migration up` from zero) applies M1 on top of
+  the V2C.2 chain.
 - Regression: `npx vitest run src/lib/rewards/settlement-root.db.test.ts`
 
 **Commit:** Fold into slice commit `feat(v2c3c): claim challenge and signature authorization`.
@@ -822,7 +813,7 @@ financial reservation ships in this slice.
   does not exist so the run fails at import.
 - Implement: the smallest route delegating to Tasks C2 and B1.
 - GREEN: the route suite passes on the clean-room instance.
-- Regression: existing campaign route suites from Task A4.
+- Regression: existing campaign route suites from Task A3.
 
 **Commit:** Fold into slice commit `feat(v2c3c): claim challenge and signature authorization`.
 
@@ -874,22 +865,50 @@ financial reservation ships in this slice.
 THIS IS THE CRITICAL BACKEND SLICE. No UI Claim button ships before this
 slice is green.
 
-### Task D1 — Campaign claim RPC migration M3
+### Task D1 — Campaign source migration M2 plus claim RPC migration M3
 
-- [ ] Create `claim_campaign_reward_atomic` with the exact 12-step ordering
-  from spec Section 6, reusing `reward_receipts` as the entitlement row.
+- [ ] Land the Campaign-source compatibility migration first and prove it
+  GREEN, then create `claim_campaign_reward_atomic` with the exact 12-step
+  ordering from spec Section 6, reusing `reward_receipts` as the
+  entitlement row. Phase 2 starts only after Phase 1 is GREEN: the receipt
+  migration and the atomic reservation behavior that consumes it ship in
+  the same reviewed slice.
 
 **Files**
 
+- Create: `supabase/migrations/20260916001000_v2c3_campaign_source_columns.sql`
+  (Phase 1)
+- Create: `src/lib/rewards/v2c3-source-columns.db.test.ts` (Phase 1)
 - Create: `supabase/migrations/20260916002000_v2c3_campaign_claim_rpc.sql`
-- Create: `src/lib/rewards/campaign-claim-rpc.db.test.ts`
-- Modify: `src/types/database.ts` (regenerated; no table change in M3)
+  (Phase 2)
+- Create: `src/lib/rewards/campaign-claim-rpc.db.test.ts` (Phase 2)
+- Modify: `src/types/database.ts` (regenerated once after Phase 1 and again
+  after Phase 2; no table change in M3)
 
 **Interfaces**
 
-- Consumes: `participation_campaigns`, `settlement_source_bindings`
-  (Campaign branch), `reward_settlements`, `reward_receipts`,
-  `campaign_claim_challenges`.
+Phase 1 consumes the existing `reward_funding_transactions`,
+`reward_receipts`, and `reward_refunds` definitions plus the
+`settlement_source_bindings` Campaign branch, and produces nullable
+`campaign_id`/`poll_id` compatibility columns governed by `CHECK`
+constraints enforcing exactly one source identity per row: Poll rows keep
+`campaign_id IS NOT NULL AND poll_id IS NOT NULL`; Campaign rows use
+`campaign_id IS NULL AND poll_id IS NULL` with `settlement_id IS NOT
+NULL`; plus a settlement-scoped receipt uniqueness index
+`UNIQUE (settlement_id, lower(trim(participant_wallet)))` expressed as a
+unique expression index, with RLS and grants unchanged (service-role
+only). This is the impossibility justification the spec requires: the spec
+default (reuse `reward_receipts`, no second table) is literally impossible
+against the shipped Poll-shaped `NOT NULL` FKs, because a standalone
+Campaign row must never fabricate a `reward_campaigns` row or a `polls`
+row, must keep exactly one source identity, must keep settlement-scoped
+uniqueness, and must leave `reward_settlements` as the financial
+authority. The adaptation keeps one ledger and adds a Campaign branch to
+it; no parallel `campaign_claim` financial table is created.
+
+Phase 2 consumes `participation_campaigns`,
+`settlement_source_bindings` (Campaign branch), `reward_settlements`,
+`reward_receipts`, and `campaign_claim_challenges`.
 - Produces: `claim_campaign_reward_atomic(_campaign_id uuid,
   _participant_wallet text, _challenge_id uuid) RETURNS jsonb LANGUAGE
   plpgsql SECURITY DEFINER SET search_path = ''`, executing in order:
@@ -920,14 +939,32 @@ slice is green.
 
 **TDD**
 
-- RED: `npx vitest run src/lib/rewards/campaign-claim-rpc.db.test.ts`
+- RED (Phase 1): `npx vitest run src/lib/rewards/v2c3-source-columns.db.test.ts`
+  against the clean-room instance before M2 applies; inserting a Campaign
+  funding intent row with `campaign_id IS NULL` fails on the `NOT NULL`
+  constraint, and the new `CHECK` names are absent from the catalog.
+- Implement (Phase 1): the smallest M2 that (a) runs a preflight aborting
+  when any existing row violates the Poll-branch shape, (b) drops the four
+  `NOT NULL` constraints, (c) adds the branch `CHECK` constraints, (d) adds
+  the settlement-scoped receipt uniqueness index, (e) leaves every existing
+  Poll row byte-identical.
+- GREEN (Phase 1): the same suite passes; all pre-existing Poll rows
+  validate against the new checks; `supabase migration up` from zero on a
+  disposable project applies the full chain including M1 then M2; the suite
+  additionally proves Campaign-branch funding execution end to end through
+  the Task A2 adapter and Task A3 routes (intent to `funded` with
+  server-observed finality) and Campaign-branch refund-row compatibility,
+  plus Poll regression via
+  `npx vitest run src/lib/rewards/settlement-child-compatibility.db.test.ts src/lib/rewards/reservation.db.test.ts src/lib/campaigns/configuration.db.test.ts`.
+  No Phase 2 work starts until this gate is GREEN.
+- RED (Phase 2): `npx vitest run src/lib/rewards/campaign-claim-rpc.db.test.ts`
   covering the eligibility matrix, replay-before-capacity, creator
   exclusion with case-variant addresses, and `first_reservation_at`
   exactly-once; the RPC does not exist so calls fail with
   `function does not exist`.
-- Implement: the smallest M3 satisfying the suite.
-- GREEN: the suite passes on a clean-room instance migrated from zero
-  (M1–M3 in order).
+- Implement (Phase 2): the smallest M3 satisfying the suite.
+- GREEN (Phase 2): the suite passes on a clean-room instance migrated from
+  zero (M1, M2, M3 in order).
 - Regression: `npx vitest run src/lib/rewards/reservation.db.test.ts src/lib/rewards/settlement-child-compatibility.db.test.ts`
   proving `claim_reward_receipt_atomic` behavior is unchanged.
 
@@ -1135,7 +1172,9 @@ slice is green.
 
 ### Slice V2C.3D exit gate
 
-- [ ] Signed claims atomically produce exactly one durable receipt and hand
+- [ ] Migration M2 and the claim RPC land together: source compatibility is
+  GREEN with Poll behavior preserved before any reservation executes.
+  Signed claims atomically produce exactly one durable receipt and hand
   off to the existing payout engine; duplicate races yield one receipt,
   final-slot races yield one winner, retries replay, creator self-claims
   fail at adapter and RPC layers, close/expiry races resolve cleanly, and
@@ -1282,7 +1321,9 @@ only after the D exit gate is green.
   the receipt, user-rejected signatures recover cleanly, duplicate
   submission returns the same claim with `replayed: true`, reload returns
   own status without re-signing, and claimant A responses contain no data
-  about claimant B.
+  about claimant B. The reload case is the first positive claimant proof
+  for the Task B4 read, deferred from slice B because no claimant fixture
+  can exist before slice D.
 
 **TDD**
 
@@ -1438,7 +1479,7 @@ Goal: complete lifecycle and prove the whole Public Giveaway is coherent.
 
 **Interfaces**
 
-- Consumes: Task A3–A5 functions and routes, Task B1 projector, Task C2
+- Consumes: Task A2–A4 functions and routes, Task B1 projector, Task C2
   challenge library, Task D2–D4 claim path, `executePayout` and
   reconciliation helpers, Task F1 close, Task F2 refund path, real
   `@nimiq/core` keypairs for participant and creator wallets.
@@ -1546,7 +1587,7 @@ line; a failure blocks the commit.
   Campaign settlement (A3, D1, F2 suites).
 - Public claimant leakage: allowlist equality plus anon-role probes (B1,
   B2, F5 gates).
-- Vault leakage: no vault material in any DTO, log, or error (B1, B2, A5,
+- Vault leakage: no vault material in any DTO, log, or error (B1, B2, A4,
   F5 audit).
 - Session leakage: token hashes never leave the server; own-reads scope to
   the session tuple (B4, E4 suites).
@@ -1594,7 +1635,7 @@ NOT run automatically. Real NIM requires human approval before execution.
 - [ ] Verify the exact creator wallet address from the verified session
   against the intended funding wallet.
 - [ ] Fund the smallest safe test amount from the creator wallet through
-  the Task A4 routes; confirm server-observed finality in the readiness
+  the Task A3 routes; confirm server-observed finality in the readiness
   read.
 - [ ] Participant opens the share URL, completes challenge, signs, and
   claims; confirm one receipt and reservation-first copy.
@@ -1628,7 +1669,7 @@ Coverage mapping (spec → plan):
 - Spec §5 challenges → Tasks C1, C2, C3, C4.
 - Spec §6 atomic claim → Tasks D1, D3, D4, D5.
 - Spec §7 entitlement/payout → Tasks D6, B4, E2.
-- Spec §8 funding → Tasks A1, A2, A3, A4, A5.
+- Spec §8 funding → Tasks A1, A2, A3, A4.
 - Spec §9 public reads → Tasks B1, B2, B3, B4.
 - Spec §10 close/refund → Tasks F1, F2, F3.
 - Spec §11 slices → this plan's six slice sections in order.
@@ -1644,10 +1685,10 @@ Issues found and fixed inline:
    `reward_funding_transactions.campaign_id`, and
    `reward_refunds.campaign_id` are `NOT NULL` FKs at the current HEAD, so
    spec-compliant reuse is impossible without adaptation. Fixed by adding
-   Task A1 migration M1 with the impossibility justification the spec
+   Task D1 migration M2 with the impossibility justification the spec
    requires, instead of inventing a parallel claim table.
 2. An early draft resolved Campaign funding through Poll-shaped route
-   helpers. Fixed by giving Tasks A3–A4 dedicated Campaign resolution
+   helpers. Fixed by giving Tasks A2–A3 dedicated Campaign resolution
    (`resolveCampaignRewardSettlement`) that joins only the Campaign binding
    branch.
 3. An early draft verified the claim signature inside the reservation RPC.
@@ -1655,11 +1696,21 @@ Issues found and fixed inline:
    pre-mutation) from consumption (M3, same commit as reservation).
 4. An early draft exposed the remaining count from a cached projector
    field. Fixed by requiring `loadRewardSettlementContext` derivation on
-   every read in Task B1 with a db test tracking live reservations.
+   every read in Task B1; slice B proves exact reads with zero
+   reservations, and live-reservation tracking is proven in Task D1
+   Phase 1 and Task D5.
 5. An early draft let slice E start alongside slice D. Fixed by making the
    D exit gate an explicit predecessor of every E task.
 6. Migration numbering collided with a draft reuse of `20260913` prefixes.
-   Fixed with the `20260916` sequence M1–M4 after the shipped maximum.
+   Fixed with the `20260916` sequence M1–M4 after the shipped maximum,
+   ordered by slice execution: M1 challenges in slice C, M2 source
+   columns plus M3 claim RPC together in slice D, M4 close and refund in
+   slice F. Slice A ships no migration.
+8. Sequencing correction: the Campaign-source receipt migration first
+   drafted in slice A moved to Task D1 Phase 1 so the migration and the
+   atomic reservation behavior that consumes it ship in the same reviewed
+   slice; slice A keeps vault usage, funding terms, route contracts,
+   delegation proof, and readiness with no receipt or entitlement schema.
 7. Placeholder scan: no unfinished-marker abbreviations, no deferred-work
    phrases, no vague-delegation phrasing, and no generic test/validation
    filler appear anywhere in task instructions; every task names exact files, exact function and RPC
@@ -1671,7 +1722,7 @@ Issues found and fixed inline:
 ## Execution Order and Commit List
 
 - [ ] V2C.3A → `feat(v2c3a): campaign funding and readiness foundation`
-  (Tasks A1–A5)
+  (Tasks A1–A4)
 - [ ] V2C.3B → `feat(v2c3b): public campaign read and share-link surface`
   (Tasks B1–B4)
 - [ ] V2C.3C → `feat(v2c3c): claim challenge and signature authorization`
