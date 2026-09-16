@@ -79,7 +79,15 @@ every task. Any task that conflicts with one of them is wrong and must stop.
 26. No Secret Drop, Private Drop, Event Drop, or Community Reward strategy is
     implemented.
 27. No generalized eligibility framework spanning Campaign types is created.
-28. No real NIM moves during implementation until the separately approved
+28. One shared funding engine serves Poll and Campaign: the funding RPCs
+    `begin_reward_funding_atomic`, `bind_reward_funding_transaction_atomic`,
+    and `confirm_reward_funding_atomic` use canonical `_settlement_id`
+    identity after the D1 cutover, with no product-specific fork, legacy
+    overload, or compatibility wrapper.
+29. Shared financial RPCs emit source-neutral errors only; Poll and Campaign
+    compatibility wording is translated at the adapter and service
+    boundaries, never inside the engine.
+30. No real NIM moves during implementation until the separately approved
     physical QA in the final section of this plan, which itself requires
     explicit human approval before execution.
 
@@ -275,7 +283,18 @@ no migration. New migrations:
   Phase 1): adapts `reward_funding_transactions.campaign_id`,
   `reward_receipts.campaign_id`, `reward_receipts.poll_id`, and
   `reward_refunds.campaign_id` from `NOT NULL` to nullable with
-  exactly-one-source check constraints and settlement-scoped uniqueness.
+  exactly-one-source check constraints and settlement-scoped uniqueness,
+  AND cuts the three shared funding RPCs to the settlement-canonical
+  contract: drops and recreates `begin_reward_funding_atomic`,
+  `bind_reward_funding_transaction_atomic`, and
+  `confirm_reward_funding_atomic` with the same names and argument TYPE
+  signatures under the new `_settlement_id` first-argument name, generic
+  settlement-to-binding source resolution for both the Poll and Campaign
+  branches, settlement-derived economics, Campaign funding rows written
+  with `campaign_id IS NULL`, and identical `SECURITY DEFINER`,
+  `search_path`, volatility, grants, and ownership. No legacy overload,
+  compatibility wrapper, or second Poll-shaped contract survives, and no
+  `begin/bind/confirm_campaign_funding_atomic` fork is created.
   Justification recorded in Task D1: the spec default (reuse
   `reward_receipts`, no second table) is literally impossible against the
   shipped Poll-shaped `NOT NULL` FKs, because a standalone Campaign row must
@@ -358,11 +377,13 @@ terms, route contracts, delegation to the settlement engine, and readiness.
 
 **Interfaces**
 
-- Consumes: `resolveCampaignRewardSettlement` (added in this task to
-  `src/lib/rewards/settlement-root.ts`, mirroring
+- Consumes: `resolveCampaignRewardSettlement` (as built in slice A in
+  `src/lib/campaigns/settlement.ts`, mirroring
   `resolvePollRewardSettlement` but joining the
   `participation_campaign` binding branch and returning `{ kind: "ok";
-  settlementId: string; ownerWallet: string }`),
+  settlementId: string; ownerWallet: string }`; the shared
+  `src/lib/rewards/settlement-root.ts` stays Poll-pure per the V2C.1
+  compatibility gate),
   `loadRewardSettlementContext` from `src/lib/rewards/settlement.ts`,
   `SettlementVaultPublic` via `getRewardSettlementVault`,
   `createNimiqTransactionObservationAdapter` from
@@ -877,8 +898,26 @@ slice is green.
 **Files**
 
 - Create: `supabase/migrations/20260916001000_v2c3_campaign_source_columns.sql`
-  (Phase 1)
-- Create: `src/lib/rewards/v2c3-source-columns.db.test.ts` (Phase 1)
+  (Phase 1: nullable compatibility columns AND shared funding RPC contract
+  cutover)
+- Create: `src/lib/rewards/v2c3-source-columns.db.test.ts` (Phase 1:
+  column/check/index assertions, funding contract and static audits,
+  Campaign funding execution, Poll funding regression)
+- Modify (Phase 1, same slice): `src/lib/rewards/settlement.ts`
+  (`beginFunding`/`bindFunding` RPC args `_campaign_id` to `_settlement_id`
+  plus Poll-vocabulary translation of the renamed generic results),
+  `src/lib/rewards/funding-confirmation.ts` (`confirmAtomic` RPC arg
+  `_campaign_id` to `_settlement_id`),
+  `src/app/api/polls/[pollId]/reward/funding/intents/[intentId]/confirm/route.ts`
+  (Poll publicity pre-check mirroring the intent and bind routes, since the
+  shared engine no longer emits Poll wording),
+  `src/lib/rewards/settlement.test.ts` (RPC arg assertions
+  `_campaign_id` to `_settlement_id`),
+  `src/lib/campaigns/funding.test.ts` (RPC arg assertions
+  `_campaign_id` to `_settlement_id`; asserted values unchanged),
+  `src/lib/rewards/funding-confirmation.db.test.ts` (direct
+  `confirm_reward_funding_atomic` invocation arg `_campaign_id` to
+  `_settlement_id`)
 - Create: `supabase/migrations/20260916002000_v2c3_campaign_claim_rpc.sql`
   (Phase 2)
 - Create: `src/lib/rewards/campaign-claim-rpc.db.test.ts` (Phase 2)
@@ -889,22 +928,77 @@ slice is green.
 
 Phase 1 consumes the existing `reward_funding_transactions`,
 `reward_receipts`, and `reward_refunds` definitions plus the
-`settlement_source_bindings` Campaign branch, and produces nullable
-`campaign_id`/`poll_id` compatibility columns governed by `CHECK`
-constraints enforcing exactly one source identity per row: Poll rows keep
-`campaign_id IS NOT NULL AND poll_id IS NOT NULL`; Campaign rows use
-`campaign_id IS NULL AND poll_id IS NULL` with `settlement_id IS NOT
-NULL`; plus a settlement-scoped receipt uniqueness index
-`UNIQUE (settlement_id, lower(trim(participant_wallet)))` expressed as a
-unique expression index, with RLS and grants unchanged (service-role
-only). This is the impossibility justification the spec requires: the spec
+`settlement_source_bindings` Campaign branch, the three Poll-shaped funding
+RPC definitions in
+`supabase/migrations/20260913085000_v2c2_financial_root_cutover.sql`, and
+their exact TypeScript callers: `src/lib/rewards/settlement.ts`
+(`beginFunding` calling `begin_reward_funding_atomic` with `_campaign_id`,
+`bindFunding` calling `bind_reward_funding_transaction_atomic` with
+`_campaign_id`) and `src/lib/rewards/funding-confirmation.ts`
+(`confirmAtomic` calling `confirm_reward_funding_atomic` with
+`_campaign_id`). No SQL-internal callers exist; all invocations use named
+arguments through these three call sites.
+- Produces (schema): nullable `campaign_id`/`poll_id` compatibility columns
+  governed by `CHECK` constraints enforcing exactly one source identity per
+  row: Poll rows keep `campaign_id IS NOT NULL AND poll_id IS NOT NULL`;
+  Campaign rows use `campaign_id IS NULL AND poll_id IS NULL` with
+  `settlement_id IS NOT NULL`; plus a settlement-scoped receipt uniqueness
+  index `UNIQUE (settlement_id, lower(trim(participant_wallet)))` expressed
+  as a unique expression index, with RLS and grants unchanged (service-role
+  only). No `participation_campaign_id` column is added to any financial
+  table.
+- Produces (contract cutover): the same three RPC names with identical
+  argument TYPE signatures under the canonical `_settlement_id` first
+  argument, via explicit `DROP FUNCTION` plus `CREATE FUNCTION` in M2 (never
+  `CREATE OR REPLACE` alone, never an overload, never a wrapper). Generic
+  resolution inside each RPC: `_settlement_id` locks `reward_settlements`,
+  resolves `settlement_source_bindings` to exactly one owning product
+  source, then follows branch A (Poll: `source_type =
+  'poll_reward_campaign'` with the historical `reward_campaigns`
+  compatibility row, used for ownership and product compatibility checks
+  only) or branch B (Campaign: `source_type = 'participation_campaign'`
+  with `participation_campaigns` present and no `reward_campaigns` row
+  created or fabricated). All economics and lifecycle state load from the
+  locked settlement row. Funding-row inserts carry the Poll adapter UUID in
+  `campaign_id` on branch A and `NULL` on branch B; `settlement_id` is
+  authoritative for both. `SECURITY DEFINER`, `search_path`, volatility,
+  ownership, `REVOKE ALL FROM PUBLIC, anon, authenticated`, and `GRANT
+  EXECUTE TO service_role` are restored exactly.
+- Produces (generic errors): the funding RPCs emit only `created`,
+  `replay`, `bound`, `bound_replay`, `confirmed`, `settlement_not_found`,
+  `source_not_supported`, `funding_not_allowed`, `funding_conflict`,
+  `transaction_already_reserved`, and the unchanged neutral intent, hash,
+  amount, terms, and vault codes. Poll-shaped codes are never emitted by
+  the engine.
+- Produces (Poll translation, outside the engine): `src/lib/rewards/settlement.ts`
+  result parsers map `settlement_not_found` and `source_not_supported` to
+  `campaign_not_found`, `funding_not_allowed` to `forbidden`, and
+  `funding_conflict` to `campaign_state_conflict`, so every existing Poll
+  route, response shape, and status code is byte-identical; the same mapping
+  applies anywhere these codes surface on the confirm path
+  (`reconcileFundingIntent` in `src/lib/rewards/funding-confirmation.ts`),
+  keeping `confirm_reward_funding_atomic` callers on the existing Poll
+  vocabulary. Poll publicity
+  gating stays at the Poll route and adapter pre-checks: the intent and
+  bind routes already check `is_public`, and the confirm route gains the
+  same pre-check in this slice (aligning its private-poll outcome with the
+  existing `private_poll_not_rewardable` 422 instead of an engine 500).
+  Campaign translation lives in `src/lib/campaigns/funding.ts`:
+  `settlement_not_found` and `source_not_supported` to `campaign_not_found`,
+  `funding_not_allowed` to `forbidden`, `funding_conflict` to
+  `campaign_state_conflict`, matching the already-shipped A3 route mapping.
+- Produces (regenerated types): `src/types/database.ts` Functions entries
+  for the three RPCs with `_settlement_id: string` first args; all other
+  entries unchanged.
+This is the impossibility justification the spec requires: the spec
 default (reuse `reward_receipts`, no second table) is literally impossible
 against the shipped Poll-shaped `NOT NULL` FKs, because a standalone
 Campaign row must never fabricate a `reward_campaigns` row or a `polls`
 row, must keep exactly one source identity, must keep settlement-scoped
 uniqueness, and must leave `reward_settlements` as the financial
 authority. The adaptation keeps one ledger and adds a Campaign branch to
-it; no parallel `campaign_claim` financial table is created.
+it; no parallel `campaign_claim` financial table and no
+`begin/bind/confirm_campaign_funding_atomic` fork is created.
 
 Phase 2 consumes `participation_campaigns`,
 `settlement_source_bindings` (Campaign branch), `reward_settlements`,
@@ -940,22 +1034,64 @@ Phase 2 consumes `participation_campaigns`,
 **TDD**
 
 - RED (Phase 1): `npx vitest run src/lib/rewards/v2c3-source-columns.db.test.ts`
-  against the clean-room instance before M2 applies; inserting a Campaign
-  funding intent row with `campaign_id IS NULL` fails on the `NOT NULL`
-  constraint, and the new `CHECK` names are absent from the catalog.
-- Implement (Phase 1): the smallest M2 that (a) runs a preflight aborting
-  when any existing row violates the Poll-branch shape, (b) drops the four
-  `NOT NULL` constraints, (c) adds the branch `CHECK` constraints, (d) adds
-  the settlement-scoped receipt uniqueness index, (e) leaves every existing
-  Poll row byte-identical.
+  against the clean-room instance before M2 applies, proving (a) inserting
+  a Campaign funding intent row with `campaign_id IS NULL` fails on the
+  `NOT NULL` constraint, (b) the new `CHECK` names are absent from the
+  catalog, and (c) calling any of the three funding RPCs with a standalone
+  Campaign settlement returns `campaign_not_found` from the Poll-only
+  source path. All three RED conditions must be recorded before M2.
+- Implement (Phase 1) in the mandated order:
+  1. Apply the M2 schema and source compatibility: preflight aborting when
+     any existing row violates the Poll-branch shape, drop the four
+     `NOT NULL` constraints, add the branch `CHECK` constraints, add the
+     settlement-scoped receipt uniqueness index, leave every existing Poll
+     row byte-identical.
+  2. Cut the shared funding RPC contract: `DROP FUNCTION` plus `CREATE
+     FUNCTION` for `begin_reward_funding_atomic`,
+     `bind_reward_funding_transaction_atomic`, and
+     `confirm_reward_funding_atomic` with identical argument TYPE
+     signatures under `_settlement_id`, generic settlement-to-binding
+     resolution for both branches, settlement-derived economics,
+     branch-A `campaign_id` compatibility writes and branch-B `NULL`
+     writes, source-neutral error vocabulary, and identical security,
+     volatility, grants, and ownership. No overload, wrapper, or
+     `begin/bind/confirm_campaign_funding_atomic` fork.
+  3. Update every server-side caller atomically in the same slice:
+     `src/lib/rewards/settlement.ts` (`beginFunding`, `bindFunding`),
+     `src/lib/rewards/funding-confirmation.ts` (`confirmAtomic`), plus the
+     Poll publicity pre-check on the confirm route and the Poll-vocabulary
+     translation in the settlement result parsers.
+  4. Update the asserting tests to the new contract:
+     `src/lib/rewards/settlement.test.ts`, `src/lib/campaigns/funding.test.ts`,
+     and `src/lib/rewards/funding-confirmation.db.test.ts` expect
+     `_settlement_id` keys with unchanged values.
+  5. Regenerate `src/types/database.ts` and verify the three Functions
+     entries carry `_settlement_id: string` first args.
 - GREEN (Phase 1): the same suite passes; all pre-existing Poll rows
   validate against the new checks; `supabase migration up` from zero on a
   disposable project applies the full chain including M1 then M2; the suite
   additionally proves Campaign-branch funding execution end to end through
-  the Task A2 adapter and Task A3 routes (intent to `funded` with
-  server-observed finality) and Campaign-branch refund-row compatibility,
-  plus Poll regression via
-  `npx vitest run src/lib/rewards/settlement-child-compatibility.db.test.ts src/lib/rewards/reservation.db.test.ts src/lib/campaigns/configuration.db.test.ts`.
+  the Task A2 adapter and Task A3 routes: standalone Campaign settlement
+  begins funding with no `reward_campaigns` row required, the funding row
+  carries the correct `settlement_id` with `campaign_id IS NULL`,
+  replay returns the same intent, the designated creator funder is
+  enforced, vault and exact amount are server-derived, bind succeeds, hash
+  reuse across settlements is rejected, confirmation covers underpayment
+  rejection and overpayment accounting with macro finality, and the
+  settlement reaches reward-ready; plus Campaign-branch refund-row
+  compatibility, plus Poll regression (Poll funding begins with the
+  compatibility `campaign_id` retained and `settlement_id` authoritative,
+  existing route and service response behavior unchanged, legacy error
+  vocabulary preserved at the Poll boundary, and
+  `npx vitest run src/lib/rewards/settlement-child-compatibility.db.test.ts src/lib/rewards/reservation.db.test.ts src/lib/campaigns/configuration.db.test.ts`
+  green), plus static audits from the catalog: generated RPC args use
+  `_settlement_id` for all three funding RPCs, zero `_campaign_id`
+  invocations remain for these RPCs in `src/` and in `pg_proc` argument
+  names, zero `begin/bind/confirm_campaign_funding_atomic` functions
+  exist, zero `participation_campaign_id` columns exist on
+  `reward_funding_transactions`, zero financial writes target
+  `reward_campaigns` (the existing `financial-authority-cutover` and
+  `settlement-root` authority audits stay green).
   No Phase 2 work starts until this gate is GREEN.
 - RED (Phase 2): `npx vitest run src/lib/rewards/campaign-claim-rpc.db.test.ts`
   covering the eligibility matrix, replay-before-capacity, creator
@@ -1174,7 +1310,12 @@ Phase 2 consumes `participation_campaigns`,
 
 - [ ] Migration M2 and the claim RPC land together: source compatibility is
   GREEN with Poll behavior preserved before any reservation executes.
-  Signed claims atomically produce exactly one durable receipt and hand
+  The shared funding contract cutover is complete: one `_settlement_id`
+  contract per operation with no surviving overload or fork, Poll funding
+  behavior identical at its boundary including legacy vocabulary,
+  Campaign-branch funding execution GREEN with `campaign_id IS NULL` rows,
+  and static audits GREEN. Signed claims atomically produce exactly one
+  durable receipt and hand
   off to the existing payout engine; duplicate races yield one receipt,
   final-slot races yield one winner, retries replay, creator self-claims
   fail at adapter and RPC layers, close/expiry races resolve cleanly, and
@@ -1523,7 +1664,10 @@ Goal: complete lifecycle and prove the whole Public Giveaway is coherent.
   option economic isolation, one wallet one vote, receipt and payout
   behavior, public Poll response shapes via `vote-test.ts`,
   `v2b1-backward-test.ts`, `v2b2-config-test.ts`,
-  `v2b2-funding-test.ts`), clean migration from zero plus db-reset path,
+  `v2b2-funding-test.ts`), funding contract singularity re-audit
+  (`_settlement_id` args, zero overloads or forks, zero
+  `participation_campaign_id` funding columns, legacy Poll vocabulary at
+  the boundary), clean migration from zero plus db-reset path,
   schema parity (`src/types/database.ts` matches the migrated clean-room
   catalog), RLS and privacy probes (anon plus authenticated roles read no
   private row and no claimant list exists on any public surface),
@@ -1596,6 +1740,13 @@ line; a failure blocks the commit.
   suites).
 - Client-supplied refund destination: no such parameter exists; audit by
   signature search (F2, F3, F5 gates).
+- Funding contract singularity: exactly one callable funding RPC per
+  operation with `_settlement_id` first args, zero `_campaign_id`
+  invocations for `begin/bind/confirm_reward_funding_atomic` in `src/`
+  and `pg_proc`, zero `begin/bind/confirm_campaign_funding_atomic`
+  functions, zero `participation_campaign_id` columns on funding rows, and
+  no `UPDATE public.reward_campaigns` in any funding RPC body (D1 suite
+  plus existing authority audits).
 
 ---
 
@@ -1612,12 +1763,24 @@ before its slice commit:
 - `npx tsx src/lib/api/vote-test.ts`, `npx tsx src/lib/api/v2b1-backward-test.ts`,
   `npx tsx src/lib/api/v2b2-config-test.ts`,
   `npx tsx src/lib/api/v2b2-funding-test.ts` where local services allow.
+- Every slice touching funding code additionally runs
+  `src/lib/rewards/settlement.test.ts`,
+  `src/lib/campaigns/funding.test.ts` (from slice D1 on),
+  `src/lib/rewards/funding-confirmation.test.ts`,
+  `src/lib/rewards/funding-confirmation.db.test.ts`, and
+  `src/lib/rewards/financial-authority-cutover.db.test.ts`, and proves the
+  Poll funding routes keep exact request, response, and legacy error
+  vocabulary at the boundary (including the confirm-route publicity
+  alignment from D1 on).
 - Invariants held: free Poll behavior unchanged, legacy_support behavior
   unchanged, rewarded reward_first automatic Claim-free payout unchanged,
   creator votes stay valid votes without rewards, selected-option data never
   enters settlement/receipt/payout/refund/proof/Campaign contracts, one
   wallet one vote preserved, receipt and payout behavior identical, public
-  Poll response shapes identical.
+  Poll response shapes identical, and Poll funding behavior (begin,
+  replay, bind, hash guards, confirmation, finality, response shapes,
+  legacy error codes) is identical before and after the D1 contract
+  cutover.
 
 ---
 
@@ -1669,7 +1832,10 @@ Coverage mapping (spec → plan):
 - Spec §5 challenges → Tasks C1, C2, C3, C4.
 - Spec §6 atomic claim → Tasks D1, D3, D4, D5.
 - Spec §7 entitlement/payout → Tasks D6, B4, E2.
-- Spec §8 funding → Tasks A1, A2, A3, A4.
+- Spec §8 funding → Tasks A1, A2, A3, A4 (resolution, terms, routes,
+  readiness; execution deferred) plus Task D1 Phase 1 (shared funding RPC
+  contract cutover, generic source resolution, Campaign execution, Poll
+  translation, static audits).
 - Spec §9 public reads → Tasks B1, B2, B3, B4.
 - Spec §10 close/refund → Tasks F1, F2, F3.
 - Spec §11 slices → this plan's six slice sections in order.
@@ -1711,6 +1877,17 @@ Issues found and fixed inline:
    atomic reservation behavior that consumes it ship in the same reviewed
    slice; slice A keeps vault usage, funding terms, route contracts,
    delegation proof, and readiness with no receipt or entitlement schema.
+9. Shared funding RPC generalization: one `_settlement_id`-canonical
+   contract per funding operation with generic Poll/Campaign source
+   resolution inside M2, Poll-vocabulary translation in
+   `src/lib/rewards/settlement.ts` parsers and the Poll confirm-route
+   publicity pre-check, Campaign translation in
+   `src/lib/campaigns/funding.ts`, regenerated DB types, catalog static
+   audits, and no surviving overload, wrapper, or
+   `begin/bind/confirm_campaign_funding_atomic` fork. The as-built slice-A
+   resolver location (`src/lib/campaigns/settlement.ts`, keeping the
+   shared root Poll-pure per the V2C.1 gate) is recorded in the A2
+   interfaces.
 7. Placeholder scan: no unfinished-marker abbreviations, no deferred-work
    phrases, no vague-delegation phrasing, and no generic test/validation
    filler appear anywhere in task instructions; every task names exact files, exact function and RPC

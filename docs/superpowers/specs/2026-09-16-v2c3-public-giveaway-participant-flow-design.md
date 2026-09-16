@@ -115,8 +115,10 @@ Ownership boundary:
 
 | Layer | Owns | Does not own |
 |---|---|---|
-| Public Giveaway adapter | Eligibility evaluation, claim authorization (challenge issue/verify), claim intent construction, source-to-settlement binding resolution, public/own-wallet read models | Capacity, financial state, funding confirmation, receipt creation authority, payout signing, reconciliation, finality, closure/refund math |
-| `reward_settlements` engine (existing) | Capacity, financial state, funding lifecycle, receipt entitlement creation, payout preparation/signing/broadcast, reconciliation and finality, closure freeze, refund preparation/confirmation | Campaign product metadata, claim challenge contents, share-link presentation |
+| Public Giveaway adapter | Eligibility evaluation, claim authorization (challenge issue/verify), claim intent construction, source-to-settlement binding resolution, public/own-wallet read models, Campaign-side translation of generic financial results | Capacity, financial state, funding confirmation, receipt creation authority, payout signing, reconciliation, finality, closure/refund math |
+| `reward_settlements` engine (existing) | Capacity, financial state, funding lifecycle, receipt entitlement creation, payout preparation/signing/broadcast, reconciliation and finality, closure freeze, refund preparation/confirmation | Campaign product metadata, claim challenge contents, share-link presentation, product-specific error wording |
+| Shared funding RPCs (`begin_reward_funding_atomic`, `bind_reward_funding_transaction_atomic`, `confirm_reward_funding_atomic`) | One settlement-canonical contract for Poll and Campaign: generic source resolution, settlement economics, hash guards, finality | Product-specific error wording, Poll-shaped argument names, Poll/Campaign RPC forks, a second funding ledger |
+| Poll compatibility boundary (adapter, service parsers, routes) | Poll-side translation of generic financial results back into the existing Poll route/API vocabulary; Poll publicity pre-checks | Financial authority, settlement economics, vault custody |
 | `participation_campaigns` row | Product metadata, type literal, title/description, visibility, window, product status, configuration freeze markers | Balances, counters, vault material, receipts, hashes, refund math |
 | `settlement_source_bindings` row | Narrow source-to-root relationship for the Campaign branch | Terms, balances, secrets, allowlists, proofs |
 
@@ -142,6 +144,12 @@ V2C.3 preserves every V2C.2 invariant:
 - `reward_settlements` is the sole mutable financial authority after the
   V2C.2E cutover. All funding, reservation, payout, reconciliation, closure,
   and refund writes resolve through the settlement row under lock.
+- Settlement ID is the canonical RPC identity for funding. The three shared
+  funding RPCs (`begin_reward_funding_atomic`,
+  `bind_reward_funding_transaction_atomic`, `confirm_reward_funding_atomic`)
+  serve Poll and Campaign through one contract whose first UUID argument is
+  `_settlement_id`. There is no product-specific funding RPC fork and no
+  surviving Poll-shaped overload after the D1 cutover.
 - `settlement_id` is the vault authority. Vault lookup, signing context, and
   AAD resolution use `reward_campaign_vaults.settlement_id`. The AAD byte
   format `UTF-8("votum:reward-vault:v1" + NUL + <settlement UUID text> + NUL +
@@ -165,6 +173,15 @@ V2C.3 preserves every V2C.2 invariant:
 - **Campaign-specific payout engine:** rejected. It would duplicate signing,
   broadcast markers, hash-reuse guards, retry bounds, finality policy, and
   vault-lease serialization.
+- **Campaign-specific funding RPCs** (`begin_campaign_funding_atomic`,
+  `bind_campaign_funding_transaction_atomic`,
+  `confirm_campaign_funding_atomic`): rejected. Polls and Campaigns share
+  one funding engine; forking it would split hash-reuse guards, finality
+  policy, and confirmation accounting across two money paths.
+- **Legacy Poll-shaped funding RPC overloads:** rejected. After the D1
+  cutover there is exactly one callable funding contract per operation;
+  no `_campaign_id` overload, compatibility wrapper, or second Poll-shaped
+  entry point survives.
 - **Second financial ledger or Campaign financial-claim table:** rejected as
   the default. `reward_receipts` is the durable entitlement (Section 7). A new
   table is permitted only if a repo constraint makes reuse literally
@@ -523,6 +540,65 @@ creator connects wallet (verified session, owner wallet)
   confirmation/finality progress from server reads. It never advances the
   Campaign to funded on the basis of a wallet callback alone.
 
+### 8.3 Shared settlement funding contract (D1 cutover)
+
+One funding engine serves Polls and participation Campaigns. The three
+shared RPCs keep their names:
+
+- `begin_reward_funding_atomic`
+- `bind_reward_funding_transaction_atomic`
+- `confirm_reward_funding_atomic`
+
+Their canonical first UUID argument is `_settlement_id`, not the Poll-shaped
+`_campaign_id`. Because Supabase RPC invocation uses named arguments, D1
+performs a single atomic contract cutover: the old internal definitions are
+dropped and recreated with the same names and argument TYPE signatures under
+the new argument name, with `SECURITY DEFINER`, `search_path`, volatility,
+grants, and ownership preserved. Every server-side Poll and Campaign caller
+moves in the same reviewed slice. No legacy overload, compatibility wrapper,
+or second callable Poll-shaped contract survives.
+
+Inside the RPCs, `_settlement_id` resolves through `reward_settlements` to
+`settlement_source_bindings` and exactly one owning product source:
+
+- Branch A (Poll): `source_type = 'poll_reward_campaign'` with the
+  historical `reward_campaigns` compatibility row present.
+- Branch B (Campaign): `source_type = 'participation_campaign'` with
+  `participation_campaigns` present and no `reward_campaigns` row created
+  or fabricated.
+
+Source identity serves ownership and product compatibility checks only. All
+funding economics and lifecycle state come from `reward_settlements`.
+
+Funding-row authority follows the settlement:
+
+- Poll row: `settlement_id` is the Poll settlement UUID and `campaign_id`
+  carries the historical `reward_campaigns` UUID.
+- Campaign row: `settlement_id` is the Campaign settlement UUID and
+  `campaign_id` is `NULL`.
+
+`settlement_id` is authoritative for both. `campaign_id` is nullable Poll
+compatibility metadata only. No `participation_campaign_id` column is added
+to `reward_funding_transactions`; product ownership resolves through the
+funding row to the settlement to the source binding, never through a
+duplicated product FK in the financial ledger.
+
+The generic funding layer emits source-neutral financial errors only. The
+canonical vocabulary is `created`, `replay`, `bound`, `bound_replay`,
+`confirmed`, `settlement_not_found`, `source_not_supported`,
+`funding_not_allowed`, `funding_conflict`, `transaction_already_reserved`,
+plus the unchanged neutral intent, hash, amount, terms, and vault codes
+(`intent_not_found`, `intent_unbound`, `intent_already_bound`,
+`intent_state_conflict`, `invalid_hash`, `invalid_amount`, `hash_mismatch`,
+`funding_terms_mismatch`, `funding_amount_unsafe`, `amount_underpaid`,
+`vault_missing`). Poll-shaped codes (`campaign_not_found`,
+`poll_not_public`, `forbidden`, `campaign_state_conflict`) are never emitted
+by the shared engine; the Poll adapter and service boundary translates
+generic results back into the existing Poll route and API vocabulary, and
+the Campaign adapter translates them into Campaign route vocabulary.
+Poll publicity gating lives at the Poll route and adapter pre-checks, not
+inside the financial engine.
+
 ---
 
 ## 9. Public Page / Safe Reads
@@ -648,6 +724,13 @@ backend (V2C.3D).
 
 ### V2C.3A — Public Giveaway funding and readiness foundation
 
+Slice A provides Campaign settlement resolution, authoritative funding
+terms, vault resolution, owner authorization, funding route contracts, and
+reward-readiness derivation. It intentionally cannot execute standalone
+Campaign funding child-row mutation: that requires the D1 Phase 1 shared
+financial-source compatibility (Section 8.3). No implementation moves back
+into A.
+
 - Campaign-branch funding intent, bind, and confirm paths adapted from the
   settlement engine: server-derived amount/vault/reference/network,
   hash-uniqueness guards, observation and finality confirmation.
@@ -685,6 +768,19 @@ backend (V2C.3D).
   Campaign and wallet.
 
 ### V2C.3D — Atomic eligibility, reservation, and payout adapter
+
+Phase 1 (shared financial-source compatibility) lands first and must be
+GREEN before Phase 2:
+
+- Shared funding RPC contract cutover per Section 8.3: `_settlement_id`
+  canonical identity, generic source resolution for both branches,
+  settlement-authoritative funding rows, source-neutral errors, Poll
+  compatibility translation outside the engine, no surviving overload.
+- Campaign-branch funding execution proven end to end (begin, replay,
+  bind, confirm, finality) with `campaign_id IS NULL` rows; Poll funding
+  behavior identical at its boundary.
+
+Phase 2 (atomic participant claim) only then implements:
 
 - The Section 6 authoritative claim transaction: binding resolution, ordered
   locks, challenge recheck, existing-receipt replay before capacity,
@@ -859,6 +955,10 @@ V2C.3 changes no Poll behavior:
 - Existing receipt, funding, payout, and refund IDs, hashes, and public
   response aliases remain stable. Settlement-rooted reads for Polls resolve
   through the Poll binding branch and never through a Campaign row.
+- Poll funding routes and services keep their exact request, response, and
+  error vocabulary; the shared engine's source-neutral results are
+  translated at the Poll boundary, and Poll publicity gating stays at the
+  Poll route and adapter pre-checks.
 
 ---
 
@@ -913,6 +1013,14 @@ document:
     3.2 and referenced by every dependent section. The conceptual challenge
     table name is marked conceptual so it cannot collide with the shipped
     V2C.2 schema.
+11. **Shared funding contract fixed:** one funding engine serves Poll and
+    Campaign under `_settlement_id` canonical identity (Section 8.3), with
+    no `begin/bind/confirm_campaign_funding_atomic` fork and no surviving
+    Poll-shaped overload. Funding rows carry `settlement_id` authority with
+    `campaign_id` as nullable Poll metadata and no
+    `participation_campaign_id` column. Generic errors stay inside the
+    engine; Poll and Campaign wording is translated at the adapter and
+    service boundaries.
 
 ---
 
