@@ -115,10 +115,11 @@ Ownership boundary:
 
 | Layer | Owns | Does not own |
 |---|---|---|
-| Public Giveaway adapter | Eligibility evaluation, claim authorization (challenge issue/verify), claim intent construction, source-to-settlement binding resolution, public/own-wallet read models, Campaign-side translation of generic financial results | Capacity, financial state, funding confirmation, receipt creation authority, payout signing, reconciliation, finality, closure/refund math |
+| Public Giveaway adapter | Eligibility evaluation, claim authorization (challenge issue/verify), claim intent construction, source-to-settlement binding resolution, public/own-wallet read models | Capacity, financial state, funding confirmation, receipt creation authority, payout signing, reconciliation, finality, closure/refund math |
 | `reward_settlements` engine (existing) | Capacity, financial state, funding lifecycle, receipt entitlement creation, payout preparation/signing/broadcast, reconciliation and finality, closure freeze, refund preparation/confirmation | Campaign product metadata, claim challenge contents, share-link presentation, product-specific error wording |
 | Shared funding RPCs (`begin_reward_funding_atomic`, `bind_reward_funding_transaction_atomic`, `confirm_reward_funding_atomic`) | One settlement-canonical contract for Poll and Campaign: generic source resolution, settlement economics, hash guards, finality | Product-specific error wording, Poll-shaped argument names, Poll/Campaign RPC forks, a second funding ledger |
 | Poll compatibility boundary (adapter, service parsers, routes) | Poll-side translation of generic financial results back into the existing Poll route/API vocabulary; Poll publicity pre-checks | Financial authority, settlement economics, vault custody |
+| Campaign funding routes | Campaign-facing HTTP vocabulary mapping of neutral service results (404/403/409); session, ownership, and shape contracts | Financial authority, settlement economics, vault custody, error-code invention beyond the mapped vocabulary |
 | `participation_campaigns` row | Product metadata, type literal, title/description, visibility, window, product status, configuration freeze markers | Balances, counters, vault material, receipts, hashes, refund math |
 | `settlement_source_bindings` row | Narrow source-to-root relationship for the Campaign branch | Terms, balances, secrets, allowlists, proofs |
 
@@ -595,7 +596,10 @@ plus the unchanged neutral intent, hash, amount, terms, and vault codes
 `poll_not_public`, `forbidden`, `campaign_state_conflict`) are never emitted
 by the shared engine; the Poll adapter and service boundary translates
 generic results back into the existing Poll route and API vocabulary, and
-the Campaign adapter translates them into Campaign route vocabulary.
+the Campaign route translates neutral service results into Campaign HTTP
+vocabulary. The Campaign funding service itself preserves engine-emitted
+neutral codes verbatim; its own resolution, ownership, and vault pre-checks
+keep their existing input-validation vocabulary.
 Poll publicity gating lives at the Poll route and adapter pre-checks, not
 inside the financial engine.
 
@@ -1018,9 +1022,10 @@ document:
     no `begin/bind/confirm_campaign_funding_atomic` fork and no surviving
     Poll-shaped overload. Funding rows carry `settlement_id` authority with
     `campaign_id` as nullable Poll metadata and no
-    `participation_campaign_id` column. Generic errors stay inside the
-    engine; Poll and Campaign wording is translated at the adapter and
-    service boundaries.
+   `participation_campaign_id` column. Generic errors stay inside the
+   engine; Poll wording is translated at the adapter and service boundary,
+   and Campaign wording is translated at the Campaign route boundary, while
+   the Campaign funding service preserves neutral engine output verbatim.
 
 ---
 

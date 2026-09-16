@@ -917,7 +917,13 @@ slice is green.
   `_campaign_id` to `_settlement_id`; asserted values unchanged),
   `src/lib/rewards/funding-confirmation.db.test.ts` (direct
   `confirm_reward_funding_atomic` invocation arg `_campaign_id` to
-  `_settlement_id`)
+  `_settlement_id`),
+  `src/app/api/campaigns/[campaignId]/funding/intents/route.ts`,
+  `src/app/api/campaigns/[campaignId]/funding/intents/[intentId]/bind/route.ts`,
+  `src/app/api/campaigns/[campaignId]/funding/intents/[intentId]/confirm/route.ts`
+  (extend error mapping with neutral service codes, keeping every existing
+  mapping), plus their three colocated `route.test.ts` suites (cover the
+  added neutral-to-HTTP mappings)
 - Create: `supabase/migrations/20260916002000_v2c3_campaign_claim_rpc.sql`
   (Phase 2)
 - Create: `src/lib/rewards/campaign-claim-rpc.db.test.ts` (Phase 2)
@@ -983,10 +989,18 @@ arguments through these three call sites.
   bind routes already check `is_public`, and the confirm route gains the
   same pre-check in this slice (aligning its private-poll outcome with the
   existing `private_poll_not_rewardable` 422 instead of an engine 500).
-  Campaign translation lives in `src/lib/campaigns/funding.ts`:
-  `settlement_not_found` and `source_not_supported` to `campaign_not_found`,
-  `funding_not_allowed` to `forbidden`, `funding_conflict` to
-  `campaign_state_conflict`, matching the already-shipped A3 route mapping.
+  Campaign translation lives in the three Campaign funding routes, which
+  extend (never replace) their shipped mappings: `settlement_not_found`
+  and `source_not_supported` to 404 `campaign_not_found`,
+  `funding_not_allowed` to 403 `forbidden`, `funding_conflict` to 409
+  `campaign_state_conflict`, matching the already-shipped A3 statuses.
+  The Campaign funding service (`src/lib/campaigns/funding.ts`) preserves
+  engine-emitted neutral codes verbatim, exactly as its shipped begin/bind
+  delegation already does; its own resolution, ownership, and vault
+  pre-checks keep their existing A-shipped input-validation vocabulary
+  (`campaign_not_found` for an unknown campaign, `forbidden` for a
+  non-owner or non-creator mode, `vault_unavailable`,
+  `service_unavailable`), which the routes already map.
 - Produces (regenerated types): `src/types/database.ts` Functions entries
   for the three RPCs with `_settlement_id: string` first args; all other
   entries unchanged.
@@ -1064,7 +1078,9 @@ Phase 2 consumes `participation_campaigns`,
   4. Update the asserting tests to the new contract:
      `src/lib/rewards/settlement.test.ts`, `src/lib/campaigns/funding.test.ts`,
      and `src/lib/rewards/funding-confirmation.db.test.ts` expect
-     `_settlement_id` keys with unchanged values.
+     `_settlement_id` keys with unchanged values; the three Campaign route
+     suites gain cases proving neutral service codes map to the existing
+     campaign HTTP vocabulary without changing any existing mapping.
   5. Regenerate `src/types/database.ts` and verify the three Functions
      entries carry `_settlement_id: string` first args.
 - GREEN (Phase 1): the same suite passes; all pre-existing Poll rows
@@ -1881,10 +1897,11 @@ Issues found and fixed inline:
    contract per funding operation with generic Poll/Campaign source
    resolution inside M2, Poll-vocabulary translation in
    `src/lib/rewards/settlement.ts` parsers and the Poll confirm-route
-   publicity pre-check, Campaign translation in
-   `src/lib/campaigns/funding.ts`, regenerated DB types, catalog static
-   audits, and no surviving overload, wrapper, or
-   `begin/bind/confirm_campaign_funding_atomic` fork. The as-built slice-A
+   publicity pre-check, Campaign HTTP translation in the three Campaign
+   funding routes (the Campaign funding service preserves neutral engine
+   output verbatim and keeps its shipped input-validation vocabulary),
+   regenerated DB types, catalog static audits, and no surviving overload,
+   wrapper, or `begin/bind/confirm_campaign_funding_atomic` fork. The as-built slice-A
    resolver location (`src/lib/campaigns/settlement.ts`, keeping the
    shared root Poll-pure per the V2C.1 gate) is recorded in the A2
    interfaces.
