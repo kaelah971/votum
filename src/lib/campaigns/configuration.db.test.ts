@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer } from "@/lib/rewards/test-target";
 import {
   createParticipationCampaign,
   loadCampaignFundingReadiness,
@@ -18,7 +19,7 @@ const createdRootIds: string[] = [];
 function psql(sql: string): string {
   assertLocalSupabaseForTests();
   return execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", sql,
   ], { encoding: "utf8" }).trim();
 }

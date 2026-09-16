@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalSupabaseForTests } from "@/lib/rewards/test-env";
+import { testDbContainer } from "@/lib/rewards/test-target";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const secretKey = process.env.SUPABASE_SECRET_KEY ?? "";
@@ -32,7 +33,7 @@ const createdRootIds: string[] = [];
 function psql(sql: string): string {
   assertLocalSupabaseForTests();
   return execFileSync("docker", [
-    "exec", "supabase_db_votum", "psql", "-U", "postgres", "-d", "postgres",
+    "exec", testDbContainer(), "psql", "-U", "postgres", "-d", "postgres",
     "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", sql,
   ], { encoding: "utf8" }).trim();
 }
