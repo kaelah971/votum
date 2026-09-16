@@ -26,7 +26,14 @@ beforeEach(() => {
   mocks.readiness.mockReset();
   mocks.readiness.mockResolvedValue({
     campaign: { campaignId: "campaign-1", status: "published" },
-    fundingReadiness: { ready: false, reason: "vault_not_ready" },
+    fundingReadiness: {
+      ready: false,
+      reason: "vault_not_ready",
+      settlementStatus: "configured",
+      fundedAmountLuna: "0",
+      requiredAmountLuna: "580000",
+      vaultReady: false,
+    },
   });
 });
 
@@ -44,7 +51,14 @@ describe("GET /api/campaigns/[campaignId]/funding-readiness", () => {
     expect(response.status).toBe(200);
     expect(mocks.readiness).toHaveBeenCalledWith(OWNER, "campaign-1");
     const body = await response.json();
-    expect(body.fundingReadiness).toEqual({ ready: false, reason: "vault_not_ready" });
+    expect(body.fundingReadiness).toEqual({
+      ready: false,
+      reason: "vault_not_ready",
+      settlementStatus: "configured",
+      fundedAmountLuna: "0",
+      requiredAmountLuna: "580000",
+      vaultReady: false,
+    });
     expect(JSON.stringify(body)).not.toContain("claimable");
     expect(JSON.stringify(body)).not.toContain("ciphertext");
     expect(JSON.stringify(body)).not.toContain("key");

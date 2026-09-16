@@ -31,6 +31,7 @@ type SettlementConfigurationRow = Pick<
   | "reward_principal_luna"
   | "fee_reserve_luna"
   | "total_budget_luna"
+  | "funded_amount_luna"
   | "status"
   | "first_reservation_at"
 >;
@@ -559,7 +560,7 @@ async function loadOwnedCampaign(
 
   const { data: settlement, error: settlementError } = await admin
     .from("reward_settlements")
-    .select("id, owner_wallet, funding_mode, funding_wallet, refund_recipient_wallet, reward_per_participant_luna, max_rewarded_participants, reward_principal_luna, fee_reserve_luna, total_budget_luna, status, first_reservation_at")
+    .select("id, owner_wallet, funding_mode, funding_wallet, refund_recipient_wallet, reward_per_participant_luna, max_rewarded_participants, reward_principal_luna, fee_reserve_luna, total_budget_luna, funded_amount_luna, status, first_reservation_at")
     .eq("id", campaign.settlement_id)
     .maybeSingle();
   if (settlementError || !settlement) {
@@ -725,18 +726,18 @@ export async function loadCampaignFundingReadiness(
   campaignId: string,
 ): Promise<{
   campaign: CampaignConfiguration;
-  fundingReadiness: { ready: boolean; reason: "ready_for_funding" | "vault_not_ready" | "financially_frozen" };
+  fundingReadiness: {
+    ready: boolean;
+    reason: "ready_for_funding" | "vault_not_ready" | "financially_frozen";
+    settlementStatus: string;
+    fundedAmountLuna: string;
+    requiredAmountLuna: string;
+    vaultReady: boolean;
+  };
 }> {
   const owner = parseOwner(ownerWallet);
   const admin = adminOrThrow();
   const loaded = await loadOwnedCampaign(owner, campaignId, admin);
-
-  if (loaded.settlement.status !== "configured" || loaded.settlement.first_reservation_at !== null) {
-    return {
-      campaign: loaded.safe,
-      fundingReadiness: { ready: false, reason: "financially_frozen" },
-    };
-  }
 
   const { data: vault, error: vaultError } = await admin
     .from("reward_campaign_vaults")
@@ -747,12 +748,58 @@ export async function loadCampaignFundingReadiness(
     throw new CampaignConfigurationError("persistence_failed", 500, "Could not read Campaign readiness.");
   }
 
-  const settlementRootedVault = vault && (vault as unknown as { campaign_id: string | null }).campaign_id === null;
+  const vaultRow = (vault ?? null) as { campaign_id: string | null } | null;
+  const vaultReady = vaultRow !== null && vaultRow.campaign_id === null;
+  const settlementStatus = loaded.settlement.status;
+  const fundedAmountLuna = databaseBigInt(
+    loaded.settlement.funded_amount_luna,
+    "funded_amount_luna",
+  ).toString();
+  const requiredAmountLuna = databaseBigInt(
+    loaded.settlement.total_budget_luna,
+    "total_budget_luna",
+  ).toString();
+
+  // Reward-ready is distinct from both publication and the funding funnel:
+  // it reports whether settlement funding is present, never claimability.
+  const ready = vaultReady &&
+    (settlementStatus === "funded" ||
+      settlementStatus === "rewarding" ||
+      settlementStatus === "exhausted");
+
+  if (loaded.settlement.status !== "configured" || loaded.settlement.first_reservation_at !== null) {
+    return {
+      campaign: loaded.safe,
+      fundingReadiness: {
+        ready,
+        reason: "financially_frozen",
+        settlementStatus,
+        fundedAmountLuna,
+        requiredAmountLuna,
+        vaultReady,
+      },
+    };
+  }
+
   return {
     campaign: loaded.safe,
-    fundingReadiness: settlementRootedVault
-      ? { ready: true, reason: "ready_for_funding" }
-      : { ready: false, reason: "vault_not_ready" },
+    fundingReadiness: vaultReady
+      ? {
+        ready,
+        reason: "ready_for_funding",
+        settlementStatus,
+        fundedAmountLuna,
+        requiredAmountLuna,
+        vaultReady,
+      }
+      : {
+        ready,
+        reason: "vault_not_ready",
+        settlementStatus,
+        fundedAmountLuna,
+        requiredAmountLuna,
+        vaultReady,
+      },
   };
 }
 
