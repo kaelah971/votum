@@ -316,8 +316,9 @@ describe("V2C.3C claim authorization security matrix", () => {
       signature: wallet.sign(issued.message),
     })).resolves.toMatchObject({ kind: "error", reasonCode: "wallet_mismatch" });
 
+    const pastIssued = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const past = new Date(Date.now() - 60_000).toISOString();
-    runPsql(`UPDATE public.campaign_claim_challenges SET expires_at = '${past}' WHERE id = '${issued.challengeId}';`);
+    runPsql(`UPDATE public.campaign_claim_challenges SET issued_at = '${pastIssued}', expires_at = '${past}' WHERE id = '${issued.challengeId}';`);
     await expect(verifyCampaignClaimSignature(adminClient, {
       ...base,
       challengeId: issued.challengeId,

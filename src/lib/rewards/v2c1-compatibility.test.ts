@@ -231,7 +231,8 @@ describe("V2C.1E Poll compatibility gate", () => {
       .join("\n");
     const preCampaignMigrations = migrationFiles
       .filter((file) => !file.includes("20260913083000_v2c2_participation_campaigns.sql"))
-      .filter((file) => !file.includes("20260913084000_v2c2_campaign_settlement_binding.sql"));
+      .filter((file) => !file.includes("20260913084000_v2c2_campaign_settlement_binding.sql"))
+      .filter((file) => !file.includes("20260916000000_v2c3_claim_challenges.sql"));
     const migrations = preCampaignMigrations.map((file) => readFileSync(file, "utf8")).join("\n");
 
     expect(production).not.toMatch(/participation_campaigns|CampaignClaim|Secret Drop|Private Drop|Event Drop|Community Reward/);
