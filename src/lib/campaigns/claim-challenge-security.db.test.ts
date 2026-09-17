@@ -438,10 +438,12 @@ describe("V2C.3C claim authorization security matrix", () => {
     expect(secondBody.challengeId).not.toBe(firstBody.challengeId);
 
     const { data: rows } = await admin.from("campaign_claim_challenges")
-      .select("nonce_hash")
+      .select("nonce_hash, consumed_at")
       .in("id", [firstBody.challengeId, secondBody.challengeId]);
     expect(rows?.map((row) => row.nonce_hash)).toHaveLength(2);
     expect(new Set((rows ?? []).map((row) => row.nonce_hash)).size).toBe(2);
+    // Re-issue invalidates nothing: both challenges stay unconsumed in C.
+    expect((rows ?? []).map((row) => row.consumed_at)).toEqual([null, null]);
 
     const { getPublicCampaignGiveaway } = await import("@/lib/campaigns/public-giveaway");
     const dto = await getPublicCampaignGiveaway(admin as never, campaign.campaignId);

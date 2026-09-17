@@ -89,12 +89,15 @@ function hashNonce(nonce: string): string {
 
 /**
  * Issue a one-time claim challenge for the session wallet. Stores only the
- * SHA-256 nonce hash, marks older unconsumed challenges for the same
- * Campaign and wallet consumed, and returns exactly the data the client
- * needs to sign. Performs no eligibility screening beyond Campaign
- * existence: courtesy screening lives at the issue route, and the
- * authoritative decision lives in the future atomic claim transaction.
- * A valid challenge is authorization, not a reservation.
+ * SHA-256 nonce hash and returns exactly the data the client needs to sign.
+ * Never writes `consumed_at`: that column means "consumed by the
+ * authoritative atomic claim transaction" and is written only by the future
+ * slice-D reservation commit. Earlier unconsumed challenges for the same
+ * Campaign and wallet therefore stay valid until their own expiry. Performs
+ * no eligibility screening beyond Campaign existence: courtesy screening
+ * lives at the issue route, and the authoritative decision lives in the
+ * future atomic claim transaction. A valid challenge is authorization, not
+ * a reservation.
  */
 export async function issueCampaignClaimChallenge(
   admin: AdminClient,
@@ -129,16 +132,6 @@ export async function issueCampaignClaimChallenge(
     expiresAt,
     origin,
   });
-
-  const consumed = await admin
-    .from("campaign_claim_challenges")
-    .update({ consumed_at: new Date().toISOString() })
-    .eq("campaign_id", input.campaignId)
-    .eq("participant_wallet", participantWallet)
-    .is("consumed_at", null);
-  if (consumed.error) {
-    throw new CampaignClaimChallengeError("service_unavailable", "Claim challenge store unavailable.");
-  }
 
   const { data: inserted, error: insertError } = await admin
     .from("campaign_claim_challenges")

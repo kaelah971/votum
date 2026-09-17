@@ -125,6 +125,11 @@ describe("V2C.3C challenge issue and verification against live storage", () => {
     expect(firstRow.nonce_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(secondRow.nonce_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(secondRow.nonce_hash).not.toBe(firstRow.nonce_hash);
+    // Locked semantic: slice C never writes consumed_at. A re-issue leaves
+    // the earlier challenge valid until its own expiry; only the slice-D
+    // atomic claim transaction consumes the exact challenge it reserves with.
+    expect(firstRow.consumed_at).toBeNull();
+    expect(secondRow.consumed_at).toBeNull();
     expect(firstRow.action).toBe("campaign_claim");
     expect(firstRow.version).toBe(1);
 

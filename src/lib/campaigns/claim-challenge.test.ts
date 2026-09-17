@@ -41,6 +41,7 @@ interface FakeDb {
   campaigns: Row[];
   challenges: Row[];
   inserted: Row[];
+  updates: Array<{ table: string; patch: Row }>;
 }
 
 function makeAdmin(db: FakeDb) {
@@ -64,6 +65,7 @@ function makeAdmin(db: FakeDb) {
       },
       update: (patch: Row) => {
         pendingUpdate = patch;
+        db.updates.push({ table, patch });
         return api;
       },
       insert: (row: Row) => {
@@ -105,6 +107,7 @@ function baseDb(): FakeDb {
     campaigns: [{ id: CAMPAIGN }],
     challenges: [],
     inserted: [],
+    updates: [],
   };
 }
 
@@ -167,16 +170,48 @@ describe("issueCampaignClaimChallenge", () => {
     expect("nonce" in stored && typeof stored.nonce === "string" ? stored.nonce : undefined).toBeUndefined();
   });
 
-  it("marks older unused challenges for the same campaign and wallet consumed", async () => {
+  it("leaves earlier challenges unconsumed and verifiable when a second challenge is issued", async () => {
+    // Locked semantic: consumed_at means "consumed by the authoritative
+    // atomic claim transaction" (slice D). Slice C never writes it, so a
+    // re-issue must not invalidate the earlier challenge; both stay valid
+    // until their own expiry.
     const db = baseDb();
     const wallet = freshWallet();
     const admin = makeAdmin(db) as never;
-    await issueCampaignClaimChallenge(admin, { campaignId: CAMPAIGN, sessionAddress: wallet.address });
-    await issueCampaignClaimChallenge(admin, { campaignId: CAMPAIGN, sessionAddress: wallet.address });
+    const first = await issueCampaignClaimChallenge(admin, {
+      campaignId: CAMPAIGN,
+      sessionAddress: wallet.address,
+    });
+    const second = await issueCampaignClaimChallenge(admin, {
+      campaignId: CAMPAIGN,
+      sessionAddress: wallet.address,
+    });
 
     expect(db.challenges).toHaveLength(2);
-    expect(db.challenges[0].consumed_at).not.toBeNull();
+    expect(db.challenges[0].consumed_at).toBeNull();
     expect(db.challenges[1].consumed_at).toBeNull();
+    expect(db.updates).toEqual([]);
+
+    await expect(
+      verifyCampaignClaimSignature(admin, {
+        challengeId: first.challengeId,
+        campaignId: CAMPAIGN,
+        address: wallet.address,
+        publicKey: wallet.publicKey,
+        signature: wallet.sign(first.message),
+      }),
+    ).resolves.toEqual({ kind: "ok", participantWallet: wallet.address });
+
+    await expect(
+      verifyCampaignClaimSignature(admin, {
+        challengeId: second.challengeId,
+        campaignId: CAMPAIGN,
+        address: wallet.address,
+        publicKey: wallet.publicKey,
+        signature: wallet.sign(second.message),
+      }),
+    ).resolves.toEqual({ kind: "ok", participantWallet: wallet.address });
+    expect(db.updates).toEqual([]);
   });
 
   it("rejects unknown campaigns and malformed wallets", async () => {
@@ -218,6 +253,8 @@ describe("verifyCampaignClaimSignature", () => {
       signature,
     });
     expect(result).toEqual({ kind: "ok", participantWallet: wallet.address });
+    // Verification is read-only: slice C never writes consumed_at.
+    expect(db.updates).toEqual([]);
   });
 
   it("rejects cross-campaign and cross-wallet reuse", async () => {

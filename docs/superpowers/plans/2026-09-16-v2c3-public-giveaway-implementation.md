@@ -781,8 +781,10 @@ financial reservation ships in this slice.
   `issueCampaignClaimChallenge(admin, input: { campaignId: string;
   sessionAddress: string }): Promise<{ challengeId: string; message: string;
   expiresAt: string }>` (canonicalizes, stores only the SHA-256 nonce hash
-  via `createHash("sha256")`, sets ~5-minute expiry, marks older unused
-  challenges for the same wallet consumed); `verifyCampaignClaimSignature(
+  via `createHash("sha256")`, sets ~5-minute expiry, never writes
+  `consumed_at` — earlier unconsumed challenges stay valid until expiry and
+  authoritative consumption belongs to the slice-D atomic claim
+  transaction); `verifyCampaignClaimSignature(
   admin, input: { challengeId: string; campaignId: string; address: string;
   publicKey: string; signature: string }): Promise<{ kind: "ok";
   participantWallet: string } | { kind: "error"; reasonCode:
