@@ -363,6 +363,22 @@ describe("claim_campaign_reward_atomic", () => {
     expect(await readReceipts(unfunded.settlementId)).toHaveLength(0);
   });
 
+  it("reports campaign_closed from a closed settlement even with a published product view", async () => {
+    // Stale-read shape: the product row still reads published (as observed
+    // by a claim that read it before creator close committed) while the
+    // authoritative settlement row is closed. The settlement verdict takes
+    // precedence over the generic funding rejection.
+    const campaign = await createCampaign({ fund: false });
+    const issued = await issue(campaign.campaignId, wallet(14));
+    runPsql(`UPDATE public.reward_settlements SET status = 'closed' WHERE id = '${campaign.settlementId}';`);
+    expect(await claim(campaign.campaignId, wallet(14), issued.challengeId)).toMatchObject({
+      result_kind: "campaign_closed",
+    });
+    expect((await readChallenge(issued.challengeId)).consumed_at).toBeNull();
+    expect(await readReceipts(campaign.settlementId)).toHaveLength(0);
+    expect((await readSettlement(campaign.settlementId)).rewarded_participant_count).toBe(0);
+  });
+
   it("rejects the creator including wallet case variants without writes", async () => {
     const campaign = await createCampaign({ maxParticipants: 2 });
     const ownerChallenge = await issue(campaign.campaignId, OWNER);

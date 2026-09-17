@@ -235,7 +235,9 @@ describe("V2C.1E Poll compatibility gate", () => {
       .filter((file) => !file.includes("20260916000000_v2c3_claim_challenges.sql"))
       .filter((file) => !file.includes("20260916001000_v2c3_campaign_source_columns.sql"))
       .filter((file) => !file.includes("20260916002000_v2c3_campaign_claim_rpc.sql"))
-      .filter((file) => !file.includes("20260916002500_v2c3_campaign_payout_entry.sql"));
+      .filter((file) => !file.includes("20260916002500_v2c3_campaign_payout_entry.sql"))
+      .filter((file) => !file.includes("20260916002800_v2c3_campaign_close_atomic.sql"))
+      .filter((file) => !file.includes("20260916003000_v2c3_campaign_close_refund.sql"));
     const migrations = preCampaignMigrations.map((file) => readFileSync(file, "utf8")).join("\n");
 
     expect(production).not.toMatch(/participation_campaigns|CampaignClaim|Secret Drop|Private Drop|Event Drop|Community Reward/);

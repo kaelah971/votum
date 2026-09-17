@@ -95,14 +95,17 @@ function parsePreparationResult(
 
   const resultKind = raw.result_kind;
   if (resultKind === "created" || resultKind === "replay") {
-    if (raw.campaign_id !== settlementId || typeof raw.refund_id !== "string" || !raw.refund_id) {
+    // Settlement identity is authoritative post-cutover; the legacy
+    // campaign_id field carries the product-branch source id (Poll adapter
+    // UUID, Campaign participation id) and must not be mistaken for it.
+    if ((raw.settlement_id ?? raw.campaign_id) !== settlementId || typeof raw.refund_id !== "string" || !raw.refund_id) {
       return preparationError("malformed_refund_preparation");
     }
     return { kind: resultKind, settlementId, refundId: raw.refund_id };
   }
 
   if (resultKind === "nothing_to_refund" || resultKind === "already_refunded_or_closed") {
-    if (raw.campaign_id !== settlementId) return preparationError("malformed_refund_preparation");
+    if ((raw.settlement_id ?? raw.campaign_id) !== settlementId) return preparationError("malformed_refund_preparation");
     return { kind: resultKind, settlementId };
   }
 

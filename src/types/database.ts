@@ -1229,6 +1229,10 @@ export type Database = {
         }
         Returns: Json
       }
+      begin_campaign_refund_atomic: {
+        Args: { _session_token_hash: string; _settlement_id: string }
+        Returns: Json
+      }
       begin_reward_funding_atomic: {
         Args: {
           _confirmation_horizon_minutes?: number
@@ -1277,6 +1281,10 @@ export type Database = {
       }
       claim_reward_receipt_atomic: {
         Args: { _campaign_id: string; _participation_id: string }
+        Returns: Json
+      }
+      close_participation_campaign_atomic: {
+        Args: { _campaign_id: string; _owner_wallet: string }
         Returns: Json
       }
       confirm_nim_contribution_atomic: {
