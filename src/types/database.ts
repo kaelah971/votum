@@ -34,6 +34,56 @@ export type Database = {
   }
   public: {
     Tables: {
+      campaign_claim_challenges: {
+        Row: {
+          action: string
+          campaign_id: string
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          issued_at: string
+          message: string
+          nonce_hash: string
+          participant_wallet: string
+          version: number
+        }
+        Insert: {
+          action?: string
+          campaign_id: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          issued_at?: string
+          message: string
+          nonce_hash: string
+          participant_wallet: string
+          version?: number
+        }
+        Update: {
+          action?: string
+          campaign_id?: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          issued_at?: string
+          message?: string
+          nonce_hash?: string
+          participant_wallet?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_claim_challenges_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "participation_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       nim_contributions: {
         Row: {
           amount_luna: number
