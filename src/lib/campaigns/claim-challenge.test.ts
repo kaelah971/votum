@@ -398,4 +398,32 @@ describe("verifyCampaignClaimSignature", () => {
     ).resolves.toMatchObject({ kind: "error", reasonCode: "challenge_consumed" });
     expect(row.consumed_at).not.toBeNull();
   });
+
+  it("defers only the consumed check when the atomic claim path asks", async () => {
+    // Default callers keep fail-closed consumed rejection; the atomic claim
+    // transaction verifies everything else and lets M3 own replay-vs-consumed.
+    const db = baseDb();
+    const wallet = freshWallet();
+    const admin = makeAdmin(db) as never;
+    const { issued, signature } = await issuedPair(db, CAMPAIGN, wallet);
+
+    const row = db.challenges.find((item) => item.id === issued.challengeId);
+    if (!row) throw new Error("challenge fixture missing");
+    row.consumed_at = new Date().toISOString();
+    const input = {
+      challengeId: issued.challengeId,
+      campaignId: CAMPAIGN,
+      address: wallet.address,
+      publicKey: wallet.publicKey,
+      signature,
+    };
+    await expect(verifyCampaignClaimSignature(admin, input)).resolves.toMatchObject({
+      kind: "error",
+      reasonCode: "challenge_consumed",
+    });
+    await expect(
+      verifyCampaignClaimSignature(admin, input, { deferConsumedCheck: true }),
+    ).resolves.toEqual({ kind: "ok", participantWallet: wallet.address });
+    expect(db.updates).toEqual([]);
+  });
 });

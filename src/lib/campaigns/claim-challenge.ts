@@ -175,6 +175,13 @@ interface ChallengeRow {
  * exact stored message bytes. Fail-closed with generic reason codes and no
  * field-oracle detail. Never sets `consumed_at`: authoritative consumption
  * belongs to the future atomic claim transaction together with reservation.
+ *
+ * When `options.deferConsumedCheck` is set, the consumed_at rejection is
+ * skipped while every cryptographic and binding check still runs. Only the
+ * atomic claim transaction may use this mode: it owns the
+ * consumed-vs-replay distinction (existing receipt replays, otherwise
+ * challenge_consumed) and must see already-consumed challenges to replay
+ * exact retries. All other callers use the default fail-closed behavior.
  */
 export async function verifyCampaignClaimSignature(
   admin: AdminClient,
@@ -184,6 +191,9 @@ export async function verifyCampaignClaimSignature(
     address: string;
     publicKey: string;
     signature: string;
+  },
+  options?: {
+    deferConsumedCheck?: boolean;
   },
 ): Promise<ClaimSignatureVerification> {
   if (!input.challengeId || !input.campaignId) return errorResult("challenge_not_found");
@@ -196,7 +206,9 @@ export async function verifyCampaignClaimSignature(
   if (error || !data) return errorResult("challenge_not_found");
   const challenge = data as unknown as ChallengeRow;
 
-  if (challenge.consumed_at !== null) return errorResult("challenge_consumed");
+  if (challenge.consumed_at !== null && options?.deferConsumedCheck !== true) {
+    return errorResult("challenge_consumed");
+  }
   if (Number.isNaN(Date.parse(challenge.expires_at)) || new Date(challenge.expires_at).getTime() <= Date.now()) {
     return errorResult("challenge_expired");
   }

@@ -289,7 +289,7 @@ export function createDefaultFundingConfirmationDependencies(
     observeFundingByHash: (hash) => adapter.observeFundingByHash(hash),
     confirmAtomic: async (input) => {
       const { data, error } = await admin.rpc("confirm_reward_funding_atomic", {
-        _campaign_id: input.campaignId,
+        _settlement_id: input.campaignId,
         _intent_id: input.intentId,
         _transaction_hash: input.transactionHash,
         _observed_amount_luna: Number(input.observedAmountLuna),

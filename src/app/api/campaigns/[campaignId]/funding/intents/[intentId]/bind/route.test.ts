@@ -114,4 +114,19 @@ describe("POST /api/campaigns/[campaignId]/funding/intents/[intentId]/bind", () 
     expect(reused.status).toBe(409);
     expect((await reused.json()).error).toBe("transaction_already_reserved");
   });
+
+  it("maps source-neutral engine codes onto the shipped bind statuses", async () => {
+    for (const [reasonCode, status] of [
+      ["settlement_not_found", 404],
+      ["source_not_supported", 404],
+      ["funding_not_allowed", 403],
+      ["funding_conflict", 409],
+    ] as const) {
+      mocks.bind.mockResolvedValue({ kind: "error", reasonCode });
+      await expect(
+        POST(request({ transactionHash: HASH }), context()).then((r) => r.status),
+        reasonCode,
+      ).resolves.toBe(status);
+    }
+  });
 });

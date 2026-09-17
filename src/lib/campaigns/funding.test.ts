@@ -227,7 +227,7 @@ describe("beginCampaignFunding", () => {
     expect(db.rpcCalls).toHaveLength(1);
     expect(db.rpcCalls[0]).toMatchObject({
       fn: "begin_reward_funding_atomic",
-      args: { _campaign_id: SETTLEMENT, _funder_wallet: OWNER },
+      args: { _settlement_id: SETTLEMENT, _funder_wallet: OWNER },
     });
     if (result.kind === "created") {
       expect(result.fundingIntent.requiredFundingLuna).toBe("580000");
@@ -265,7 +265,7 @@ describe("bindCampaignFunding", () => {
     expect(result).toMatchObject({ kind: "bound", settlementId: SETTLEMENT, transactionHash: hash });
     expect(db.rpcCalls[0]).toMatchObject({
       fn: "bind_reward_funding_transaction_atomic",
-      args: { _campaign_id: SETTLEMENT, _intent_id: INTENT, _transaction_hash: hash },
+      args: { _settlement_id: SETTLEMENT, _intent_id: INTENT, _transaction_hash: hash },
     });
   });
 });

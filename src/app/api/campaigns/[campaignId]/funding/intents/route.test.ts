@@ -106,6 +106,20 @@ describe("POST /api/campaigns/[campaignId]/funding/intents", () => {
     expect(response.status).toBe(404);
   });
 
+  it("maps source-neutral engine codes onto the shipped Campaign vocabulary", async () => {
+    for (const [reasonCode, status, error] of [
+      ["settlement_not_found", 404, "campaign_not_found"],
+      ["source_not_supported", 404, "campaign_not_found"],
+      ["funding_not_allowed", 403, "forbidden"],
+      ["funding_conflict", 409, "campaign_state_conflict"],
+    ] as const) {
+      mocks.begin.mockResolvedValue({ kind: "error", reasonCode });
+      const response = await POST(request({}), context());
+      expect(response.status, reasonCode).toBe(status);
+      expect((await response.json()).error, reasonCode).toBe(error);
+    }
+  });
+
   it("returns the server-derived intent and ignores spoofed economics", async () => {
     const response = await POST(
       request({

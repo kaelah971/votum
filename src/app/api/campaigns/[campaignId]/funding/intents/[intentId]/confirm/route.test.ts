@@ -79,4 +79,17 @@ describe("POST /api/campaigns/[campaignId]/funding/intents/[intentId]/confirm", 
     expect(missing.status).toBe(404);
     expect((await missing.json()).error).toBe("not_found");
   });
+
+  it("contains source-neutral engine vocabulary in Campaign wording", async () => {
+    for (const [reasonCode, error] of [
+      ["settlement_not_found", "campaign_not_found"],
+      ["source_not_supported", "campaign_not_found"],
+      ["funding_not_allowed", "forbidden"],
+      ["funding_conflict", "campaign_state_conflict"],
+    ] as const) {
+      mocks.confirm.mockResolvedValue({ kind: "error", reasonCode });
+      const response = await POST(request(), context());
+      expect((await response.json()).error, reasonCode).toBe(error);
+    }
+  });
 });

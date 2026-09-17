@@ -149,7 +149,7 @@ async function confirm(
   } = {},
 ) {
   return admin.rpc("confirm_reward_funding_atomic", {
-    _campaign_id: overrides.campaignId ?? fixtureValue.campaignId,
+    _settlement_id: overrides.campaignId ?? fixtureValue.campaignId,
     _intent_id: overrides.intentId ?? fixtureValue.intentId,
     _transaction_hash: overrides.transactionHash ?? fixtureValue.transactionHash,
     _observed_amount_luna: overrides.amount ?? REQUIRED,
@@ -339,7 +339,7 @@ describe("confirm_reward_funding_atomic", () => {
     const value = await fixture();
     expect((await confirm(value)).data).toMatchObject({ result_kind: "confirmed" });
     const result = await confirm(value, { transactionHash: hash() });
-    expect(result.data).toMatchObject({ result_kind: "campaign_state_conflict" });
+    expect(result.data).toMatchObject({ result_kind: "funding_conflict" });
   });
 
   it("rejects a vault snapshot mismatch and creates no downstream rows", async () => {

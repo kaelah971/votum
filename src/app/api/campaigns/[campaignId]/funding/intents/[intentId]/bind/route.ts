@@ -103,10 +103,14 @@ export async function POST(
     { status: 500 },
   );
 
-  const status = result.reasonCode === "forbidden" ? 403
-    : result.reasonCode === "campaign_not_found" || result.reasonCode === "intent_not_found" ? 404
+  // Source-neutral engine codes translate onto the already-shipped statuses;
+  // the shared engine never emits Campaign wording.
+  const status = result.reasonCode === "forbidden" || result.reasonCode === "funding_not_allowed" ? 403
+    : result.reasonCode === "campaign_not_found" || result.reasonCode === "intent_not_found" ||
+      result.reasonCode === "settlement_not_found" || result.reasonCode === "source_not_supported" ? 404
       : result.reasonCode === "invalid_hash" ? 400
-        : result.reasonCode === "transaction_already_reserved" || result.reasonCode === "intent_already_bound" || result.reasonCode === "campaign_state_conflict" ? 409
+        : result.reasonCode === "transaction_already_reserved" || result.reasonCode === "intent_already_bound" ||
+          result.reasonCode === "campaign_state_conflict" || result.reasonCode === "funding_conflict" ? 409
           : 500;
   const error = result.reasonCode === "transaction_already_reserved"
     ? "transaction_already_reserved"

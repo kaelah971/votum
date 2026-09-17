@@ -58,6 +58,26 @@ export async function POST(
     );
   }
 
+  // Poll publicity gating lives at the route pre-checks, not inside the
+  // financial engine: the shared engine no longer emits Poll wording.
+  const { data: poll, error: pollErr } = await admin
+    .from("polls")
+    .select("id, is_public")
+    .eq("id", pollId)
+    .maybeSingle();
+  if (pollErr || !poll) {
+    return NextResponse.json(
+      { error: "poll_not_found", message: "Poll not found." },
+      { status: 404 },
+    );
+  }
+  if (!poll.is_public) {
+    return NextResponse.json(
+      { error: "private_poll_not_rewardable", message: "Reward campaigns are public polls only." },
+      { status: 422 },
+    );
+  }
+
   const settlement = await resolvePollRewardSettlement(admin, pollId);
   if (settlement.kind !== "ok") {
     return NextResponse.json(

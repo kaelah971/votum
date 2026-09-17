@@ -21,6 +21,25 @@ function statusForResult(result: Awaited<ReturnType<typeof confirmCampaignFundin
   return 500;
 }
 
+/**
+ * Source-neutral engine vocabulary translated at the Campaign boundary; the
+ * shared engine never emits Campaign wording. Error-kind responses keep the
+ * shipped 500 status; only the vocabulary is contained.
+ */
+function translateConfirmReason(reasonCode: string): string {
+  switch (reasonCode) {
+    case "settlement_not_found":
+    case "source_not_supported":
+      return "campaign_not_found";
+    case "funding_not_allowed":
+      return "forbidden";
+    case "funding_conflict":
+      return "campaign_state_conflict";
+    default:
+      return reasonCode;
+  }
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ campaignId: string; intentId: string }> },
@@ -68,7 +87,7 @@ export async function POST(
   const result = await confirmCampaignFunding(admin, campaignId, intentId, funderWallet);
   if (result.kind === "forbidden" || result.kind === "not_found" || result.kind === "error") {
     return NextResponse.json(
-      { error: result.kind === "error" ? result.reasonCode : result.kind, stage: "atomic_confirm", requestId },
+      { error: result.kind === "error" ? translateConfirmReason(result.reasonCode) : result.kind, stage: "atomic_confirm", requestId },
       { status: statusForResult(result) },
     );
   }

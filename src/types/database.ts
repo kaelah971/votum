@@ -663,7 +663,7 @@ export type Database = {
         Row: {
           amount_luna: number
           block_number: number | null
-          campaign_id: string
+          campaign_id: string | null
           confirmation_deadline: string | null
           confirmed_at: string | null
           confirmed_transaction_hash: string | null
@@ -685,7 +685,7 @@ export type Database = {
         Insert: {
           amount_luna: number
           block_number?: number | null
-          campaign_id: string
+          campaign_id?: string | null
           confirmation_deadline?: string | null
           confirmed_at?: string | null
           confirmed_transaction_hash?: string | null
@@ -707,7 +707,7 @@ export type Database = {
         Update: {
           amount_luna?: number
           block_number?: number | null
-          campaign_id?: string
+          campaign_id?: string | null
           confirmation_deadline?: string | null
           confirmed_at?: string | null
           confirmed_transaction_hash?: string | null
@@ -844,36 +844,36 @@ export type Database = {
       reward_receipts: {
         Row: {
           amount_luna: number
-          campaign_id: string
+          campaign_id: string | null
           created_at: string
           id: string
           paid_at: string | null
           participant_wallet: string
-          poll_id: string
+          poll_id: string | null
           settlement_id: string
           status: string
           updated_at: string
         }
         Insert: {
           amount_luna: number
-          campaign_id: string
+          campaign_id?: string | null
           created_at?: string
           id?: string
           paid_at?: string | null
           participant_wallet: string
-          poll_id: string
+          poll_id?: string | null
           settlement_id: string
           status?: string
           updated_at?: string
         }
         Update: {
           amount_luna?: number
-          campaign_id?: string
+          campaign_id?: string | null
           created_at?: string
           id?: string
           paid_at?: string | null
           participant_wallet?: string
-          poll_id?: string
+          poll_id?: string | null
           settlement_id?: string
           status?: string
           updated_at?: string
@@ -908,7 +908,7 @@ export type Database = {
           block_number: number | null
           broadcast_at: string | null
           broadcast_started_at: string | null
-          campaign_id: string
+          campaign_id: string | null
           confirmed_at: string | null
           confirmed_batch_number: number | null
           confirmed_canonical_block_hash: string | null
@@ -939,7 +939,7 @@ export type Database = {
           block_number?: number | null
           broadcast_at?: string | null
           broadcast_started_at?: string | null
-          campaign_id: string
+          campaign_id?: string | null
           confirmed_at?: string | null
           confirmed_batch_number?: number | null
           confirmed_canonical_block_hash?: string | null
@@ -970,7 +970,7 @@ export type Database = {
           block_number?: number | null
           broadcast_at?: string | null
           broadcast_started_at?: string | null
-          campaign_id?: string
+          campaign_id?: string | null
           confirmed_at?: string | null
           confirmed_batch_number?: number | null
           confirmed_canonical_block_hash?: string | null
@@ -1231,9 +1231,9 @@ export type Database = {
       }
       begin_reward_funding_atomic: {
         Args: {
-          _campaign_id: string
           _confirmation_horizon_minutes?: number
           _funder_wallet: string
+          _settlement_id: string
         }
         Returns: Json
       }
@@ -1256,15 +1256,23 @@ export type Database = {
       }
       bind_reward_funding_transaction_atomic: {
         Args: {
-          _campaign_id: string
           _funder_wallet: string
           _intent_id: string
+          _settlement_id: string
           _transaction_hash: string
         }
         Returns: Json
       }
       cast_poll_vote_atomic: {
         Args: { _option_id: string; _poll_id: string; _voter_wallet: string }
+        Returns: Json
+      }
+      claim_campaign_reward_atomic: {
+        Args: {
+          _campaign_id: string
+          _challenge_id: string
+          _participant_wallet: string
+        }
         Returns: Json
       }
       claim_reward_receipt_atomic: {
@@ -1284,9 +1292,9 @@ export type Database = {
       confirm_reward_funding_atomic: {
         Args: {
           _block_number?: number
-          _campaign_id: string
           _intent_id: string
           _observed_amount_luna: number
+          _settlement_id: string
           _transaction_hash: string
           _transaction_timestamp?: string
         }

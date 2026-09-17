@@ -101,6 +101,28 @@ function rpcError(reasonCode: string, message?: string): SafeSettlementError {
     : { kind: "error", reasonCode, message };
 }
 
+/**
+ * Translate the shared funding engine's source-neutral vocabulary back into
+ * the existing Poll route/API vocabulary at the adapter boundary. The engine
+ * never emits Poll wording; every existing Poll response shape and status
+ * code stays byte-identical through this mapping. Campaign callers reuse the
+ * same boundary and map these onto their already-shipped HTTP vocabulary in
+ * the Campaign funding routes.
+ */
+function translateFundingResultKind(resultKind: string): string {
+  switch (resultKind) {
+    case "settlement_not_found":
+    case "source_not_supported":
+      return "campaign_not_found";
+    case "funding_not_allowed":
+      return "forbidden";
+    case "funding_conflict":
+      return "campaign_state_conflict";
+    default:
+      return resultKind;
+  }
+}
+
 export async function resolvePollRewardSettlement(
   admin: AdminClient,
   pollId: string,
@@ -176,7 +198,7 @@ function parseFundingResult(
   if (!result) return rpcError("funding_intent_failed");
   const resultKind = typeof result.result_kind === "string" ? result.result_kind : "";
   if (resultKind !== "created" && resultKind !== "replay") {
-    return rpcError(resultKind || "funding_intent_failed");
+    return rpcError(translateFundingResultKind(resultKind || "funding_intent_failed"));
   }
   if ((result.settlement_id ?? result.campaign_id) !== settlementId) {
     return rpcError("settlement_mismatch");
@@ -193,10 +215,10 @@ export function createRewardSettlementService(
   return {
     async beginFunding(settlementId, funderWallet) {
       try {
-        const { data, error } = await admin.rpc("begin_reward_funding_atomic", {
-          _campaign_id: settlementId,
-          _funder_wallet: funderWallet,
-        });
+      const { data, error } = await admin.rpc("begin_reward_funding_atomic", {
+        _settlement_id: settlementId,
+        _funder_wallet: funderWallet,
+      });
         if (error) return rpcError("funding_intent_failed");
         return parseFundingResult(data, settlementId);
       } catch {
@@ -208,7 +230,7 @@ export function createRewardSettlementService(
       if (!/^[0-9a-f]{64}$/.test(normalizedHash)) return rpcError("invalid_hash");
       try {
         const { data, error } = await admin.rpc("bind_reward_funding_transaction_atomic", {
-          _campaign_id: settlementId,
+          _settlement_id: settlementId,
           _intent_id: intentId,
           _funder_wallet: funderWallet,
           _transaction_hash: normalizedHash,
@@ -217,7 +239,9 @@ export function createRewardSettlementService(
         const result = asRecord(data);
         if (!result) return rpcError("binding_failed");
         const resultKind = typeof result.result_kind === "string" ? result.result_kind : "";
-        if (resultKind !== "bound" && resultKind !== "bound_replay") return rpcError(resultKind || "binding_failed");
+        if (resultKind !== "bound" && resultKind !== "bound_replay") {
+          return rpcError(translateFundingResultKind(resultKind || "binding_failed"));
+        }
         if ((result.settlement_id ?? result.campaign_id) !== settlementId) {
           return rpcError("settlement_mismatch");
         }

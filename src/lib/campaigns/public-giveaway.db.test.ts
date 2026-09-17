@@ -139,7 +139,7 @@ describe("V2C.3B public projector on authoritative settlement truth", () => {
   });
 
   it("projects starts_soon, open, ended, and closed from live rows", async () => {
-    const future = await createCampaign({ title: "Future", startsAt: "2026-09-17T12:00:00.000Z" });
+    const future = await createCampaign({ title: "Future", startsAt: new Date(Date.now() + 86_400_000).toISOString() });
     await ensureRewardSettlementVault(future.settlementId);
     await publishParticipationCampaign(OWNER, future.campaignId);
     await markFunded(future.settlementId);

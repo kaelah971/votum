@@ -1,6 +1,7 @@
 import "server-only";
 
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
+import { loadCampaignReservationAuthority } from "@/lib/campaigns/claim-participation-store";
 import {
   parseRewardParticipationContext,
   type RewardParticipationContext,
@@ -14,7 +15,7 @@ type AdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
 
 export interface RewardReservationAuthority {
   sourceId: string;
-  sourceType: "poll_vote";
+  sourceType: "poll_vote" | "campaign_claim";
   settlementId: string;
   bindingSourceId: string;
   participantWallet: string;
@@ -24,6 +25,11 @@ export interface RewardReservationAuthority {
 export interface RewardReservationStore {
   loadAuthority(context: RewardParticipationContext): Promise<RewardReservationAuthority | null>;
   reserveAtomic(sourceId: string, settlementId: string): Promise<unknown>;
+  reserveCampaignAtomic?(input: {
+    campaignId: string;
+    participantWallet: string;
+    challengeId: string;
+  }): Promise<unknown>;
 }
 
 type ReservationSuccess = Extract<RewardReservationResult, { kind: "reserved" | "replay" }>;
@@ -45,8 +51,17 @@ const INELIGIBLE_RESULT_KINDS = new Set([
   "poll_not_public",
   "poll_not_rewarded",
   "creator_not_reward_eligible",
+  "creator_not_eligible",
   "campaign_not_funded",
   "campaign_not_reservable",
+  "campaign_not_published",
+  "campaign_closed",
+  "unsupported_type",
+  "claim_not_started",
+  "claim_ended",
+  "challenge_invalid",
+  "challenge_expired",
+  "challenge_consumed",
   "no_reward_capacity",
 ]);
 
@@ -88,9 +103,16 @@ function hasPollEvidence(context: RewardParticipationContext): boolean {
     context.settlement.binding.sourceType === "poll_vote";
 }
 
+function hasCampaignEvidence(context: RewardParticipationContext): boolean {
+  return context.source.type === "campaign_claim" &&
+    context.eligibility.evidenceId === context.source.id &&
+    context.eligibility.evidenceKind === "verified_wallet_claim" &&
+    context.settlement.binding.sourceType === "campaign_claim";
+}
+
 function validAuthority(value: unknown): value is RewardReservationAuthority {
   if (!isRecord(value)) return false;
-  return value.sourceType === "poll_vote" &&
+  return (value.sourceType === "poll_vote" || value.sourceType === "campaign_claim") &&
     isNonEmptyString(value.sourceId) &&
     isNonEmptyString(value.settlementId) &&
     isNonEmptyString(value.bindingSourceId) &&
@@ -160,7 +182,9 @@ export function createRewardReservationService(
     async reserve(context): Promise<RewardReservationResult> {
       const parsedContext = parseRewardParticipationContext(context);
       const sourceId = sourceIdFromContext(context) ?? "";
-      if (!parsedContext || !hasPollEvidence(parsedContext)) {
+      const isPoll = parsedContext !== null && hasPollEvidence(parsedContext);
+      const isCampaign = parsedContext !== null && hasCampaignEvidence(parsedContext);
+      if (!parsedContext || (!isPoll && !isCampaign)) {
         return sourceId ? ineligible("invalid_context", sourceId) : { kind: "ineligible", reasonCode: "invalid_context" };
       }
 
@@ -177,10 +201,21 @@ export function createRewardReservationService(
 
       let atomicResult: unknown;
       try {
-        atomicResult = await store.reserveAtomic(
-          parsedContext.source.id,
-          parsedContext.settlement.id,
-        );
+        if (isPoll) {
+          atomicResult = await store.reserveAtomic(
+            parsedContext.source.id,
+            parsedContext.settlement.id,
+          );
+        } else {
+          if (!store.reserveCampaignAtomic) {
+            return rejected("reservation_failed", parsedContext.source.id);
+          }
+          atomicResult = await store.reserveCampaignAtomic({
+            campaignId: parsedContext.settlement.binding.sourceId,
+            participantWallet: parsedContext.participantWallet,
+            challengeId: parsedContext.source.id,
+          });
+        }
       } catch {
         return rejected("reservation_failed", parsedContext.source.id);
       }
@@ -195,6 +230,9 @@ export function createSupabaseRewardReservationStore(
 ): RewardReservationStore {
   return {
     async loadAuthority(context) {
+      if (context.source.type === "campaign_claim") {
+        return loadCampaignReservationAuthority(admin, context);
+      }
       if (context.source.type !== "poll_vote") return null;
 
       const { data: vote, error: voteError } = await admin
@@ -239,6 +277,15 @@ export function createSupabaseRewardReservationStore(
       const { data, error } = await admin.rpc("claim_reward_receipt_atomic", {
         _participation_id: sourceId,
         _campaign_id: settlementId,
+      });
+      if (error) throw error;
+      return data;
+    },
+    async reserveCampaignAtomic(input) {
+      const { data, error } = await admin.rpc("claim_campaign_reward_atomic", {
+        _campaign_id: input.campaignId,
+        _participant_wallet: input.participantWallet,
+        _challenge_id: input.challengeId,
       });
       if (error) throw error;
       return data;

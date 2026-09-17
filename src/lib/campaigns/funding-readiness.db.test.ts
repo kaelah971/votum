@@ -178,13 +178,14 @@ describe("V2C.3A derived funding readiness keeps publication, funding, and claim
   });
 
   it("exposes no receipt, challenge, or claim route for the Campaign", async () => {
-    // Filesystem absence proof: the claim route file must not exist in
-    // slice A. Task D4 retires this probe when the route lands (the
-    // assertion fails once the file exists).
+    // Filesystem presence proof: slice A required the claim route file to
+    // be absent; Task D4 landed it, so the probe now asserts the approved
+    // route exists exactly where the slice plan puts it. No other claim
+    // surface (UI button, second route) is permitted by the D scope.
     const { existsSync } = await import("node:fs");
     const { join } = await import("node:path");
     expect(
       existsSync(join(process.cwd(), "src", "app", "api", "campaigns", "[campaignId]", "claims", "route.ts")),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

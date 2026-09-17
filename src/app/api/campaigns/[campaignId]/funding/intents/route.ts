@@ -29,6 +29,16 @@ function resultError(
       return { error: "funding_amount_unsafe", status: 422, message: "The required funding amount cannot be represented safely by Nimiq Pay." };
     case "campaign_state_conflict":
       return { error: "campaign_state_conflict", status: 409, message: "This Campaign cannot begin another funding attempt." };
+    // Source-neutral engine vocabulary (translated at the Campaign boundary;
+    // the shared engine never emits Campaign wording). Statuses match the
+    // already-shipped mappings above.
+    case "settlement_not_found":
+    case "source_not_supported":
+      return { error: "campaign_not_found", status: 404, message: "Campaign not found." };
+    case "funding_not_allowed":
+      return { error: "forbidden", status: 403, message: "Only the Campaign owner can fund this Campaign." };
+    case "funding_conflict":
+      return { error: "campaign_state_conflict", status: 409, message: "This Campaign cannot begin another funding attempt." };
     default:
       log("unknown_rpc_result", { requestId, status: 500, resultKind });
       return { error: "funding_intent_failed", status: 500, message: "Could not create a funding intent." };

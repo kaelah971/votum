@@ -226,7 +226,7 @@ describe("RewardSettlementService", () => {
 
     expect(result).toMatchObject({ kind: "created", fundingIntent: { campaignId: SETTLEMENT_ID } });
     expect(mocks.rpc).toHaveBeenCalledWith("begin_reward_funding_atomic", {
-      _campaign_id: SETTLEMENT_ID,
+      _settlement_id: SETTLEMENT_ID,
       _funder_wallet: FUNDER,
     });
     expect(JSON.stringify(result)).not.toMatch(/option|selected|clientReward|browser/i);
@@ -246,7 +246,7 @@ describe("RewardSettlementService", () => {
       transactionHash: "a".repeat(64),
     });
     expect(mocks.rpc).toHaveBeenCalledWith("bind_reward_funding_transaction_atomic", {
-      _campaign_id: SETTLEMENT_ID,
+      _settlement_id: SETTLEMENT_ID,
       _intent_id: INTENT_ID,
       _funder_wallet: FUNDER,
       _transaction_hash: "a".repeat(64),
