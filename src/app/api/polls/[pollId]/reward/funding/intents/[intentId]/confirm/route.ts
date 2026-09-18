@@ -7,6 +7,7 @@ import {
   resolvePollRewardSettlement,
   type RewardSettlementService,
 } from "@/lib/rewards/settlement";
+import { toJsonSafeFundingConfirmation } from "@/lib/rewards/funding-confirmation-response";
 
 export const runtime = "nodejs";
 
@@ -98,8 +99,10 @@ export async function POST(
     );
   }
 
+  // The engine result carries bigint Luna values; project to a JSON-safe
+  // DTO at this boundary (decimal strings, no precision loss).
   return NextResponse.json(
-    { confirmation: result },
+    { confirmation: toJsonSafeFundingConfirmation(result) },
     { status: statusForResult(result) },
   );
 }

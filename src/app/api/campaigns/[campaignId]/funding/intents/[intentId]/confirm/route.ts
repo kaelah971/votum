@@ -5,6 +5,7 @@ import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 import { isSameOriginRequest } from "@/lib/api/origin";
 import { confirmCampaignFunding } from "@/lib/campaigns/funding";
+import { toJsonSafeFundingConfirmation } from "@/lib/rewards/funding-confirmation-response";
 
 export const runtime = "nodejs";
 
@@ -92,8 +93,10 @@ export async function POST(
     );
   }
 
+  // The engine result carries bigint Luna values; project to a JSON-safe
+  // DTO at this boundary (decimal strings, no precision loss).
   return NextResponse.json(
-    { confirmation: result, stage: "atomic_confirm", requestId },
+    { confirmation: toJsonSafeFundingConfirmation(result), stage: "atomic_confirm", requestId },
     { status: statusForResult(result) },
   );
 }

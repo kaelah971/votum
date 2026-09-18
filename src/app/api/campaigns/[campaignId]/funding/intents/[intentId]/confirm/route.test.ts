@@ -93,3 +93,54 @@ describe("POST /api/campaigns/[campaignId]/funding/intents/[intentId]/confirm", 
     }
   });
 });
+
+describe("POST campaign funding confirm — JSON-safe boundary", () => {
+  it("returns 200 with decimal-string amounts for bigint engine results", async () => {
+    const hash = "ab".repeat(32);
+    mocks.confirm.mockResolvedValue({
+      kind: "confirmed",
+      decision: {
+        status: "confirmed",
+        reasonCode: "confirmed_success",
+        confirmed: true,
+        expectedTransactionHash: hash,
+        observedTransactionHash: hash,
+        expectedAmountLuna: BigInt("9223372036854775807"),
+        observedAmountLuna: BigInt("9223372036854775807"),
+        excessAmountLuna: BigInt(0),
+        amountComparison: "exact",
+      },
+      atomic: { kind: "confirmed", data: { result_kind: "confirmed" } },
+    });
+    const response = await POST(request(), context());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.confirmation.kind).toBe("confirmed");
+    expect(body.confirmation.decision.expectedAmountLuna).toBe("9223372036854775807");
+    expect(body.confirmation.decision.observedAmountLuna).toBe("9223372036854775807");
+    expect(body.confirmation.decision.excessAmountLuna).toBe("0");
+    expect(body.stage).toBe("atomic_confirm");
+  });
+
+  it("serializes reconciled decisions without precision loss", async () => {
+    mocks.confirm.mockResolvedValue({
+      kind: "reconciled",
+      decision: {
+        status: "confirmed",
+        reasonCode: "confirmed_success",
+        confirmed: true,
+        expectedAmountLuna: BigInt("9223372036854775807"),
+        observedAmountLuna: null,
+        excessAmountLuna: BigInt(0),
+        amountComparison: "exact",
+      },
+    });
+    const response = await POST(request(), context());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.confirmation.decision.expectedAmountLuna).toBe("9223372036854775807");
+    expect(body.confirmation.decision.observedAmountLuna).toBeNull();
+  });
+});
