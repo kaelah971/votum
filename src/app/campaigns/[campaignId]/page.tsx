@@ -2,7 +2,11 @@ import { notFound } from "next/navigation";
 import { ProductShell } from "@/components/layout/ProductShell";
 import { UnavailableState } from "@/components/state/UnavailableState";
 import { CampaignGiveawayView } from "@/components/campaign/CampaignGiveawayView";
+import { CampaignClaimSection } from "@/components/campaign/CampaignClaimSection";
 import { getPublicCampaignGiveaway } from "@/lib/campaigns/public-giveaway";
+import { resolveCampaignRewardSettlement } from "@/lib/campaigns/settlement";
+import { getVerifiedWalletSession } from "@/lib/api/session";
+import { normalizeAddress } from "@/lib/nimiq/server-crypto";
 import { createAdminClient, getAdminConfigStatus } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -79,9 +83,33 @@ export default async function CampaignPage({
   const giveaway = await getPublicCampaignGiveaway(admin, campaignId);
   if (!giveaway) notFound();
 
+  // Server-derived creator flag: boolean only, never the owner wallet.
+  // The claim section uses it to suppress the Claim NIM CTA for the
+  // creator; all claim authorization stays server-side.
+  let viewerIsCreator = false;
+  try {
+    const session = await getVerifiedWalletSession();
+    const sessionWallet = session ? normalizeAddress(session.address) : null;
+    if (sessionWallet) {
+      const binding = await resolveCampaignRewardSettlement(admin, campaignId);
+      viewerIsCreator = binding.kind === "ok" && binding.ownerWallet === sessionWallet;
+    }
+  } catch {
+    viewerIsCreator = false;
+  }
+
   return (
     <ProductShell>
-      <CampaignGiveawayView giveaway={giveaway} />
+      <CampaignGiveawayView
+        giveaway={giveaway}
+        claimSlot={
+          <CampaignClaimSection
+            campaignId={giveaway.campaignId}
+            claimState={giveaway.claimState}
+            viewerIsCreator={viewerIsCreator}
+          />
+        }
+      />
     </ProductShell>
   );
 }

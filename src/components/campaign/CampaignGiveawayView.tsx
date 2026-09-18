@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { PublicCampaignGiveaway } from "@/lib/campaigns/public-giveaway";
 import { FairnessLabel } from "@/components/ui/FairnessLabel";
 
@@ -79,18 +80,22 @@ function stateCopy(giveaway: PublicCampaignGiveaway): { title: string; detail: s
 interface CampaignGiveawayViewProps {
   giveaway: PublicCampaignGiveaway;
   className?: string;
+  /**
+   * Session-aware claim composition (Claim NIM CTA plus claim status),
+   * provided by the page. The view itself stays presentational: it never
+   * decides wallet, session, or claim eligibility.
+   */
+  claimSlot?: ReactNode;
 }
 
 /**
  * Presentational share-link surface for a Public Giveaway. Renders only the
  * public DTO: shortened creator display, no full wallets, no challenges, no
- * receipts, no vault data, and no own-claim state. The open state renders a
- * non-interactive informational note only; no button, link, handler, or
- * Claim NIM control of any kind exists before the participant slice.
+ * receipts, no vault data, and no own-claim state. Claim interactivity, if
+ * any, arrives exclusively through claimSlot.
  */
-export function CampaignGiveawayView({ giveaway, className = "" }: CampaignGiveawayViewProps) {
+export function CampaignGiveawayView({ giveaway, className = "", claimSlot = null }: CampaignGiveawayViewProps) {
   const state = stateCopy(giveaway);
-  const isOpen = giveaway.claimState === "open";
 
   return (
     <article className={`rounded-card border border-divider bg-clear-ballot p-6 shadow-card ${className}`}>
@@ -150,13 +155,7 @@ export function CampaignGiveawayView({ giveaway, className = "" }: CampaignGivea
         <FairnessLabel rule="One wallet · one claim" />
       </div>
 
-      {isOpen ? (
-        <div className="mt-5 rounded-thumbnail border border-divider bg-soft-fog px-4 py-3">
-          <p className="text-center text-body text-quiet-ink">
-            Claims are not available yet.
-          </p>
-        </div>
-      ) : null}
+      {claimSlot ? <div className="mt-5">{claimSlot}</div> : null}
     </article>
   );
 }

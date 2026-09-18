@@ -55,16 +55,23 @@ describe("CampaignGiveawayView", () => {
     }
   });
 
-  it("renders open state with no interactive claim element at all", () => {
-    const { unmount, container } = render(<CampaignGiveawayView giveaway={dto()} />);
-    expect(container.querySelector("button")).toBeNull();
-    expect(container.querySelector("a")).toBeNull();
-    expect(container.querySelector('[role="button"]')).toBeNull();
+  it("renders open state with a claim slot and no placeholder of its own", () => {
+    const bare = render(<CampaignGiveawayView giveaway={dto()} />);
+    expect(bare.container.querySelector("button")).toBeNull();
+    expect(bare.container.querySelector("a")).toBeNull();
+    expect(bare.container.querySelector('[role="button"]')).toBeNull();
     expect(screen.queryByText("Claim NIM")).toBeNull();
-    expect(
-      screen.getByText("Claims are not available yet."),
-    ).toBeInTheDocument();
-    unmount();
+    expect(screen.queryByText("Claims are not available yet.")).toBeNull();
+    bare.unmount();
+
+    const slotted = render(
+      <CampaignGiveawayView
+        giveaway={dto()}
+        claimSlot={<button type="button">Claim NIM</button>}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Claim NIM" })).toBeInTheDocument();
+    slotted.unmount();
 
     render(<CampaignGiveawayView giveaway={dto({ claimState: "needs_funding" })} />);
     expect(screen.queryByRole("button", { name: "Claim NIM" })).toBeNull();

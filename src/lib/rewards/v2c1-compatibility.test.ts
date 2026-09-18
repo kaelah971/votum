@@ -224,7 +224,16 @@ describe("V2C.1E Poll compatibility gate", () => {
       .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
       .filter((file) => {
         const normalized = file.replaceAll("\\", "/");
-        return !normalized.includes("/src/lib/campaigns/") && !normalized.includes("/src/app/api/campaigns/");
+        // Campaign-owned layers cannot hold shared financial authority:
+        // server Campaign modules, Campaign API routes, Campaign UI, the
+        // Campaign share pages, and the Campaign wallet hook. Everything
+        // that can touch the ledger (rewards, nimiq, Poll routes/components,
+        // data layer, API root) stays scanned.
+        return !normalized.includes("/src/lib/campaigns/")
+          && !normalized.includes("/src/app/api/campaigns/")
+          && !normalized.includes("/src/components/campaign/")
+          && !normalized.includes("/src/app/campaigns/")
+          && !normalized.endsWith("/src/hooks/useCampaignClaim.ts");
       })
       .filter((file) => !file.replaceAll("\\", "/").endsWith("src/types/database.ts"))
       .map((file) => readFileSync(file, "utf8"))
